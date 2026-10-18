@@ -93,7 +93,7 @@ export const DEMO_ASSETS: DemoAsset[] = [
     },
     licenseText:
       'Commercial derivative reports are permitted provided they credit "Field research by Mara Okafor, independent analyst". ' +
-      'Royalty: 15% of gross sale price, payable only for reports that actually cite these notes.',
+      'Royalty: 15% of gross sale price, payable only for reports that actually cite these notes. This license runs until 31 Dec 2027.',
   },
   {
     id: 'asset_kestrel_panel',
@@ -112,7 +112,7 @@ export const DEMO_ASSETS: DemoAsset[] = [
     },
     licenseText:
       'Panel results are licensed for the licensee\'s internal research only. No commercial use, sale or publication of ' +
-      'derived works is permitted. Fee: 10% of any revenue attributable to the data.',
+      'derived works is permitted. Fee: 10% of any revenue attributable to the data. The license is valid until 31 Dec 2027.',
   },
   {
     id: 'asset_lumen_digest',
@@ -124,7 +124,7 @@ export const DEMO_ASSETS: DemoAsset[] = [
     licenseId: 'lic_lumen_v1',
     terms: { ...base, economics: { kind: 'fixed_per_sale', amountCents: 200 }, payableOn: 'included_in_build' },
     licenseText:
-      'The Digest may be used in commercial derivative reports worldwide. Fee: USD 2.00 per report sold. Raw survey tables may not be republished.',
+      'The Digest may be used in commercial derivative reports worldwide until 31 Dec 2027. Fee: USD 2.00 per report sold. Raw survey tables may not be republished.',
   },
   {
     id: 'asset_ide_pricing',
@@ -144,10 +144,4 @@ export const DEMO_ASSETS: DemoAsset[] = [
   },
 ];
 
-/** Split asset content into retrievable chunks (one per paragraph). */
-export function chunkContent(content: string): string[] {
-  return content
-    .split(/\n\s*\n/)
-    .map((p) => p.replace(/\s+/g, ' ').trim())
-    .filter((p) => p.length > 0);
-}
+export { chunkContent } from '../assets/chunk';

@@ -23,6 +23,9 @@ async function resolveTenant(tx: Tx, entityType: string, entityId: string): Prom
       return (await tx.buildJob.findUnique({ where: { id: entityId }, select: { publisherId: true } }))?.publisherId ?? null;
     case 'agent_run':
       return (await tx.agentRun.findUnique({ where: { id: entityId }, select: { publisherId: true } }))?.publisherId ?? null;
+    case 'license':
+      // Shown in the licensee publisher's activity.
+      return (await tx.licenseGrant.findUnique({ where: { id: entityId }, select: { licenseeId: true } }))?.licenseeId ?? null;
     case 'artifact':
       return (await tx.artifact.findUnique({ where: { id: entityId }, select: { buildJob: { select: { publisherId: true } } } }))?.buildJob.publisherId ?? null;
     case 'sale':

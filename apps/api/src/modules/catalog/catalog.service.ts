@@ -1,4 +1,4 @@
-import { LicenseTermsSchema, type LicenseStatus, type LicenseTerms } from '@tracepay/shared';
+import { GOVERNING_STATUSES, LicenseTermsSchema, PENDING_STATUSES, type LicenseStatus, type LicenseTerms } from '@tracepay/shared';
 import type { Tx } from '../../db';
 import type { CompilerSource } from '../license-compiler/compiler';
 
@@ -12,6 +12,7 @@ export interface CatalogEntry {
   version: number;
   sha256: string;
   chunkCount: number;
+  /** The license in force for this publisher (approved), or the revoked one that blocks it. */
   license: {
     id: string;
     version: number;
@@ -20,6 +21,8 @@ export interface CatalogEntry {
     termsHash: string;
     sourceText: string | null;
   } | null;
+  /** A request or offer still awaiting a decision, if any. */
+  pending: { id: string; version: number; status: LicenseStatus; terms: LicenseTerms | null } | null;
 }
 
 /** A compiler source plus the facts needed to freeze it into a build. */
@@ -28,20 +31,30 @@ export interface ResolvedSource extends CompilerSource {
   termsHash: string | null;
 }
 
+type GrantRow = { id: string; assetId: string; version: number; status: string; terms: unknown; termsHash: string | null; sourceText: string | null };
+
 /**
- * The license currently governing (asset, licensee): the highest version that
- * hasn't been superseded. A revoked grant is returned as-is so the compiler
- * reports it, rather than silently falling back to an older version.
+ * The license governing (asset, licensee) is the highest-version grant that is
+ * approved or revoked. Offers and requests never govern: a renegotiation only
+ * takes effect once the licensee accepts it, and a revoked grant is returned
+ * as-is so the compiler blocks on it rather than falling back to an older one.
  */
-async function currentGrants(tx: Tx, licenseeId: string, assetIds: string[]) {
-  const grants = await tx.licenseGrant.findMany({
-    where: { licenseeId, assetId: { in: assetIds }, status: { not: 'superseded' } },
+async function grantsFor(tx: Tx, licenseeId: string, assetIds: string[]) {
+  const grants = (await tx.licenseGrant.findMany({
+    where: { licenseeId, assetId: { in: assetIds }, status: { in: [...GOVERNING_STATUSES, ...PENDING_STATUSES] } },
     orderBy: { version: 'desc' },
-  });
-  const byAsset = new Map<string, (typeof grants)[number]>();
-  for (const g of grants) if (!byAsset.has(g.assetId)) byAsset.set(g.assetId, g);
-  return byAsset;
+    select: { id: true, assetId: true, version: true, status: true, terms: true, termsHash: true, sourceText: true },
+  })) as GrantRow[];
+  const governing = new Map<string, GrantRow>();
+  const pending = new Map<string, GrantRow>();
+  for (const g of grants) {
+    const target = (GOVERNING_STATUSES as readonly string[]).includes(g.status) ? governing : pending;
+    if (!target.has(g.assetId)) target.set(g.assetId, g);
+  }
+  return { governing, pending };
 }
+
+const parseTerms = (t: unknown) => (t ? LicenseTermsSchema.parse(t) : null);
 
 export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogEntry[]> {
   const assets = await tx.asset.findMany({
@@ -51,12 +64,13 @@ export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogE
       versions: { orderBy: { version: 'desc' }, take: 1, include: { _count: { select: { chunks: true } } } },
     },
   });
-  const grants = await currentGrants(tx, publisherId, assets.map((a) => a.id));
+  const { governing, pending } = await grantsFor(tx, publisherId, assets.map((a) => a.id));
 
   return assets.flatMap((a) => {
     const v = a.versions[0];
     if (!v) return [];
-    const g = grants.get(a.id);
+    const g = governing.get(a.id);
+    const p = pending.get(a.id);
     return [
       {
         assetId: a.id,
@@ -68,16 +82,11 @@ export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogE
         version: v.version,
         sha256: v.sha256,
         chunkCount: v._count.chunks,
-        license: g
-          ? {
-              id: g.id,
-              version: g.version,
-              status: g.status as LicenseStatus,
-              terms: LicenseTermsSchema.parse(g.terms),
-              termsHash: g.termsHash,
-              sourceText: g.sourceText,
-            }
-          : null,
+        license:
+          g && g.termsHash
+            ? { id: g.id, version: g.version, status: g.status as LicenseStatus, terms: parseTerms(g.terms)!, termsHash: g.termsHash, sourceText: g.sourceText }
+            : null,
+        pending: p ? { id: p.id, version: p.version, status: p.status as LicenseStatus, terms: parseTerms(p.terms) } : null,
       },
     ];
   });
@@ -99,11 +108,11 @@ export async function resolveSources(tx: Tx, publisherId: string, assetVersionId
   const missing = assetVersionIds.filter((id) => !byId.has(id));
   if (missing.length) throw new UnknownAssetVersionError(missing);
 
-  const grants = await currentGrants(tx, publisherId, versions.map((v) => v.assetId));
+  const { governing } = await grantsFor(tx, publisherId, versions.map((v) => v.assetId));
 
   return assetVersionIds.map((id) => {
     const v = byId.get(id)!;
-    const g = grants.get(v.assetId);
+    const g = governing.get(v.assetId);
     return {
       assetId: v.assetId,
       assetTitle: v.asset.title,
@@ -112,9 +121,7 @@ export async function resolveSources(tx: Tx, publisherId: string, assetVersionId
       contributorName: v.asset.owner.name,
       payeeEmail: v.asset.owner.paypalEmail,
       termsHash: g?.termsHash ?? null,
-      license: g
-        ? { id: g.id, status: g.status === 'superseded' ? 'revoked' : (g.status as LicenseStatus), terms: LicenseTermsSchema.parse(g.terms) }
-        : null,
+      license: g?.terms ? { id: g.id, status: g.status as LicenseStatus, terms: parseTerms(g.terms)! } : null,
     };
   });
 }

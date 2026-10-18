@@ -122,9 +122,17 @@ model SourceChunk {
   @@unique([assetVersionId, ordinal])
 }
 
+/// Lifecycle of a two-party license:
+///   requested (publisher asked) → offered (contributor set terms) → approved (publisher accepted)
+///   offered → declined (publisher) | withdrawn (contributor)
+///   approved → revoked (contributor; future builds only) | superseded (a newer version was accepted)
 enum LicenseStatus {
+  requested
   draft
+  offered
   approved
+  declined
+  withdrawn
   revoked
   superseded
 }
@@ -132,6 +140,7 @@ enum LicenseStatus {
 enum TermsOrigin {
   manual
   ai_draft
+  rules_draft
 }
 
 /// A grant of rights from an asset owner to a licensee. Terms are frozen once
@@ -144,15 +153,26 @@ model LicenseGrant {
   licensee     User          @relation("licensee", fields: [licenseeId], references: [id])
   version      Int
   status       LicenseStatus @default(draft)
-  terms        Json
-  termsHash    String
+  /// Normalized terms; null only while a publisher's request awaits the contributor's offer.
+  terms        Json?
+  termsHash    String?
   origin       TermsOrigin   @default(manual)
-  /// Raw AI extraction kept for comparison; never enforced.
+  /// Raw AI/rules extraction kept for comparison; never enforced.
   aiExtraction Json?
   sourceText   String?
+  /// The publisher's note when requesting a license.
+  requestMessage String?
+  /// Contributor (licensor) confirmed these exact terms.
+  offeredAt    DateTime?
+  /// Licensee accepted; the grant became enforceable.
   approvedAt   DateTime?
   approvedById String?
+  /// Who closed the grant (declined, withdrawn or revoked) and when.
+  closedAt     DateTime?
+  closedById   String?
+  closedReason String?
   createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @default(now()) @updatedAt
 
   buildSources BuildSource[]
 

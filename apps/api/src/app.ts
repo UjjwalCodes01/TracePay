@@ -14,6 +14,7 @@ import { agentRoutes } from './routes/agent';
 import { authRoutes } from './routes/auth';
 import { buildRoutes } from './routes/builds';
 import { commerceRoutes, webhookRoute } from './routes/commerce';
+import { licensingRoutes } from './routes/licensing';
 import { systemRoutes } from './routes/system';
 
 export interface AppDeps {
@@ -73,6 +74,7 @@ export function createApp(deps: AppDeps) {
   app.use('/api', buildRoutes(deps));
   app.use('/api', commerceRoutes(deps));
   app.use('/api', agentRoutes(deps));
+  app.use('/api', licensingRoutes(deps));
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found.')));
   app.use(errorHandler);

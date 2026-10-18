@@ -57,9 +57,10 @@ export async function resetAndSeed(db: Db): Promise<{ users: number; assets: num
       await tx.assetVersion.create({
         data: { id: versionId, assetId: a.id, version: 1, sha256: sha256Hex(content), content },
       });
-      const paragraphs = chunkContent(content);
+      // The first paragraph of each demo file is a "synthetic data" header, not citable content.
+      const paragraphs = chunkContent(content).slice(1);
       await tx.sourceChunk.createMany({
-        data: paragraphs.map((text, ordinal) => ({ id: `${versionId}_c${ordinal}`, assetVersionId: versionId, ordinal, text })),
+        data: paragraphs.map((text, i) => ({ id: `${versionId}_c${i + 1}`, assetVersionId: versionId, ordinal: i + 1, text })),
       });
       chunks += paragraphs.length;
 
@@ -74,8 +75,10 @@ export async function resetAndSeed(db: Db): Promise<{ users: number; assets: num
           termsHash: sha256Hex(canonicalJson(a.terms)),
           origin: 'manual',
           sourceText: a.licenseText,
+          // Both parties agreed: the contributor offered, the publisher accepted.
+          offeredAt: new Date('2026-09-28T00:00:00Z'),
           approvedAt: new Date('2026-10-01T00:00:00Z'),
-          approvedById: a.ownerId,
+          approvedById: DEMO_IDS.publisher,
         },
       });
     }

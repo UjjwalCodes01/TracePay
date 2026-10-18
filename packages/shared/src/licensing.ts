@@ -3,8 +3,13 @@ import { z } from 'zod';
 export const PURPOSES = ['internal_research', 'commercial_report'] as const;
 export type Purpose = (typeof PURPOSES)[number];
 
-export const LICENSE_STATUSES = ['draft', 'approved', 'revoked'] as const;
+export const LICENSE_STATUSES = ['requested', 'draft', 'offered', 'approved', 'declined', 'withdrawn', 'revoked', 'superseded'] as const;
 export type LicenseStatus = (typeof LICENSE_STATUSES)[number];
+
+/** Statuses that can govern a build: the latest of these is the license in force (or revoked). */
+export const GOVERNING_STATUSES = ['approved', 'revoked'] as const satisfies readonly LicenseStatus[];
+/** Statuses still awaiting a decision from one of the two parties. */
+export const PENDING_STATUSES = ['requested', 'offered'] as const satisfies readonly LicenseStatus[];
 
 /**
  * Economic terms a contributor has agreed to. Percentages are basis points of

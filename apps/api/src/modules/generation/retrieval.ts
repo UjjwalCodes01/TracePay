@@ -41,7 +41,7 @@ export async function retrievePassages(
                ORDER BY ts_rank(to_tsvector('english', c.text), to_tsquery('english', ${query})) DESC, c.ordinal
              ) AS rn
       FROM "SourceChunk" c
-      WHERE c."assetVersionId" = ANY(${assetVersionIds}::text[]) AND c.ordinal > 0
+      WHERE c."assetVersionId" = ANY(${assetVersionIds}::text[])
     ) ranked
     WHERE rn <= ${perSource}
     ORDER BY array_position(${assetVersionIds}::text[], "assetVersionId"), rank DESC, ordinal`;
