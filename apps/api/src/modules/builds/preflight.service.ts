@@ -58,7 +58,8 @@ export async function preflightAndRecord(tx: Tx, req: PreflightRequest): Promise
       policyVersion: report.policyVersion,
       snapshotHash,
       sources: {
-        create: sources.map((s) => ({
+        create: sources.map((s, ordinal) => ({
+          ordinal,
           assetVersionId: s.assetVersionId,
           licenseGrantId: s.license?.id ?? null,
           termsSnapshot: s.license

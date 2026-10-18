@@ -207,6 +207,8 @@ model BuildSource {
   id             String        @id @default(cuid())
   buildJobId     String
   buildJob       BuildJob      @relation(fields: [buildJobId], references: [id])
+  /// Position in the publisher's selection; keeps reports and receipts deterministic.
+  ordinal        Int           @default(0)
   assetVersionId String
   assetVersion   AssetVersion  @relation(fields: [assetVersionId], references: [id])
   licenseGrantId String?

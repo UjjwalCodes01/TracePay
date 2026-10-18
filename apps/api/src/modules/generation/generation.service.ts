@@ -52,7 +52,7 @@ export async function generateArtifact(db: Db, buildId: string, writer: ReportWr
   try {
     const build = await db.buildJob.findUniqueOrThrow({
       where: { id: buildId },
-      include: { sources: { include: { assetVersion: { include: { asset: true } } } } },
+      include: { sources: { orderBy: { ordinal: 'asc' }, include: { assetVersion: { include: { asset: true } } } } },
     });
     const intent = build.intent as unknown as BuildIntent;
     const preflight = build.preflight as unknown as PreflightReport;

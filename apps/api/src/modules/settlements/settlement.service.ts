@@ -34,7 +34,7 @@ export async function calculateForSale(tx: Tx, saleId: string) {
 
   const sale = await tx.sale.findUniqueOrThrow({
     where: { id: saleId },
-    include: { payment: true, artifact: { include: { buildJob: { include: { sources: true } } } } },
+    include: { payment: true, artifact: { include: { buildJob: { include: { sources: { orderBy: { ordinal: 'asc' } } } } } } },
   });
   if (sale.status !== 'captured' || sale.payment?.captureStatus !== 'COMPLETED' || sale.payment.capturedCents === null) {
     throw new SettlementStateError(`Sale ${saleId} has no verified completed capture; nothing is payable.`);
