@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+.vite/
+*.tsbuildinfo
+coverage/
+
+# generated
+apps/api/src/generated/
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+gcp-*.json
+keys/
+
+# deploy tooling
+.vercel/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
