@@ -28,13 +28,47 @@ model User {
   role        Role
   /// PayPal account that receives payouts (sandbox personal account in the demo).
   paypalEmail String?
+  /// scrypt hash; null for demo users who can only be reached via the demo role switcher.
+  passwordHash String?
   createdAt   DateTime @default(now())
+
+  sessions Session[]
+  apiKeys  ApiKey[]
 
   assets       Asset[]
   licensesHeld LicenseGrant[] @relation("licensee")
   buildJobs    BuildJob[]
   agentRuns    AgentRun[]
   purchases    Sale[]
+}
+
+/// Server-side session. The cookie holds a random token; only its SHA-256 is stored.
+model Session {
+  id         String   @id
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+
+  @@index([userId])
+}
+
+/// Programmatic access for platforms integrating TracePay. Only a hash is stored.
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  /// First characters of the key, shown so users can tell keys apart.
+  prefix     String
+  keyHash    String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId])
 }
 
 // ---------------------------------------------------------------- assets & licenses
@@ -435,10 +469,13 @@ model AuditEvent {
   payload      Json
   /// Artifact this event belongs to, for building receipts.
   artifactId   String?
+  /// Publisher whose data this event concerns (null = system). Used to scope views; not part of the hash.
+  tenantId     String?
   previousHash String
   hash         String   @unique
   createdAt    DateTime @default(now())
 
   @@index([artifactId])
   @@index([entityType, entityId])
+  @@index([tenantId, seq])
 }

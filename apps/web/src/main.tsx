@@ -7,6 +7,7 @@ import { Spinner } from './components/ui';
 import './index.css';
 import { SessionProvider, useSession } from './lib/session';
 import { ArtifactPage } from './pages/ArtifactPage';
+import { SignInPage, SignUpPage } from './pages/Auth';
 import { DashboardPage } from './pages/Dashboard';
 import { EarningsPage } from './pages/Earnings';
 import { ReceiptPage } from './pages/Receipt';
@@ -26,6 +27,8 @@ function Home() {
 }
 
 const router = createBrowserRouter([
+  { path: '/login', element: <SignInPage /> },
+  { path: '/signup', element: <SignUpPage /> },
   {
     element: <Layout />,
     children: [

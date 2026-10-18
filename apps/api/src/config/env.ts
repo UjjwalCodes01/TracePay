@@ -19,7 +19,12 @@ const nonEmpty = z.string().trim().min(1);
 export const serverEnv = () =>
   parse(
     z.object({
+      NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
       PORT: z.coerce.number().int().default(4000),
+      /** The hackathon role switcher. Never enable for real users. */
+      DEMO_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+      RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
+      AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
       DATABASE_URL: nonEmpty,
       APP_BASE_URL: z.url().default('http://localhost:5173'),
       API_BASE_URL: z.url().default('http://localhost:4000'),

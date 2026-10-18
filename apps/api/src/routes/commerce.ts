@@ -1,7 +1,8 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import { z } from 'zod';
 import type { AppDeps } from '../app';
-import { currentUser, requireRole } from '../http/demo-auth';
+import { currentUser, requireRole } from '../http/auth';
+import { ownedSettlement } from '../http/access';
 import { HttpError } from '../http/errors';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
 import { handlePayPalWebhook, readVerificationHeaders } from '../modules/payments/webhooks.service';
@@ -31,7 +32,7 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
   r.get('/sales', requireRole('publisher', 'admin', 'buyer'), async (req, res) => {
     const user = currentUser(req);
     const sales = await db.sale.findMany({
-      where: user.role === 'buyer' ? { buyerId: user.id } : {},
+      where: user.role === 'buyer' ? { buyerId: user.id } : user.role === 'admin' ? {} : { artifact: { buildJob: { publisherId: user.id } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: { payment: true, artifact: { select: { id: true, title: true } }, settlement: { select: { id: true, status: true } } },
@@ -47,27 +48,33 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
     sale: { include: { payment: true, artifact: { select: { id: true, title: true, buildJobId: true } } } },
   };
 
-  r.get('/settlements', requireRole('publisher', 'admin'), async (_req, res) => {
-    const runs = await db.settlementRun.findMany({ orderBy: { createdAt: 'desc' }, take: 100, include: settlementInclude });
+  r.get('/settlements', requireRole('publisher', 'admin'), async (req, res) => {
+    const user = currentUser(req);
+    const runs = await db.settlementRun.findMany({
+      where: user.role === 'admin' ? {} : { sale: { artifact: { buildJob: { publisherId: user.id } } } },
+      orderBy: { createdAt: 'desc' }, take: 100, include: settlementInclude });
     res.json({ settlements: runs });
   });
 
   r.get('/settlements/:id', requireRole('publisher', 'admin'), async (req, res) => {
-    const run = await db.settlementRun.findUnique({ where: { id: param(req, 'id') }, include: settlementInclude });
-    if (!run) throw new HttpError(404, 'Settlement not found.');
+    const { id } = await ownedSettlement(db, currentUser(req), param(req, 'id'));
+    const run = await db.settlementRun.findUniqueOrThrow({ where: { id }, include: settlementInclude });
     res.json({ settlement: run });
   });
 
   r.post('/settlements/:id/approve', requireRole('publisher'), async (req, res) => {
-    res.json({ settlement: await approveSettlement(db, param(req, 'id'), currentUser(req).id) });
+    const { id } = await ownedSettlement(db, currentUser(req), param(req, 'id'));
+    res.json({ settlement: await approveSettlement(db, id, currentUser(req).id) });
   });
 
   r.post('/settlements/:id/payouts', requireRole('publisher'), async (req, res) => {
-    res.status(201).json({ batch: await submitPayouts(db, paypal(), param(req, 'id')) });
+    const { id } = await ownedSettlement(db, currentUser(req), param(req, 'id'));
+    res.status(201).json({ batch: await submitPayouts(db, paypal(), id) });
   });
 
   r.post('/settlements/:id/refresh', requireRole('publisher', 'admin'), async (req, res) => {
-    res.json(await refreshPayouts(db, paypal(), param(req, 'id')));
+    const { id } = await ownedSettlement(db, currentUser(req), param(req, 'id'));
+    res.json(await refreshPayouts(db, paypal(), id));
   });
 
   // ---- contributor view: "every contributor gets a settlement record" -------------

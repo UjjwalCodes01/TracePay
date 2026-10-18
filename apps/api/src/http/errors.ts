@@ -27,8 +27,9 @@ function toHttp(err: unknown): HttpError {
   return new HttpError(500, 'Internal error.');
 }
 
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   const http = toHttp(err);
-  if (http.status >= 500 && !(err instanceof HttpError)) console.error(err);
+  // Unexpected errors are logged with the request id; clients only ever see a generic message.
+  if (http.status >= 500 && !(err instanceof HttpError)) (req.log ?? console).error({ err }, 'unhandled error');
   res.status(http.status).json({ error: http.message, ...(http.details !== undefined ? { details: http.details } : {}) });
 }

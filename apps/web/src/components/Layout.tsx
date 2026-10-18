@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { BookOpenCheck, Bot, FileStack, LayoutDashboard, Library, Receipt, RotateCcw, ShoppingBag, Wallet } from 'lucide-react';
-import { NavLink, Outlet } from 'react-router';
+import { BookOpenCheck, Bot, FileStack, LayoutDashboard, Library, LogOut, Receipt, RotateCcw, ShoppingBag, Wallet } from 'lucide-react';
+import { Navigate, NavLink, Outlet, useNavigate } from 'react-router';
 import { post } from '../lib/api';
 import { useSession } from '../lib/session';
 import type { Role } from '../lib/types';
-import { Badge, Button } from './ui';
+import { Badge, Button, Spinner } from './ui';
 
 const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; roles: Role[] }> = [
   { to: '/dashboard', label: 'Home', icon: LayoutDashboard, roles: ['publisher', 'admin'] },
@@ -20,12 +20,16 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; role
 const ROLE_LABEL: Record<Role, string> = { publisher: 'Publisher', buyer: 'Buyer', contributor: 'Contributor', admin: 'Admin' };
 
 export function Layout() {
-  const { user, users, config, switchUser } = useSession();
+  const { user, authMethod, loading, users, config, switchUser, signOut } = useSession();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const reset = useMutation({
     mutationFn: () => post('/demo/reset'),
     onSuccess: () => qc.invalidateQueries(),
   });
+
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/login" replace />;
 
   return (
     <div className="flex min-h-full">
@@ -58,7 +62,7 @@ export function Layout() {
           </div>
           <p className="flex items-start gap-1.5">
             <BookOpenCheck className="mt-0.5 size-3.5 shrink-0" />
-            Demo with made-up data. TracePay follows the license terms on record; it isn’t legal advice.
+            {config?.demoMode ? 'Demo with made-up data. ' : ''}TracePay follows the license terms on record; it isn’t legal advice.
           </p>
         </div>
       </aside>
@@ -69,24 +73,28 @@ export function Layout() {
             <img src="/favicon.svg" alt="" className="size-6" />
             <span className="font-semibold">TracePay</span>
           </div>
-          <div className="hidden text-sm text-muted md:block">{user ? `Acting as ${user.name}` : 'Choose a demo user'}</div>
+          <div className="hidden text-sm text-muted md:block">
+            {authMethod === 'demo' ? `Demo: acting as ${user.name}` : `Signed in as ${user.name}`}
+          </div>
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-xs text-muted">
-              <span className="hidden sm:inline">Demo role</span>
-              <select
-                value={user?.id ?? ''}
-                onChange={(e) => switchUser(e.target.value)}
-                className="h-8 max-w-[14rem] rounded-lg border border-line bg-white px-2 text-sm text-ink"
-                aria-label="Switch demo user"
-              >
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {ROLE_LABEL[u.role]} — {u.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {(user?.role === 'publisher' || user?.role === 'admin') && (
+            {authMethod === 'demo' && config?.demoMode && (
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <span className="hidden sm:inline">Demo role</span>
+                <select
+                  value={user.id}
+                  onChange={(e) => switchUser(e.target.value)}
+                  className="h-8 max-w-[14rem] rounded-lg border border-line bg-white px-2 text-sm text-ink"
+                  aria-label="Switch demo user"
+                >
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {ROLE_LABEL[u.role]} — {u.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {config?.demoMode && authMethod === 'demo' && (user.role === 'publisher' || user.role === 'admin') && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -98,6 +106,10 @@ export function Layout() {
                 <span className="hidden sm:inline">Reset demo</span>
               </Button>
             )}
+            <Button variant="ghost" size="sm" onClick={() => signOut().then(() => navigate('/login'))} title="Sign out">
+              <LogOut className="size-3.5" />
+              <span className="hidden sm:inline">Sign out</span>
+            </Button>
           </div>
         </header>
 

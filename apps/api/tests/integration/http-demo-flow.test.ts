@@ -1,25 +1,14 @@
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/app';
 import { db } from '../../src/db';
-import { generateSigningKeys, loadSigningKeys } from '../../src/modules/audit/signing';
 import { resetAndSeed } from '../../src/modules/demo/seed';
-import { FixtureReportWriter } from '../../src/modules/generation/writers';
-import { RuleBasedPlanner } from '../../src/modules/agent/planners';
 import { FakePayPal } from '../fake-paypal';
+import { testApp } from '../test-app';
 
-const keys = loadSigningKeys(generateSigningKeys().privateKeyB64);
 
 describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', () => {
   const paypal = new FakePayPal();
-  const app = createApp({
-    db: db(),
-    paypal: () => paypal,
-    signingKeys: () => keys,
-    writer: () => new FixtureReportWriter(),
-    planner: () => new RuleBasedPlanner(),
-    config: { appBaseUrl: 'http://localhost:5173', corsOrigins: ['http://localhost:5173'], paypalClientId: 'test-client', paypalWebhookId: 'WH-ID', vertexReady: false },
-  });
+  const app = testApp(paypal);
   const as = (user: string) => ({ 'X-Demo-User': user });
   const publisher = as('user_atlas');
   const buyer = as('user_buyer');

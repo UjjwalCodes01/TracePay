@@ -11,6 +11,32 @@ export interface AuditInput {
   eventType: string;
   payload: Record<string, unknown>;
   artifactId?: string | null;
+  /** Owning publisher. Derived from the entity when omitted. */
+  tenantId?: string | null;
+}
+
+/** Finds the publisher an entity belongs to, so every event is scoped to a tenant. */
+async function resolveTenant(tx: Tx, entityType: string, entityId: string): Promise<string | null> {
+  const viaArtifact = { artifact: { select: { buildJob: { select: { publisherId: true } } } } } as const;
+  switch (entityType) {
+    case 'build':
+      return (await tx.buildJob.findUnique({ where: { id: entityId }, select: { publisherId: true } }))?.publisherId ?? null;
+    case 'agent_run':
+      return (await tx.agentRun.findUnique({ where: { id: entityId }, select: { publisherId: true } }))?.publisherId ?? null;
+    case 'artifact':
+      return (await tx.artifact.findUnique({ where: { id: entityId }, select: { buildJob: { select: { publisherId: true } } } }))?.buildJob.publisherId ?? null;
+    case 'sale':
+      return (await tx.sale.findUnique({ where: { id: entityId }, select: viaArtifact }))?.artifact.buildJob.publisherId ?? null;
+    case 'settlement':
+      return (await tx.settlementRun.findUnique({ where: { id: entityId }, select: { sale: { select: viaArtifact } } }))?.sale.artifact.buildJob.publisherId ?? null;
+    case 'payout_batch':
+      return (
+        (await tx.payoutBatch.findUnique({ where: { id: entityId }, select: { run: { select: { sale: { select: viaArtifact } } } } }))?.run.sale.artifact.buildJob
+          .publisherId ?? null
+      );
+    default:
+      return null;
+  }
 }
 
 /**
@@ -36,6 +62,7 @@ export async function appendAudit(tx: Tx, input: AuditInput): Promise<{ seq: num
       eventType: input.eventType,
       payload: input.payload as Prisma.InputJsonValue,
       artifactId: input.artifactId ?? null,
+      tenantId: input.tenantId !== undefined ? input.tenantId : await resolveTenant(tx, input.entityType, input.entityId),
       previousHash,
       hash,
       createdAt,

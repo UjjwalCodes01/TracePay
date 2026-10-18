@@ -2,7 +2,8 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { BuildIntentSchema, type PreflightReport } from '@tracepay/shared';
 import type { AppDeps } from '../app';
-import { currentUser, requireRole } from '../http/demo-auth';
+import { currentUser, requireRole } from '../http/auth';
+import { ownedBuild, publisherScope } from '../http/access';
 import { HttpError } from '../http/errors';
 import { AgentStateError, createRun, decideReplacement, runAgent } from '../modules/agent/agent.service';
 import { explainPreflight } from '../modules/builds/explain';
@@ -37,14 +38,14 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
     res.status(202).json({ runId: run.id, planner: run.model });
   });
 
-  r.get('/agent/runs', requireRole('publisher', 'admin'), async (_req, res) => {
-    const runs = await db.agentRun.findMany({ orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, goal: true, status: true, model: true, createdAt: true, summary: true } });
+  r.get('/agent/runs', requireRole('publisher', 'admin'), async (req, res) => {
+    const runs = await db.agentRun.findMany({ where: publisherScope(currentUser(req)), orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, goal: true, status: true, model: true, createdAt: true, summary: true } });
     res.json({ runs });
   });
 
   r.get('/agent/runs/:id', requireRole('publisher', 'admin'), async (req, res) => {
-    const run = await db.agentRun.findUnique({
-      where: { id: param(req, 'id') },
+    const run = await db.agentRun.findFirst({
+      where: { id: param(req, 'id'), ...publisherScope(currentUser(req)) },
       select: {
         id: true, goal: true, status: true, model: true, policy: true, intent: true, selection: true, pending: true, summary: true, createdAt: true, finishedAt: true,
         steps: { orderBy: { ordinal: 'asc' } },
@@ -69,8 +70,8 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
   });
 
   r.get('/builds/:id/explain', requireRole('publisher', 'admin'), async (req, res) => {
-    const build = await db.buildJob.findUnique({ where: { id: param(req, 'id') }, select: { preflight: true } });
-    if (!build) throw new HttpError(404, 'Build not found.');
+    const { id } = await ownedBuild(db, currentUser(req), param(req, 'id'));
+    const build = await db.buildJob.findUniqueOrThrow({ where: { id }, select: { preflight: true } });
     res.json(await explainPreflight(build.preflight as unknown as PreflightReport, config.vertexReady));
   });
 

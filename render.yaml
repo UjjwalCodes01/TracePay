@@ -7,10 +7,19 @@ services:
     buildCommand: npm ci && npm run build -w @tracepay/api
     # Apply migrations, then start. Seed once from the Render shell: npm run db:seed -w @tracepay/api
     startCommand: npm run db:deploy -w @tracepay/api && npm run start -w @tracepay/api
-    healthCheckPath: /api/health
+    healthCheckPath: /api/ready
     envVars:
       - key: NODE_ENV
-        value: production
+        value: production # also makes session cookies Secure
+      # Hackathon judging: keep the demo role switcher on. Set to "false" for real users.
+      - key: DEMO_MODE
+        value: "true"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "300"
+      - key: AUTH_RATE_LIMIT
+        value: "20"
+      - key: LOG_LEVEL
+        value: info
       - key: DATABASE_URL
         fromDatabase:
           name: tracepay-db

@@ -118,7 +118,8 @@ flowchart LR
 | Real | Simulated / demo-only |
 |---|---|
 | PayPal sandbox Orders, capture, Payouts, webhooks | All sources, contributors and numbers are fictional |
-| License compiler, settlement engine, audit chain, signatures | Authentication: a **demo-only role switcher** (`X-Demo-User`), no passwords |
+| License compiler, settlement engine, audit chain, signatures | The seeded demo roles, reachable with one click when `DEMO_MODE=true` |
+| Accounts: sign-up / sign-in, scrypt passwords, httpOnly sessions, API keys | |
 | Vertex AI Gemini agent + writer (when configured) | Fixture writer / rule-based planner when Vertex is not configured — always labeled |
 | PostgreSQL persistence | "Reset demo" restores TracePay fixtures; it does **not** reverse PayPal sandbox history |
 
@@ -154,6 +155,28 @@ npm run dev:web                                # http://localhost:5173
 | `PAYPAL_WEBHOOK_ID` | for webhooks | Register `https://<api>/api/webhooks/paypal` in the dashboard |
 | `GOOGLE_CLOUD_PROJECT`, `VERTEX_MODEL` | for live AI | Plus `gcloud auth application-default login` locally, or `GOOGLE_SERVICE_ACCOUNT_JSON` on a server |
 | `AUDIT_SIGNING_PRIVATE_KEY` | yes | Ed25519 key from `npm run keys:generate` |
+| `DEMO_MODE` | no (default `false`) | `true` enables the one-click demo roles and "Reset demo". **Keep `false` for real users** |
+| `CORS_ORIGINS` | in production | The web app's origin(s); also used for the CSRF origin check |
+| `RATE_LIMIT_PER_MINUTE`, `AUTH_RATE_LIMIT` | no | Defaults 300 req/min/IP and 20 sign-in attempts per 15 min/IP |
+
+---
+
+## Production readiness
+
+TracePay is built to be adopted after the hackathon, not just demoed.
+
+| Area | What's in place |
+|---|---|
+| **Accounts** | Sign-up / sign-in with **scrypt** password hashing (OWASP parameters, constant-time compare, timing-safe for unknown emails); server-side sessions in **httpOnly, SameSite=Lax, Secure** cookies — only a SHA-256 of the token is stored |
+| **API keys** | `Authorization: Bearer tp_…` for platforms integrating TracePay; hashed at rest, shown once, revocable, cannot mint other keys |
+| **Tenant isolation** | Every build, run, report, sale, settlement and audit event is scoped to its publisher. Other tenants get **404** (not 403), so they can't even confirm a record exists. Buyers see sourcing but not the money split; only the owner sees payout addresses |
+| **Request security** | Helmet security headers and a locked-down CSP; CSRF origin check on cookie-authenticated writes; per-IP rate limits with stricter limits on credential endpoints; 1 MB body limit; zod validation on every input |
+| **Money safety** | Integer cents, idempotency keys on every PayPal write, row locks on capture, terms frozen per build, publisher approval before payouts, exceptions for refunds and failed payouts |
+| **Operability** | Structured JSON logs (pino) with request ids echoed in `X-Request-Id` and secrets redacted; `/api/health` (liveness) and `/api/ready` (database); graceful shutdown on SIGTERM; fail-fast config validation |
+| **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 74 tests against real Postgres, Render Blueprint, Vercel config |
+
+In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 
 Check your PayPal setup before running the app:
 
@@ -177,7 +200,7 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 ## Tests
 
 ```bash
-npm run test:integration -w @tracepay/api   # 61 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api   # 74 tests; creates/migrates a tracepay_test database
 ```
 
 | Suite | Covers |
@@ -189,6 +212,7 @@ npm run test:integration -w @tracepay/api   # 61 tests; creates/migrates a trace
 | Build pipeline (5) | recorded blocked builds, retrieval scoped to approved sources, citation integrity |
 | Money path (13) | capture before approval, duplicate webhooks, webhook-before-response, forged signature, amount mismatch, **frozen terms after a license edit**, pending ≠ paid, failed/returned items, **lost payout response never pays twice**, missing Payouts permission, refunds |
 | Publisher agent (5) | recovery, approval pause, decline, guardrail violations, turn limit |
+| Security (13) | sign-up/sign-in/sign-out, hashed passwords and sessions, no account enumeration, rate limits, demo mode off, cross-tenant 404s on every resource, role-appropriate provenance views, API keys, CSRF, security headers, readiness |
 | HTTP end-to-end (3) | the full demo script, the agent with an approval pause, and a forged webhook — through the REST API |
 
 ---
