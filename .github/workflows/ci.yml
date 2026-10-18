@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tracepay
+          POSTGRES_PASSWORD: tracepay
+          POSTGRES_DB: tracepay
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U tracepay"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck -w @tracepay/api && npm run typecheck -w @tracepay/web
+      - name: Unit + integration tests (real Postgres, in-memory PayPal fake)
+        run: npm run test:integration -w @tracepay/api
+      - name: Build
+        run: npm run build -w @tracepay/api && npm run build -w @tracepay/web

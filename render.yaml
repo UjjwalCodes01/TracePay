@@ -1,0 +1,48 @@
+# Render Blueprint for the TracePay API + Postgres.
+# The web app (apps/web) is deployed separately on Vercel.
+services:
+  - type: web
+    name: tracepay-api
+    runtime: node
+    buildCommand: npm ci && npm run build -w @tracepay/api
+    # Apply migrations, then start. Seed once from the Render shell: npm run db:seed -w @tracepay/api
+    startCommand: npm run db:deploy -w @tracepay/api && npm run start -w @tracepay/api
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tracepay-db
+          property: connectionString
+      - key: APP_BASE_URL
+        sync: false # your Vercel URL, e.g. https://tracepay.vercel.app
+      - key: API_BASE_URL
+        sync: false # this service's URL
+      - key: CORS_ORIGINS
+        sync: false # your Vercel URL (comma-separate several)
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: GOOGLE_CLOUD_PROJECT
+        sync: false
+      - key: GOOGLE_CLOUD_LOCATION
+        value: us-central1
+      - key: VERTEX_MODEL
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false # base64 of the service-account key file
+      - key: AUDIT_SIGNING_PRIVATE_KEY
+        sync: false # npm run keys:generate -w @tracepay/api
+      - key: DEMO_PAYEE_EMAILS
+        sync: false # sandbox personal accounts: Northwind,Okafor,Lumen
+
+databases:
+  - name: tracepay-db
+    databaseName: tracepay
+    user: tracepay
