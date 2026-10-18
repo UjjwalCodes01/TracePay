@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-line: #e2e8f0;
+  --color-canvas: #f8fafc;
+  --color-brand: #0d9488;
+  --color-brand-soft: #ccfbf1;
+
+  /* Evidence classes used across the graph, ledger and receipt */
+  --color-verified: #15803d;
+  --color-verified-soft: #dcfce7;
+  --color-recorded: #1d4ed8;
+  --color-recorded-soft: #dbeafe;
+  --color-ai: #7c3aed;
+  --color-ai-soft: #ede9fe;
+  --color-contract: #b45309;
+  --color-contract-soft: #fef3c7;
+
+  --color-pass: #15803d;
+  --color-block: #b91c1c;
+  --color-block-soft: #fee2e2;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-canvas text-ink antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+}
+
+/* React Flow: keep node chrome consistent with the app */
+.react-flow__node {
+  font-family: var(--font-sans);
+}
+
+.ag-theme-tracepay {
+  --ag-font-family: var(--font-sans);
+}

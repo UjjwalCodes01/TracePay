@@ -1,0 +1,57 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
+import { Layout } from './components/Layout';
+import { Spinner } from './components/ui';
+import './index.css';
+import { SessionProvider, useSession } from './lib/session';
+import { ArtifactPage } from './pages/ArtifactPage';
+import { DashboardPage } from './pages/Dashboard';
+import { EarningsPage } from './pages/Earnings';
+import { ReceiptPage } from './pages/Receipt';
+import { ReportsPage } from './pages/Reports';
+import { StorePage, StoreItemPage } from './pages/Store';
+import { StudioPage } from './pages/Studio';
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+});
+
+function Home() {
+  const { user } = useSession();
+  if (!user) return <Spinner />;
+  const target = { publisher: '/dashboard', admin: '/dashboard', buyer: '/store', contributor: '/earnings' }[user.role];
+  return <Navigate to={target} replace />;
+}
+
+const router = createBrowserRouter([
+  {
+    element: <Layout />,
+    children: [
+      { index: true, element: <Home /> },
+      { path: 'dashboard', element: <DashboardPage /> },
+      { path: 'registry', lazy: async () => ({ Component: (await import('./pages/Registry')).RegistryPage }) },
+      { path: 'studio', element: <StudioPage /> },
+      { path: 'reports', element: <ReportsPage /> },
+      { path: 'reports/:id', element: <ArtifactPage /> },
+      { path: 'reports/:id/provenance', lazy: async () => ({ Component: (await import('./pages/Provenance')).ProvenancePage }) },
+      { path: 'reports/:id/receipt', element: <ReceiptPage /> },
+      { path: 'settlements', lazy: async () => ({ Component: (await import('./pages/Settlements')).SettlementsPage }) },
+      { path: 'store', element: <StorePage /> },
+      { path: 'store/:id', element: <StoreItemPage /> },
+      { path: 'earnings', element: <EarningsPage /> },
+      { path: '*', element: <Navigate to="/" replace /> },
+    ],
+  },
+]);
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <SessionProvider>
+        <RouterProvider router={router} />
+      </SessionProvider>
+    </QueryClientProvider>
+  </StrictMode>,
+);

@@ -34,7 +34,18 @@ export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys
 
   const content = artifact.content as unknown as ArtifactContent;
   const events = await tx.auditEvent.findMany({ where: { artifactId }, orderBy: { seq: 'asc' } });
-  const buildEvents = await tx.auditEvent.findMany({ where: { entityType: 'build', entityId: artifact.buildJobId }, orderBy: { seq: 'asc' } });
+  // Include how the build came to be: for an agent run, its blocked attempts and decisions too.
+  const runId = artifact.buildJob.agentRunId;
+  const runBuilds = runId ? await tx.buildJob.findMany({ where: { agentRunId: runId }, select: { id: true } }) : [];
+  const buildEvents = await tx.auditEvent.findMany({
+    where: {
+      OR: [
+        { entityType: 'build', entityId: { in: [artifact.buildJobId, ...runBuilds.map((b) => b.id)] } },
+        ...(runId ? [{ entityType: 'agent_run', entityId: runId }] : []),
+      ],
+    },
+    orderBy: { seq: 'asc' },
+  });
   const chain = await verifyAuditChain(tx);
   const head = await tx.auditEvent.findFirst({ orderBy: { seq: 'desc' }, select: { seq: true, hash: true } });
 
