@@ -33,7 +33,7 @@ export const LicenseTermsSchema = z
     rawRedistribution: z.boolean(),
     allowedPurposes: z.array(z.enum(PURPOSES)).min(1),
     /** ISO-3166 alpha-2 codes; null means worldwide. */
-    territories: z.array(z.string().length(2)).nullable(),
+    territories: z.array(z.string().regex(/^[A-Za-z]{2}$/).transform((c) => c.toUpperCase())).nullable(),
     validFrom: z.iso.date(),
     validUntil: z.iso.date().nullable(),
     attributionText: z.string().min(1).nullable(),
@@ -46,8 +46,16 @@ export const LicenseTermsSchema = z
     currency: z.literal('USD'),
   })
   .refine((t) => t.derivativeReports !== 'allowed_with_attribution' || t.attributionText !== null, {
-    message: 'attributionText is required when derivative reports require attribution',
+    message: 'Add the credit line reports must include.',
     path: ['attributionText'],
+  })
+  .refine((t) => t.validUntil === null || t.validUntil >= t.validFrom, {
+    message: 'The end date must be on or after the start date.',
+    path: ['validUntil'],
+  })
+  .refine((t) => t.allowedPurposes.includes('commercial_report') === t.commercialUse, {
+    message: 'Commercial use and the allowed purposes disagree.',
+    path: ['allowedPurposes'],
   });
 export type LicenseTerms = z.infer<typeof LicenseTermsSchema>;
 
@@ -60,8 +68,9 @@ export const BuildIntentSchema = z
     distribution: z.enum(['sale', 'internal']),
     /** Would the deliverable expose raw source content (e.g. a data appendix)? */
     includesRawData: z.boolean(),
-    territory: z.string().length(2),
-    priceCents: z.number().int().min(0),
+    territory: z.string().regex(/^[A-Za-z]{2}$/).transform((c) => c.toUpperCase()),
+    /** Up to $10,000 — within PayPal's per-transaction limits and the database's integer range. */
+    priceCents: z.number().int().min(0).max(1_000_000),
     currency: z.literal('USD'),
   })
   .refine((i) => i.distribution !== 'sale' || i.priceCents > 0, {

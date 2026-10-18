@@ -76,6 +76,36 @@ export async function appendAudit(tx: Tx, input: AuditInput): Promise<{ seq: num
 }
 
 /** Re-computes the whole chain from the database. */
+/** End of the prefix already verified in this process. */
+let checkpoint: { seq: number; hash: string } = { seq: 0, hash: GENESIS_HASH };
+
+/**
+ * Incremental verification: only events after the last verified one are
+ * re-hashed, so routine checks (receipts, dashboards) stay cheap however long
+ * the log grows. If the checkpoint row changed or vanished (e.g. a demo reset),
+ * it starts again from the beginning. A full re-hash is `verifyAuditChain`.
+ */
+export async function verifyAuditChainCached(tx: Tx): Promise<{ ok: true; length: number } | { ok: false; brokenAtSeq: number }> {
+  if (checkpoint.seq > 0) {
+    const anchor = await tx.auditEvent.findUnique({ where: { seq: checkpoint.seq }, select: { hash: true } });
+    if (anchor?.hash !== checkpoint.hash) checkpoint = { seq: 0, hash: GENESIS_HASH };
+  }
+  let prev = checkpoint.hash;
+  let lastSeq = checkpoint.seq;
+  for (;;) {
+    const rows = await tx.auditEvent.findMany({ where: { seq: { gt: lastSeq } }, orderBy: { seq: 'asc' }, take: 1000 });
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      const entry = { entityType: r.entityType, entityId: r.entityId, eventType: r.eventType, payload: r.payload, createdAt: r.createdAt.toISOString() };
+      if (r.previousHash !== prev || chainHash(prev, entry) !== r.hash) return { ok: false, brokenAtSeq: r.seq };
+      prev = r.hash;
+      lastSeq = r.seq;
+    }
+    checkpoint = { seq: lastSeq, hash: prev };
+  }
+  return { ok: true, length: await tx.auditEvent.count() };
+}
+
 export async function verifyAuditChain(tx: Tx): Promise<{ ok: true; length: number } | { ok: false; brokenAtSeq: number }> {
   const rows = await tx.auditEvent.findMany({ orderBy: { seq: 'asc' } });
   const entries: StoredChainEntry[] = rows.map((r) => ({

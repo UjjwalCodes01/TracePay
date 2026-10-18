@@ -2,7 +2,7 @@ import type { PreflightReport } from '@tracepay/shared';
 import type { Tx } from '../../db';
 import type { ArtifactContent } from '../generation/generation.service';
 import { preflightSummary } from '../provenance/provenance.service';
-import { verifyAuditChain } from './audit-log';
+import { verifyAuditChainCached } from './audit-log';
 import { publicKeyPem, signDocument, type SigningKeys } from './signing';
 
 export const RECEIPT_VERSION = 'tracepay-receipt/1';
@@ -19,14 +19,26 @@ export interface SignedReceipt {
  * references, settlement formula and payout outcomes — signed so it can be
  * verified offline with TracePay's public key.
  */
-export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys): Promise<SignedReceipt | null> {
+export interface Viewer {
+  userId: string;
+  ownAssetVersionIds: Set<string>;
+}
+
+export type ReceiptView = Viewer & { level: 'owner' | 'buyer' | 'contributor' | 'public' };
+
+/**
+ * The receipt is cut to what the viewer is entitled to BEFORE signing, and
+ * states which view it is: owners get everything, a buyer gets their own
+ * purchase without the money split, a contributor gets only their own lines.
+ */
+export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys, view: ReceiptView = { level: 'owner', userId: '', ownAssetVersionIds: new Set() }): Promise<SignedReceipt | null> {
   const artifact = await tx.artifact.findUnique({
     where: { id: artifactId },
     include: {
       buildJob: { include: { sources: { orderBy: { ordinal: 'asc' }, include: { assetVersion: { include: { asset: { include: { owner: true } } } } } } } },
       sales: {
         orderBy: { createdAt: 'asc' },
-        include: { payment: true, settlement: { include: { lines: { include: { payoutItem: true } }, batch: true } } },
+        include: { payment: true, settlement: { include: { lines: { include: { payoutItem: true } }, batches: { orderBy: { attempt: 'asc' } } } } },
       },
     },
   });
@@ -46,11 +58,15 @@ export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys
     },
     orderBy: { seq: 'asc' },
   });
-  const chain = await verifyAuditChain(tx);
+  const chain = await verifyAuditChainCached(tx);
   const head = await tx.auditEvent.findFirst({ orderBy: { seq: 'desc' }, select: { seq: true, hash: true } });
 
+  const salesInView = artifact.sales
+    .filter((s) => s.payment?.captureId)
+    .filter((s) => view.level !== 'buyer' || s.buyerId === view.userId);
   const document = {
     receiptVersion: RECEIPT_VERSION,
+    view: view.level,
     issuedAt: new Date().toISOString(),
     artifact: {
       id: artifact.id,
@@ -78,9 +94,7 @@ export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys
       licenseId: s.licenseGrantId,
       cited: content.sources.find((x) => x.assetVersionId === s.assetVersionId)?.cited ?? false,
     })),
-    sales: artifact.sales
-      .filter((s) => s.payment?.captureId)
-      .map((s) => ({
+    sales: salesInView.map((s) => ({
         saleId: s.id,
         status: s.status,
         paypal: {
@@ -89,13 +103,15 @@ export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys
           captureStatus: s.payment!.captureStatus,
           capturedCents: s.payment!.capturedCents,
         },
-        settlement: s.settlement
+        settlement: s.settlement && view.level !== 'buyer'
           ? {
               runId: s.settlement.id,
               status: s.settlement.status,
               grossCents: s.settlement.grossCents,
               roundingRule: s.settlement.roundingRule,
-              lines: s.settlement.lines.map((l) => ({
+              lines: s.settlement.lines
+                .filter((l) => view.level === 'owner' || l.recipientId === view.userId)
+                .map((l) => ({
                 kind: l.kind,
                 recipientId: l.recipientId,
                 licenseId: l.licenseGrantId,
@@ -103,9 +119,7 @@ export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys
                 formula: l.formula,
                 payout: l.payoutItem ? { status: l.payoutItem.status, paypalItemId: l.payoutItem.paypalItemId, transactionId: l.payoutItem.transactionId } : null,
               })),
-              payoutBatch: s.settlement.batch
-                ? { senderBatchId: s.settlement.batch.senderBatchId, paypalBatchId: s.settlement.batch.paypalBatchId, status: s.settlement.batch.status }
-                : null,
+              payoutBatches: s.settlement.batches.map((b) => ({ attempt: b.attempt, senderBatchId: b.senderBatchId, paypalBatchId: b.paypalBatchId, status: b.status })),
             }
           : null,
       })),

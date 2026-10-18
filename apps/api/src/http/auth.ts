@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { Db } from '../db';
 import { userForApiKey, userForSession, type AuthUser, type Role } from '../modules/auth/auth.service';
+import { DEMO_USERS } from '../modules/demo/world';
 import { HttpError } from './errors';
 
 export type { Role };
@@ -17,6 +18,7 @@ declare global {
 }
 
 export const DEMO_USER_HEADER = 'x-demo-user';
+const DEMO_PERSONAS = new Set(DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => u.id));
 export const SESSION_COOKIE = 'tp_session';
 
 export function readCookie(req: Request, name: string): string | undefined {
@@ -58,7 +60,8 @@ export function authenticate(db: Db, opts: { demoMode: boolean }) {
 
     if (opts.demoMode) {
       const id = req.header(DEMO_USER_HEADER);
-      if (id) {
+      // Only the seeded, non-admin demo personas can be assumed — never a real account or an admin.
+      if (id && DEMO_PERSONAS.has(id)) {
         const user = await db.user.findUnique({ where: { id }, select: { id: true, name: true, email: true, role: true } });
         if (user) {
           req.user = user as AuthUser;
@@ -81,6 +84,11 @@ export function originCheck(allowedOrigins: string[]) {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.authMethod === 'api_key') return next();
     const origin = req.header('origin');
     if (origin && !allowed.has(origin)) return next(new HttpError(403, 'Request origin not allowed.'));
+    // Browsers that omit Origin still send Sec-Fetch-Site: refuse anything cross-site.
+    const site = req.header('sec-fetch-site');
+    if (!origin && site && site !== 'same-origin' && site !== 'same-site' && site !== 'none') {
+      return next(new HttpError(403, 'Cross-site request refused.'));
+    }
     next();
   };
 }

@@ -2,9 +2,10 @@ import { Router } from 'express';
 import type { AppDeps } from '../app';
 import { currentUser, requireRole } from '../http/auth';
 import { HttpError } from '../http/errors';
-import { verifyAuditChain } from '../modules/audit/audit-log';
+import { verifyAuditChain, verifyAuditChainCached } from '../modules/audit/audit-log';
 import { publicKeyPem } from '../modules/audit/signing';
-import { resetAndSeed } from '../modules/demo/seed';
+import { softResetDemo } from '../modules/demo/soft-reset';
+import { DEMO_USERS } from '../modules/demo/world';
 
 export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDeps) {
   const r = Router();
@@ -37,17 +38,24 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
 
   r.get('/demo/users', async (_req, res) => {
     if (!config.demoMode) return res.json({ users: [] });
-    const users = await db.user.findMany({ orderBy: { createdAt: 'asc' }, select: { id: true, name: true, role: true, email: true } });
+    // Only the seeded, non-admin personas — never real accounts.
+    const users = await db.user.findMany({
+      where: { id: { in: DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => u.id) } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, name: true, role: true, email: true },
+    });
     res.json({ users });
   });
 
-  /** Restores TracePay's fixtures. PayPal sandbox history is untouched. */
+  /**
+   * Restores the demo publisher's world. Scoped: real accounts and their data are
+   * never touched, and PayPal sandbox history is not reversed.
+   */
   r.post('/demo/reset', requireRole('publisher', 'admin'), async (req, res) => {
     if (!config.demoMode) throw new HttpError(404, 'Not found.');
-    // Reset wipes every table, real accounts included: only demo roles and admins may trigger it.
     if (req.authMethod !== 'demo' && req.user?.role !== 'admin') throw new HttpError(403, 'Only demo users can reset the demo.');
-    const result = await resetAndSeed(db);
-    res.json({ ok: true, ...result, note: 'TracePay data reset. PayPal sandbox transactions are not reversed.' });
+    const result = await softResetDemo(db);
+    res.json({ ok: true, ...result, note: 'Demo data restored. Real accounts were not affected; PayPal sandbox history is not reversed.' });
   });
 
   r.get('/dashboard', requireRole('publisher', 'admin'), async (req, res) => {
@@ -55,6 +63,7 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
     // Everything below is scoped to this publisher; admins see the whole system.
     const mine = user.role === 'admin' ? {} : { publisherId: user.id };
     const mySale = user.role === 'admin' ? {} : { artifact: { buildJob: { publisherId: user.id } } };
+    const lastResetSeq = (await db.auditEvent.findFirst({ where: { eventType: 'demo.reset' }, orderBy: { seq: 'desc' }, select: { seq: true } }))?.seq ?? 0;
     const myRun = user.role === 'admin' ? {} : { sale: mySale };
 
     const [buildsPassed, buildsBlocked, artifacts, sales, owed, paid, exceptions, recent, toApprove, toPay, paying, agentWaiting, latestArtifact] = await Promise.all([
@@ -75,7 +84,11 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
       db.settlementRun.count({ where: { ...myRun, status: 'exception' } }),
       db.auditEvent.findMany({
         // Publishers see only their own events; system events (no tenant) are for admins.
-        where: { eventType: { notIn: ['sale.created'] }, ...(user.role === 'admin' ? {} : { tenantId: user.id }) },
+        where: {
+          eventType: { notIn: ['sale.created'] },
+          ...(user.role === 'admin' ? {} : { tenantId: user.id }),
+          ...(req.authMethod === 'demo' ? { seq: { gt: lastResetSeq } } : {}),
+        },
         orderBy: { seq: 'desc' },
         take: 12,
         select: { seq: true, eventType: true, entityType: true, entityId: true, createdAt: true, hash: true, payload: true },
@@ -111,8 +124,10 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
     res.type('text/plain').send(publicKeyPem(signingKeys()));
   });
 
-  r.get('/audit/verify-chain', async (_req, res) => {
-    res.json(await verifyAuditChain(db));
+  /** Incremental check for signed-in users; a full re-hash of the whole log is admin-only. */
+  r.get('/audit/verify-chain', requireRole('publisher', 'contributor', 'buyer', 'admin'), async (req, res) => {
+    const full = req.query.full === '1' && currentUser(req).role === 'admin';
+    res.json(full ? await verifyAuditChain(db) : await verifyAuditChainCached(db));
   });
 
   return r;

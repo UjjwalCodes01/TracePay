@@ -7,6 +7,7 @@ import { PayPalClient } from './integrations/paypal/client';
 import { pickPlanner } from './modules/agent/planners';
 import { loadSigningKeys, type SigningKeys } from './modules/audit/signing';
 import { pickWriter } from './modules/generation/writers';
+import { recoverStaleWork } from './modules/maintenance/recovery';
 
 const env = serverEnv();
 
@@ -40,6 +41,8 @@ const app = createApp({
     cookieSecure: env.NODE_ENV === 'production',
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,
     authRateLimit: env.AUTH_RATE_LIMIT,
+    webhookRateLimitPerMinute: env.WEBHOOK_RATE_LIMIT_PER_MINUTE,
+    trustProxyHops: env.TRUST_PROXY_HOPS,
   },
 });
 
@@ -49,6 +52,14 @@ const server = app.listen(env.PORT, () => {
     'TracePay API listening',
   );
 });
+
+// Recover work interrupted by a previous restart, then keep sweeping periodically.
+const sweep = () =>
+  recoverStaleWork(db())
+    .then((r) => (r.agentRuns || r.builds) && logger.warn(r, 'recovered interrupted work'))
+    .catch((err) => logger.error({ err }, 'stale-work sweep failed'));
+void sweep();
+setInterval(sweep, 5 * 60_000).unref();
 
 // Graceful shutdown: stop accepting connections, let in-flight requests finish, close the pool.
 let shuttingDown = false;

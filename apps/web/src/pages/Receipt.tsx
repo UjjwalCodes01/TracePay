@@ -34,7 +34,12 @@ export function ReceiptPage() {
     <>
       <PageHeader
         title="Audit Receipt"
-        subtitle={<>One signed record connecting <strong>{d.artifact.title}</strong> to its sources, rights check, PayPal sale, settlement and payouts.</>}
+        subtitle={
+          <>
+            One signed record connecting <strong>{d.artifact.title}</strong> to its sources, rights check, PayPal sale, settlement and payouts.
+            {d.view !== 'owner' && ` This is the ${d.view} view: it shows only what you’re entitled to see.`}
+          </>
+        }
         action={
           <div className="flex gap-2">
             <Button variant="secondary" onClick={download}>

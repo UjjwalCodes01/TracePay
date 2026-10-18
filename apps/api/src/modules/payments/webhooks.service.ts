@@ -2,13 +2,15 @@ import type { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
 import type { PayPalGateway } from '../../integrations/paypal/gateway';
 import type { Capture, WebhookEvent, WebhookVerificationHeaders } from '../../integrations/paypal/types';
+import { decimalToCents } from '@tracepay/shared';
 import { applyCapture, markSaleReversed } from './payments.service';
 import { refreshPayouts } from '../settlements/settlement.service';
 
 export type WebhookResult =
   | { status: 'rejected'; reason: string }
   | { status: 'duplicate'; eventId: string }
-  | { status: 'processed'; eventId: string; outcome: string };
+  | { status: 'processed'; eventId: string; outcome: string }
+  | { status: 'failed'; eventId: string; error: string };
 
 export function readVerificationHeaders(get: (name: string) => string | undefined): WebhookVerificationHeaders | null {
   const h = {
@@ -40,28 +42,35 @@ export async function handlePayPalWebhook(
   }
   if (!event.id || !event.event_type) return { status: 'rejected', reason: 'not a PayPal event' };
 
+  // Verify BEFORE touching storage: unverified events are never recorded, so a
+  // forged event can't pre-claim a real event id and make it look like a duplicate.
   const verified =
     Boolean(args.webhookId && args.headers) &&
     (await paypal.verifyWebhookSignature(args.webhookId!, args.headers!, args.rawBody).catch(() => false));
+  if (!verified) return { status: 'rejected', reason: 'signature not verified' };
 
   const resourceId = (event.resource as { id?: string } | null)?.id ?? null;
   try {
     await db.webhookEvent.create({
-      data: { id: event.id, eventType: event.event_type, resourceId, verified, payload: event as unknown as Prisma.InputJsonValue },
+      data: { id: event.id, eventType: event.event_type, resourceId, verified: true, payload: event as unknown as Prisma.InputJsonValue },
     });
   } catch (err) {
-    if ((err as { code?: string }).code === 'P2002') return { status: 'duplicate', eventId: event.id };
-    throw err;
+    if ((err as { code?: string }).code !== 'P2002') throw err;
+    // Seen before. Only skip it if it was fully processed; a delivery that failed
+    // mid-way is retried by PayPal and must be applied now.
+    const prior = await db.webhookEvent.findUnique({ where: { id: event.id }, select: { processedAt: true } });
+    if (prior?.processedAt) return { status: 'duplicate', eventId: event.id };
   }
 
-  if (!verified) {
-    await db.webhookEvent.update({ where: { id: event.id }, data: { processedAt: new Date(), outcome: 'rejected: signature not verified' } });
-    return { status: 'rejected', reason: 'signature not verified' };
+  try {
+    const outcome = await applyEvent(db, paypal, event);
+    await db.webhookEvent.update({ where: { id: event.id }, data: { processedAt: new Date(), outcome } });
+    return { status: 'processed', eventId: event.id, outcome };
+  } catch (err) {
+    await db.webhookEvent.update({ where: { id: event.id }, data: { outcome: `failed: ${(err as Error).message.slice(0, 300)}` } }).catch(() => undefined);
+    // Non-2xx makes PayPal redeliver later.
+    return { status: 'failed', eventId: event.id, error: (err as Error).message };
   }
-
-  const outcome = await applyEvent(db, paypal, event);
-  await db.webhookEvent.update({ where: { id: event.id }, data: { processedAt: new Date(), outcome } });
-  return { status: 'processed', eventId: event.id, outcome };
 }
 
 async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): Promise<string> {
@@ -77,23 +86,43 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
     case 'PAYMENT.CAPTURE.REFUNDED':
     case 'PAYMENT.CAPTURE.REVERSED':
     case 'PAYMENT.CAPTURE.DENIED': {
-      const capture = event.resource as Capture & { links?: Array<{ rel: string; href: string }> };
+      const resource = event.resource as Capture & { links?: Array<{ rel: string; href: string }> };
+      const isRefund = event.event_type === 'PAYMENT.CAPTURE.REFUNDED';
       // A refund resource's id is the refund id; the capture id is in its "up" link.
-      const captureId = event.event_type === 'PAYMENT.CAPTURE.REFUNDED'
-        ? capture.links?.find((l) => l.rel === 'up')?.href.split('/').pop() ?? capture.id
-        : capture.id;
-      const saleId = await db.$transaction((tx) => markSaleReversed(tx, captureId, event.event_type));
-      return saleId ? `sale ${saleId} flagged (${event.event_type})` : 'ignored: unknown capture';
+      const captureId = isRefund ? resource.links?.find((l) => l.rel === 'up')?.href.split('/').pop() ?? resource.id : resource.id;
+      const saleId = await db.$transaction((tx) =>
+        markSaleReversed(tx, {
+          captureId,
+          saleIdHint: resource.custom_id ?? null,
+          eventType: event.event_type,
+          refundedCents: isRefund && resource.amount ? decimalToCents(resource.amount.value) : null,
+        }),
+      );
+      return saleId ? `sale ${saleId} flagged (${event.event_type})` : 'ignored: not a TracePay sale';
     }
     default: {
       if (event.event_type.startsWith('PAYMENT.PAYOUTSBATCH.') || event.event_type.startsWith('PAYMENT.PAYOUTS-ITEM.')) {
-        const r = event.resource as { batch_header?: { payout_batch_id?: string }; payout_batch_id?: string };
-        const paypalBatchId = r.batch_header?.payout_batch_id ?? r.payout_batch_id;
-        const batch = paypalBatchId ? await db.payoutBatch.findUnique({ where: { paypalBatchId } }) : null;
+        const r = event.resource as {
+          batch_header?: { payout_batch_id?: string; sender_batch_header?: { sender_batch_id?: string } };
+          payout_batch_id?: string;
+          payout_item?: { sender_item_id?: string };
+        };
+        const paypalBatchId = r.batch_header?.payout_batch_id ?? r.payout_batch_id ?? null;
+        const senderBatchId = r.batch_header?.sender_batch_header?.sender_batch_id ?? null;
+        let batch = paypalBatchId ? await db.payoutBatch.findUnique({ where: { paypalBatchId } }) : null;
+        // A batch whose create response was lost has no PayPal id yet: match it on OUR id and backfill.
+        if (!batch && senderBatchId) batch = await db.payoutBatch.findUnique({ where: { senderBatchId } });
+        if (!batch && r.payout_item?.sender_item_id) {
+          batch = (await db.payoutItem.findUnique({ where: { senderItemId: r.payout_item.sender_item_id }, include: { batch: true } }))?.batch ?? null;
+        }
         if (!batch) return 'ignored: unknown payout batch';
+        if (!batch.paypalBatchId && paypalBatchId) {
+          await db.payoutBatch.update({ where: { id: batch.id }, data: { paypalBatchId, status: 'PENDING' } });
+          await db.payoutItem.updateMany({ where: { batchId: batch.id, status: 'SUBMITTING' }, data: { status: 'PENDING' } });
+        }
         // Never trust the webhook payload for status — re-read it from PayPal.
         const res = await refreshPayouts(db, paypal, batch.runId);
-        return `payout batch ${paypalBatchId} refreshed → ${res.runStatus}`;
+        return `payout batch ${paypalBatchId ?? senderBatchId} refreshed → ${res.runStatus}`;
       }
       return `ignored: ${event.event_type}`;
     }

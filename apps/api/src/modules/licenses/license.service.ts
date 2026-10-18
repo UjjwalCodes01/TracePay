@@ -3,6 +3,8 @@ import type { Prisma } from '../../generated/prisma/client';
 import type { Db, Tx } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
+import { todayUtc } from '../builds/preflight.service';
+import { withdrawReportsUsingAsset } from '../sales/rights.service';
 
 /**
  * The two-party license lifecycle. A grant only becomes enforceable when the
@@ -69,6 +71,9 @@ export async function acceptOffer(db: Db, input: { grantId: string; publisherId:
     if (fresh.status !== 'offered') throw new LicenseError(`This offer is ${fresh.status}.`, 'state');
     // The publisher accepts the exact terms they reviewed — not whatever is stored now.
     if (fresh.termsHash !== input.termsHash) throw new LicenseError('These terms changed since you opened them. Review them again.', 'state');
+    const offered = LicenseTermsSchema.safeParse(fresh.terms);
+    if (!offered.success) throw new LicenseError('This offer has unreadable terms. Ask the contributor to send it again.', 'state');
+    if (offered.data.validUntil && offered.data.validUntil < todayUtc()) throw new LicenseError('This offer has already expired. Ask the contributor for new dates.', 'state');
 
     const previous = await tx.licenseGrant.findMany({ where: { assetId: grant.assetId, licenseeId: grant.licenseeId, status: 'approved' }, select: { id: true } });
     await tx.licenseGrant.updateMany({ where: { id: { in: previous.map((p) => p.id) } }, data: { status: 'superseded' } });
@@ -105,6 +110,7 @@ export interface OfferInput {
  */
 export async function offerLicense(db: Db, input: OfferInput) {
   const terms = LicenseTermsSchema.parse(input.terms);
+  if (terms.validUntil && terms.validUntil < todayUtc()) throw new LicenseError('These terms have already expired. Choose a later end date.', 'invalid');
   return db.$transaction(async (tx) => {
     const asset = await tx.asset.findUnique({ where: { id: input.assetId }, select: { id: true, ownerId: true } });
     if (!asset || asset.ownerId !== input.contributorId) throw new LicenseError('Source not found.', 'not_found');
@@ -155,13 +161,41 @@ export async function declineRequest(db: Db, input: { grantId: string; contribut
  * already built keep settling under their frozen terms, as agreed at the time.
  */
 export async function revokeLicense(db: Db, input: { grantId: string; contributorId: string; reason?: string | null }) {
-  return close(db, input.grantId, { actorId: input.contributorId, side: 'licensor', from: 'approved', to: 'revoked', reason: input.reason, event: 'license.revoked' });
+  return close(db, input.grantId, {
+    actorId: input.contributorId,
+    side: 'licensor',
+    from: 'approved',
+    to: 'revoked',
+    reason: input.reason,
+    event: 'license.revoked',
+    after: async (tx, grant) => {
+      // An outstanding offer or request must not let the publisher undo the revocation by accepting it.
+      const open = await tx.licenseGrant.findMany({ where: { assetId: grant.assetId, licenseeId: grant.licenseeId, status: { in: ['offered', 'requested'] } } });
+      for (const g of open) {
+        await tx.licenseGrant.update({
+          where: { id: g.id },
+          data: { status: g.status === 'offered' ? 'withdrawn' : 'declined', closedAt: new Date(), closedById: input.contributorId, closedReason: 'Closed because the license was revoked.' },
+        });
+        await audit(tx, g.id, g.status === 'offered' ? 'license.withdrawn' : 'license.request_declined', { reason: 'license revoked' });
+      }
+      // Reports that use the source stop selling immediately (completed sales are unaffected).
+      return withdrawReportsUsingAsset(tx, grant.assetId, grant.licenseeId, 'A source license was revoked by its contributor.');
+    },
+  });
 }
 
 async function close(
   db: Db,
   grantId: string,
-  o: { actorId: string; side: 'licensor' | 'licensee'; from: 'offered' | 'requested' | 'approved'; to: 'declined' | 'withdrawn' | 'revoked'; reason?: string | null; event: string },
+  o: {
+    actorId: string;
+    side: 'licensor' | 'licensee';
+    from: 'offered' | 'requested' | 'approved';
+    to: 'declined' | 'withdrawn' | 'revoked';
+    reason?: string | null;
+    event: string;
+    after?: (tx: Tx, grant: { assetId: string; licenseeId: string }) => Promise<string[]>;
+  },
 ) {
   return db.$transaction(async (tx) => {
     const grant = await tx.licenseGrant.findUnique({ where: { id: grantId }, include: { asset: { select: { ownerId: true } } } });
@@ -174,7 +208,8 @@ async function close(
       where: { id: grantId },
       data: { status: o.to, closedAt: new Date(), closedById: o.actorId, closedReason: o.reason?.trim().slice(0, 500) || null },
     });
-    await audit(tx, grantId, o.event, { from: o.from, to: o.to, reason: updated.closedReason });
+    const withdrawn = o.after ? await o.after(tx, updated) : [];
+    await audit(tx, grantId, o.event, { from: o.from, to: o.to, reason: updated.closedReason, ...(o.after ? { reportsWithdrawn: withdrawn } : {}) });
     return updated;
   });
 }

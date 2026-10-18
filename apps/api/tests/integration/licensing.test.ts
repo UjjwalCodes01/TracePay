@@ -136,26 +136,34 @@ describe.runIf(process.env.TEST_DATABASE_URL)('contributor onboarding and licens
     await otherPublisher.post(`/api/licenses/${o2.body.license.id}/accept`).send({ termsHash: o2.body.license.termsHash }).expect(409);
   });
 
-  it('revocation blocks future builds but not the settlement of reports already sold', async () => {
-    // Build and sell a report while licensed.
+  it('revocation stops new builds AND further sales, but never rewrites a completed sale', async () => {
+    // Build a report and sell one copy while licensed (30% after the renegotiation).
     const build = await publisher.post('/api/builds/preflight').send({ intent, assetVersionIds: [assetVersionId] }).expect(201);
     const artifactId = (await publisher.post(`/api/builds/${build.body.buildId}/generate`).expect(201)).body.artifactId;
-
-    const grant = await db().licenseGrant.findFirstOrThrow({ where: { assetId, status: 'approved' } });
-    await publisher.post(`/api/licenses/${grant.id}/revoke`).send({}).expect(403); // only the licensor revokes
-    await contributor.post(`/api/licenses/${grant.id}/revoke`).send({ reason: 'Contract ended' }).expect(200);
-
-    const after = await publisher.post('/api/builds/preflight').send({ intent, assetVersionIds: [assetVersionId] }).expect(201);
-    expect(after.body.report.results.find((r: { ruleId: string }) => r.ruleId === 'LICENSE_APPROVED').outcome).toBe('fail');
-
-    // The report built before revocation still sells and settles at 30%.
     const buyer = request.agent(app);
     await buyer.post('/api/auth/signup').send({ email: 'reader@buyer.example', password: 'reader buyer pass', name: 'Reader', role: 'buyer' }).expect(201);
     const order = await buyer.post('/api/checkout/orders').send({ artifactId }).expect(201);
     paypal.approve(order.body.orderId);
     const cap = await buyer.post(`/api/checkout/${order.body.saleId}/capture`).expect(200);
+
+    const grant = await db().licenseGrant.findFirstOrThrow({ where: { assetId, status: 'approved' } });
+    await publisher.post(`/api/licenses/${grant.id}/revoke`).send({}).expect(403); // only the licensor revokes
+    await contributor.post(`/api/licenses/${grant.id}/revoke`).send({ reason: 'Contract ended' }).expect(200);
+
+    // New builds are blocked…
+    const after = await publisher.post('/api/builds/preflight').send({ intent, assetVersionIds: [assetVersionId] }).expect(201);
+    expect(after.body.report.results.find((r: { ruleId: string }) => r.ruleId === 'LICENSE_APPROVED').outcome).toBe('fail');
+    // …the report is taken off sale immediately, and can't be relisted…
+    expect((await db().artifact.findUniqueOrThrow({ where: { id: artifactId } })).status).toBe('withdrawn');
+    const second = request.agent(app);
+    await second.post('/api/auth/signup').send({ email: 'late@buyer.example', password: 'late buyer pass', name: 'Late', role: 'buyer' }).expect(201);
+    await second.post('/api/checkout/orders').send({ artifactId }).expect(409);
+    const relist = await publisher.post(`/api/artifacts/${artifactId}/relist`).expect(409);
+    expect(relist.body.error).toMatch(/can't be sold yet/);
+    // …while the sale completed before revocation still settles at the agreed 30%.
     const line = await db().settlementLine.findFirstOrThrow({ where: { runId: cap.body.settlementRunId, kind: 'contributor' } });
     expect(line.amountCents).toBe(600);
+    expect(await db().auditEvent.count({ where: { eventType: 'artifact.withdrawn', entityId: artifactId } })).toBe(1);
   });
 
   it('keeps contributors in their own lane', async () => {
@@ -164,7 +172,10 @@ describe.runIf(process.env.TEST_DATABASE_URL)('contributor onboarding and licens
     expect((await other.get('/api/contributor/assets').expect(200)).body.assets).toEqual([]);
     await other.post(`/api/contributor/assets/${assetId}/versions`).send({ content: `${CONTENT}\n\nAppended by someone else, which must never be allowed to happen.` }).expect(404);
     await other.post(`/api/contributor/assets/${assetId}/offers`).send({ licenseeEmail: 'desk@studio.example', terms }).expect(404);
-    await contributor.post(`/api/contributor/assets/${assetId}/offers`).send({ licenseeEmail: 'reader@buyer.example', terms }).expect(400); // buyers can't be licensees
+    // Buyers can't be licensees — and the answer is identical to "no such account" (no enumeration).
+    const asBuyer = await contributor.post(`/api/contributor/assets/${assetId}/offers`).send({ licenseeEmail: 'reader@buyer.example', terms }).expect(404);
+    const unknown = await contributor.post(`/api/contributor/assets/${assetId}/offers`).send({ licenseeEmail: 'nobody@nowhere.example', terms }).expect(404);
+    expect(asBuyer.body.error).toBe(unknown.body.error);
   });
 
   it('records the whole lifecycle in the publisher’s audit trail', async () => {

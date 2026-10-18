@@ -6,6 +6,9 @@ import { canonicalJson, sha256Hex } from '../audit/hash-chain';
 import { validateCitations, type CitationReport, type DraftSection } from './citations';
 import { retrievePassages } from './retrieval';
 import { pickWriter, type ReportWriter } from './writers';
+import { todayUtc } from '../builds/preflight.service';
+import { resolveSources } from '../catalog/catalog.service';
+import { failedRules, runPreflight } from '../license-compiler/compiler';
 
 export class BuildStateError extends Error {
   constructor(message: string) {
@@ -55,7 +58,22 @@ export async function generateArtifact(db: Db, buildId: string, writer: ReportWr
       include: { sources: { orderBy: { ordinal: 'asc' }, include: { assetVersion: { include: { asset: true } } } } },
     });
     const intent = build.intent as unknown as BuildIntent;
-    const preflight = build.preflight as unknown as PreflightReport;
+    // Preflight may have passed days ago. Re-check against the licenses in force NOW,
+    // before any source text is retrieved or sent to a model.
+    const current = runPreflight({
+      intent,
+      sources: await resolveSources(db, build.publisherId, build.sources.map((s) => s.assetVersionId)),
+      asOf: todayUtc(),
+    });
+    if (current.verdict === 'block') {
+      const reasons = failedRules(current).map((r) => r.message);
+      await db.$transaction(async (tx) => {
+        await tx.buildJob.updateMany({ where: { id: buildId, status: 'generating' }, data: { status: 'generation_failed' } });
+        await appendAudit(tx, { entityType: 'build', entityId: buildId, eventType: 'build.rights_changed', payload: { reasons } });
+      });
+      throw new BuildStateError(`A source license changed since this build was checked: ${reasons[0]} Run the preflight again.`);
+    }
+    const preflight: PreflightReport = current;
     const titleOf = new Map(build.sources.map((s) => [s.assetVersionId, s.assetVersion.asset.title]));
 
     const passages = (await retrievePassages(db, build.sources.map((s) => s.assetVersionId), `${intent.title} ${intent.brief}`)).map(
@@ -125,7 +143,9 @@ export async function generateArtifact(db: Db, buildId: string, writer: ReportWr
       await tx.sourceEvent.createMany({
         data: report.citations.map((c) => ({ buildJobId: buildId, assetVersionId: c.assetVersionId, chunkId: c.chunkId, eventType: 'cited' as const, handle: c.handle })),
       });
-      await tx.buildJob.update({ where: { id: buildId }, data: { status: 'generated' } });
+      // Conditional: if this build was marked interrupted meanwhile, roll the artifact back.
+      const done = await tx.buildJob.updateMany({ where: { id: buildId, status: 'generating' }, data: { status: 'generated' } });
+      if (done.count === 0) throw new BuildStateError('This build was cancelled while generating.');
       await appendAudit(tx, {
         entityType: 'artifact',
         entityId: artifact.id,

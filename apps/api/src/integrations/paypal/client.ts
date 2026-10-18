@@ -11,6 +11,7 @@ import type {
 } from './types';
 
 const BASE_URL = 'https://api-m.sandbox.paypal.com';
+export const REQUEST_TIMEOUT_MS = 25_000;
 
 export class PayPalApiError extends Error {
   constructor(
@@ -118,15 +119,24 @@ export class PayPalClient {
     emailMessage: string;
     items: PayoutItemRequest[];
   }): Promise<PayoutBatchResponse> {
-    return this.call('payouts.create', 'POST', '/v1/payments/payouts', {
-      sender_batch_header: {
-        sender_batch_id: args.senderBatchId,
-        email_subject: args.emailSubject,
-        email_message: args.emailMessage,
-        recipient_type: 'EMAIL',
+    // Not retried here: a resend after a lost response would be rejected as a
+    // duplicate. The settlement service owns retries (same sender_batch_id).
+    return this.call(
+      'payouts.create',
+      'POST',
+      '/v1/payments/payouts',
+      {
+        sender_batch_header: {
+          sender_batch_id: args.senderBatchId,
+          email_subject: args.emailSubject,
+          email_message: args.emailMessage,
+          recipient_type: 'EMAIL',
+        },
+        items: args.items,
       },
-      items: args.items,
-    });
+      {},
+      { retry: false },
+    );
   }
 
   getPayoutBatch(payoutBatchId: string): Promise<PayoutBatchStatus> {
@@ -162,8 +172,9 @@ export class PayPalClient {
     path: string,
     body?: unknown,
     extraHeaders: Record<string, string> = {},
+    opts: { retry?: boolean } = {},
   ): Promise<T> {
-    const maxAttempts = 3;
+    const maxAttempts = opts.retry === false ? 1 : 3;
     for (let attempt = 1; ; attempt++) {
       try {
         const token = await this.accessToken();
@@ -174,6 +185,8 @@ export class PayPalClient {
             'Content-Type': 'application/json',
             ...extraHeaders,
           },
+          // A hung call must give up long before the service treats a submission as abandoned.
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
         });
         const text = await res.text();
@@ -184,7 +197,8 @@ export class PayPalClient {
         }
         return json as T;
       } catch (err) {
-        const retryable = err instanceof PayPalApiError ? err.retryable : err instanceof TypeError; // TypeError = network failure
+        // TypeError = network failure; TimeoutError = our own deadline.
+        const retryable = err instanceof PayPalApiError ? err.retryable : err instanceof TypeError || (err as Error).name === 'TimeoutError';
         if (!retryable || attempt >= maxAttempts) throw err;
         await new Promise((r) => setTimeout(r, 250 * 2 ** attempt));
       }

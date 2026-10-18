@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { AppDeps } from '../app';
 import { currentUser, requireRole } from '../http/auth';
 import { HttpError } from '../http/errors';
+import { quotas } from '../http/limits';
 import { addVersion, ASSET_KINDS, createAsset, MAX_CONTENT_CHARS } from '../modules/assets/asset.service';
 import { todayUtc } from '../modules/builds/preflight.service';
 import { extractTerms, MAX_LICENSE_TEXT } from '../modules/licenses/extract';
@@ -57,6 +58,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
     const assets = await db.asset.findMany({
       where: { ownerId: currentUser(req).id },
       orderBy: { createdAt: 'desc' },
+      take: 200,
       include: {
         versions: { orderBy: { version: 'desc' }, select: { id: true, version: true, sha256: true, createdAt: true, _count: { select: { chunks: true } } } },
         licenses: { orderBy: [{ licenseeId: 'asc' }, { version: 'desc' }], select: { ...GRANT_SELECT, licensee: { select: { id: true, name: true, email: true } } } },
@@ -65,7 +67,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
     res.json({ assets });
   });
 
-  r.post('/contributor/assets', requireRole('contributor'), async (req, res) => {
+  r.post('/contributor/assets', requireRole('contributor'), quotas.createAsset(), async (req, res) => {
     const body = z
       .object({
         title: z.string().trim().min(3).max(200),
@@ -78,7 +80,15 @@ export function licensingRoutes({ db, config }: AppDeps) {
     res.status(201).json({ assetId: created.asset.id, assetVersionId: created.version.id, chunks: created.chunks });
   });
 
-  r.post('/contributor/assets/:id/versions', requireRole('contributor'), async (req, res) => {
+  /** Archiving hides a source from the marketplace; existing licenses keep working until revoked. */
+  r.post('/contributor/assets/:id/archive', requireRole('contributor'), async (req, res) => {
+    const { archived } = z.object({ archived: z.boolean() }).parse(req.body);
+    const result = await db.asset.updateMany({ where: { id: param(req, 'id'), ownerId: currentUser(req).id }, data: { archivedAt: archived ? new Date() : null } });
+    if (result.count === 0) throw new HttpError(404, 'Source not found.');
+    res.json({ ok: true, archived });
+  });
+
+  r.post('/contributor/assets/:id/versions', requireRole('contributor'), quotas.addVersion(), async (req, res) => {
     const { content } = z.object({ content: z.string().max(MAX_CONTENT_CHARS + 10_000) }).parse(req.body);
     const created = await addVersion(db, currentUser(req).id, param(req, 'id'), content);
     res.status(201).json({ assetVersionId: created.version.id, version: created.version.version, chunks: created.chunks });
@@ -92,18 +102,20 @@ export function licensingRoutes({ db, config }: AppDeps) {
     res.json(await extractTerms(text, { useModel: config.vertexReady, today: todayUtc() }));
   });
 
-  r.post('/contributor/assets/:id/offers', requireRole('contributor'), async (req, res) => {
+  r.post('/contributor/assets/:id/offers', requireRole('contributor'), quotas.offer(), async (req, res) => {
     const body = z
       .object({
         licenseeEmail: z.email(),
         terms: LicenseTermsSchema,
         origin: z.enum(['manual', 'ai_draft', 'rules_draft']).default('manual'),
         sourceText: z.string().max(MAX_LICENSE_TEXT).optional().nullable(),
-        extraction: z.unknown().optional(),
+        // Kept for comparison only; bounded so it can't be used to store arbitrary blobs.
+        extraction: z.unknown().optional().refine((v) => JSON.stringify(v ?? null).length <= 50_000, 'Extraction data is too large.'),
       })
       .parse(req.body);
-    const licensee = await db.user.findUnique({ where: { email: body.licenseeEmail.toLowerCase() }, select: { id: true } });
-    if (!licensee) throw new HttpError(404, 'No publisher account uses that email.');
+    const licensee = await db.user.findUnique({ where: { email: body.licenseeEmail.toLowerCase() }, select: { id: true, role: true } });
+    // Same answer for 'no account' and 'not a publisher', so the form can't be used to probe accounts.
+    if (!licensee || licensee.role !== 'publisher') throw new HttpError(404, 'No publisher account uses that email.');
     const grant = await offerLicense(db, {
       assetId: param(req, 'id'),
       contributorId: currentUser(req).id,
@@ -137,8 +149,9 @@ export function licensingRoutes({ db, config }: AppDeps) {
   r.get('/marketplace', requireRole('publisher'), async (req, res) => {
     const me = currentUser(req).id;
     const assets = await db.asset.findMany({
-      where: { ownerId: { not: me } },
+      where: { ownerId: { not: me }, archivedAt: null },
       orderBy: { createdAt: 'desc' },
+      take: 200,
       select: {
         id: true, title: true, kind: true, description: true, createdAt: true,
         owner: { select: { id: true, name: true } },
@@ -160,7 +173,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
     });
   });
 
-  r.post('/marketplace/:assetId/request', requireRole('publisher'), async (req, res) => {
+  r.post('/marketplace/:assetId/request', requireRole('publisher'), quotas.request(), async (req, res) => {
     const { message } = z.object({ message: z.string().max(1000).optional().nullable() }).parse(req.body);
     const grant = await requestLicense(db, { assetId: param(req, 'assetId'), publisherId: currentUser(req).id, message });
     res.status(201).json({ license: { id: grant.id, status: grant.status, version: grant.version } });
@@ -170,8 +183,9 @@ export function licensingRoutes({ db, config }: AppDeps) {
   r.get('/licenses/inbox', requireRole('publisher'), async (req, res) => {
     const grants = await db.licenseGrant.findMany({
       where: { licenseeId: currentUser(req).id, status: { in: ['offered', 'requested'] } },
+      take: 100,
       orderBy: { updatedAt: 'desc' },
-      select: { ...GRANT_SELECT, sourceText: true, asset: { select: { id: true, title: true, kind: true, owner: { select: { name: true } } } } },
+      select: { ...GRANT_SELECT, sourceText: true, asset: { select: { id: true, title: true, kind: true, owner: { select: { name: true, paypalEmail: true } } } } },
     });
     // For renegotiations, show what is in force today next to what is offered.
     const current = await db.licenseGrant.findMany({
@@ -179,7 +193,14 @@ export function licensingRoutes({ db, config }: AppDeps) {
       select: { assetId: true, version: true, terms: true },
     });
     const byAsset = new Map(current.map((c) => [c.assetId, c]));
-    res.json({ licenses: grants.map((g) => ({ ...g, current: byAsset.get(g.asset.id) ?? null })) });
+    // Never expose the contributor's payout address — only whether one is set.
+    res.json({
+      licenses: grants.map(({ asset: { owner, ...asset }, ...g }) => ({
+        ...g,
+        asset: { ...asset, owner: { name: owner.name, canBePaid: Boolean(owner.paypalEmail) } },
+        current: byAsset.get(asset.id) ?? null,
+      })),
+    });
   });
 
   r.post('/licenses/:id/accept', requireRole('publisher'), async (req, res) => {

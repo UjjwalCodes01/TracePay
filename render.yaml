@@ -18,6 +18,11 @@ services:
         value: "300"
       - key: AUTH_RATE_LIMIT
         value: "20"
+      # Trust only Render's own proxy. (Trusting 2 hops would let a client calling the
+      # Render URL directly spoof X-Forwarded-For and dodge rate limits.) Per-account
+      # login limits and per-user quotas cover the case where Vercel traffic shares IPs.
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       - key: LOG_LEVEL
         value: info
       - key: DATABASE_URL

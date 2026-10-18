@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 import { AssetError } from '../modules/assets/asset.service';
+import { CryptoBusyError } from '../modules/auth/crypto';
 import { UnknownAssetVersionError } from '../modules/catalog/catalog.service';
 import { LicenseError } from '../modules/licenses/license.service';
 import { BuildStateError } from '../modules/generation/generation.service';
@@ -29,6 +30,7 @@ function toHttp(err: unknown): HttpError {
   if (err instanceof SettlementStateError) return new HttpError(SETTLEMENT_STATUS[err.code], err.message, { code: err.code });
   if (err instanceof SettlementError) return new HttpError(422, err.message);
   if (err instanceof LicenseError) return new HttpError(LICENSE_STATUS[err.code], err.message, { code: err.code });
+  if (err instanceof CryptoBusyError) return new HttpError(503, err.message);
   if (err instanceof AssetError) return new HttpError(ASSET_STATUS[err.code], err.message, { code: err.code });
   return new HttpError(500, 'Internal error.');
 }

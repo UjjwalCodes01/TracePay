@@ -24,6 +24,8 @@ export interface CompilerSource {
     status: LicenseStatus;
     terms: LicenseTerms;
   } | null;
+  /** Why there is no usable license, when one exists but can't be read. */
+  licenseProblem?: string;
 }
 
 export interface PreflightInput {
@@ -69,7 +71,7 @@ export function runPreflight({ intent, sources, asOf }: PreflightInput): Preflig
     const name = `"${s.assetTitle}"`;
 
     if (!s.license) {
-      add('LICENSE_PRESENT', 'fail', `${name} has no license grant for this publisher.`, id);
+      add('LICENSE_PRESENT', 'fail', s.licenseProblem ? `${name} ${s.licenseProblem}` : `${name} has no license grant for this publisher.`, id);
       continue;
     }
     add('LICENSE_PRESENT', 'pass', `${name} has license ${s.license.id}.`, id);

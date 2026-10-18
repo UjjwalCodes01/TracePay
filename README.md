@@ -18,7 +18,7 @@ An AI can assemble a paid deliverable out of a dozen licensed sources in seconds
 2. **The Publisher Agent recovers.** A Gemini agent finds a compatible replacement (*Open Developer Survey Digest*, $2 per sale), asks the publisher for approval, re-runs preflight — now **PASS** — and generates the report. It cannot override a failed rule, change the price, or move money.
 3. **Every claim is traceable.** Each finding cites `[C1]`, `[C4]`… which resolve to the exact retrieved passage. Invented citations are rejected.
 4. **A buyer pays with PayPal.** The server creates the order, captures it, and verifies amount, currency and sale reference against PayPal's response.
-5. **Contributors are paid automatically — under the terms frozen at build time.**
+5. **Contributors are paid automatically — under the license terms in force at the moment of sale.**
 
    | Recipient | Rule (approved license) | Amount |
    |---|---|---|
@@ -38,7 +38,7 @@ The innovation isn't splitting $20 — many systems can do that. It's that **the
 
 - **Rights are checked against the intended use, not just "has a license".** The same dataset can be allowed in a derived report and blocked the moment you add a raw-data appendix (`RAW_REDISTRIBUTION`).
 - **Provenance drives payment.** A license can pay only when the final output *cites* the source; retrieved-but-uncited sources get $0 with a recorded reason.
-- **Terms are frozen per build.** If a contributor raises their royalty next month, past sales still settle under the terms in force when the report was built.
+- **Rights are re-checked at every sale, and terms are frozen per sale.** A report keeps selling only while every source's license still permits it; a revoked or expired license takes it off sale. Each sale settles under the terms in force when it happened — later renegotiations never rewrite it.
 - **Evidence is never blurred.** Every node in the provenance graph is labeled as *verified by PayPal*, *recorded event*, *AI interpretation*, or *contractual* — a model's claim is never presented as a fact.
 
 ---
@@ -177,7 +177,7 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
 | **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
-| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 92 tests against real Postgres, Render Blueprint, Vercel config |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 124 tests against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 
@@ -203,7 +203,7 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 ## Tests
 
 ```bash
-npm run test:integration -w @tracepay/api   # 92 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api   # 124 tests; creates/migrates a tracepay_test database
 ```
 
 | Suite | Covers |
@@ -211,12 +211,13 @@ npm run test:integration -w @tracepay/api   # 92 tests; creates/migrates a trace
 | License compiler (14) | block/pass, replacement, internal-only, raw-redistribution adversarial case, expiry, territory, >100% royalties, determinism |
 | Settlement engine (9) | exact $20 split, reconciliation for any amount, paid-only-if-cited, fixed fees, rejection cases |
 | Citations · audit · signing · money (7) | invented citation rejected, hash chain tamper detection, signature tamper detection, decimal ↔ cents |
-| PayPal client (5) | same idempotency key on retry, no retry on 4xx, raw-body webhook verification, Payouts scope |
+| PayPal client (6) | same idempotency key on retry, payout POST never auto-retried, deadline on every call, no retry on 4xx, raw-body webhook verification, Payouts scope |
 | Build pipeline (5) | recorded blocked builds, retrieval scoped to approved sources, citation integrity |
-| Money path (13) | capture before approval, duplicate webhooks, webhook-before-response, forged signature, amount mismatch, **frozen terms after a license edit**, pending ≠ paid, failed/returned items, **lost payout response never pays twice**, missing Payouts permission, refunds |
+| Money path (20) | capture before approval, duplicate webhooks, webhook-before-response, forged-then-genuine webhook ids, reprocessing a half-applied webhook, amount mismatch, **sale-time terms that later edits never touch**, expired license blocks the sale, capture recorded even when settlement fails, no double purchase, **concurrent payout clicks send once**, denied batches, refunds stay exceptions, **lost payout response recovered via webhook**, missing Payouts permission |
+| Hardening (20) | no source text or payout addresses in builds or purchase lists, per-viewer provenance and receipts, refunds never undone or dropped, partial refunds, revocation closes pending offers, new credit requirements stop sales, generation and capture-time license re-checks, unreadable stored terms, payout retry with history, settlement recalculation, interrupted-work recovery, scoped demo reset, demo header limited to personas, cross-site writes, per-account login lockout, checkout reuse, price limits |
 | Publisher agent (5) | recovery, approval pause, decline, guardrail violations, turn limit |
 | Security (13) | sign-up/sign-in/sign-out, hashed passwords and sessions, no account enumeration, rate limits, demo mode off, cross-tenant 404s on every resource, role-appropriate provenance views, API keys, CSRF, security headers, readiness |
-| License extraction (9) | the rule-based extractor reproduces all five demo licenses' approved terms; restrictive defaults with warnings; dates, territories, fixed fees |
+| License extraction (13) | the rule-based extractor reproduces all five demo licenses' approved terms; restrictive defaults with warnings; end date read after "until"; impossible percentages; thousands separators; expired documents; schema normalisation |
 | Licensing lifecycle (9) | source registration, private marketplace listings, request → offer → accept, hash-bound acceptance, renegotiation, decline/withdraw, revocation vs. frozen settlement, contributor isolation, audit trail |
 | HTTP end-to-end (3) | the full demo script, the agent with an approval pause, and a forged webhook — through the REST API |
 

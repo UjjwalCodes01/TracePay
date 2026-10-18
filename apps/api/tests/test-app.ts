@@ -25,6 +25,8 @@ export function testApp(paypal: PayPalGateway, config: Partial<AppDeps['config']
       cookieSecure: false,
       rateLimitPerMinute: 10_000,
       authRateLimit: 1_000,
+      webhookRateLimitPerMinute: 10_000,
+      trustProxyHops: 1,
       ...config,
     },
   });

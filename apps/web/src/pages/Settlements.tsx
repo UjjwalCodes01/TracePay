@@ -32,7 +32,7 @@ export function SettlementsPage() {
   const run = runs.find((r) => r.id === selectedId) ?? runs[0];
 
   const act = useMutation({
-    mutationFn: ({ action, id }: { action: 'approve' | 'payouts' | 'refresh'; id: string }) => post(`/settlements/${id}/${action}`),
+    mutationFn: ({ action, id }: { action: 'approve' | 'payouts' | 'refresh' | 'retry-failed' | 'recalculate'; id: string }) => post(`/settlements/${id}/${action}`),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['settlements'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
@@ -100,12 +100,14 @@ export function SettlementsPage() {
     amountCents: rows.reduce((s, r) => s + r.amountCents, 0), formula: `= verified capture ${formatMoney(run.grossCents)}`, payable: false, note: null, payoutItem: null, isTotal: true,
   };
   const payment = run.sale.payment;
+  const latest = run.batches[0];
+  const hasFailedPayouts = run.lines.some((l) => l.payoutItem && ['FAILED', 'RETURNED', 'BLOCKED', 'REFUNDED', 'REVERSED'].includes(l.payoutItem.status));
 
   return (
     <>
       <PageHeader
         title="Pay Contributors"
-        subtitle="Each verified PayPal sale is split under the license terms frozen when its report was built. Nothing is paid until the publisher approves, and a payout is only 'paid' when PayPal says so."
+        subtitle="Each verified PayPal sale is split under the license terms in force at the moment of sale. Nothing is paid until you approve, and a payout only counts as paid when PayPal confirms it."
       />
       <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Card title="Sales">
@@ -142,12 +144,22 @@ export function SettlementsPage() {
                     <CheckCheck className="size-4" /> Approve settlement
                   </Button>
                 )}
-                {(run.status === 'approved' || (run.status === 'payout_submitted' && !run.batch?.paypalBatchId)) && (
+                {(run.status === 'approved' || (run.status === 'payout_submitted' && latest && !latest.paypalBatchId && latest.status !== 'AWAITING_CONFIRMATION')) && (
                   <Button size="sm" loading={act.isPending} onClick={() => act.mutate({ action: 'payouts', id: run.id })}>
-                    <Send className="size-4" /> Send PayPal payouts
+                    <Send className="size-4" /> {latest ? 'Try sending again' : 'Send PayPal payouts'}
                   </Button>
                 )}
-                {run.batch?.paypalBatchId && (
+                {run.status === 'exception' && hasFailedPayouts && run.sale.status === 'captured' && (
+                  <Button size="sm" loading={act.isPending} onClick={() => act.mutate({ action: 'retry-failed', id: run.id })}>
+                    <Send className="size-4" /> Retry failed payouts
+                  </Button>
+                )}
+                {run.status === 'exception' && run.failureReason && run.batches.length === 0 && (
+                  <Button size="sm" loading={act.isPending} onClick={() => act.mutate({ action: 'recalculate', id: run.id })}>
+                    <RefreshCw className="size-4" /> Recalculate
+                  </Button>
+                )}
+                {latest?.paypalBatchId && (
                   <Button size="sm" variant="secondary" loading={act.isPending} onClick={() => act.mutate({ action: 'refresh', id: run.id })}>
                     <RefreshCw className="size-4" /> Refresh from PayPal
                   </Button>
@@ -167,7 +179,18 @@ export function SettlementsPage() {
             </ol>
             {run.status === 'exception' && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-block">
-                Exception: a refund, reversal, failed or returned payout was reported by PayPal. This settlement needs reconciliation under the license agreements.
+                {run.sale.status !== 'captured'
+                  ? `The buyer's payment was ${run.sale.status.replace('_', ' ')} by PayPal, so nothing more will be paid out. Any payouts already sent need to be reconciled with contributors under their agreements.`
+                  : run.failureReason
+                    ? `The contributor shares couldn't be calculated: ${run.failureReason} Fix the cause (usually a missing PayPal email), then recalculate.`
+                    : latest && ['DENIED', 'CANCELED'].includes(latest.status)
+                      ? 'PayPal declined this payout batch. Check your PayPal account, then retry.'
+                      : 'Some payouts failed or came back from PayPal. Ask the contributor to check their PayPal email in their profile, then retry the failed payouts.'}
+              </div>
+            )}
+            {latest?.status === 'AWAITING_CONFIRMATION' && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                PayPal already received these payouts (an earlier response was lost). Nothing was paid twice; the status will update automatically when PayPal confirms.
               </div>
             )}
             <ErrorNote error={act.error} />
@@ -195,14 +218,19 @@ export function SettlementsPage() {
                 <dt className="text-muted">Buyer</dt><dd>{payment?.payerEmail ?? '—'}</dd>
               </dl>
             </Card>
-            <Card title="Payout batch">
-              {run.batch ? (
-                <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
-                  <dt className="text-muted">sender_batch_id</dt><dd><Hash value={run.batch.senderBatchId} n={24} /></dd>
-                  <dt className="text-muted">PayPal batch</dt><dd><Hash value={run.batch.paypalBatchId} n={20} /></dd>
-                  <dt className="text-muted">Batch status</dt><dd><StatusBadge status={run.batch.status} /></dd>
-                  <dt className="text-muted">Last checked</dt><dd>{run.batch.lastCheckedAt ? new Date(run.batch.lastCheckedAt).toLocaleTimeString() : '—'}</dd>
-                </dl>
+            <Card title={run.batches.length > 1 ? `Payout attempts (${run.batches.length})` : 'Payout batch'}>
+              {run.batches.length ? (
+                <div className="space-y-4">
+                  {run.batches.map((b) => (
+                    <dl key={b.attempt} className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
+                      <dt className="text-muted">Attempt</dt><dd>{b.attempt}{b.attempt > 1 && ' (retry of failed payouts)'}</dd>
+                      <dt className="text-muted">sender_batch_id</dt><dd><Hash value={b.senderBatchId} n={24} /></dd>
+                      <dt className="text-muted">PayPal batch</dt><dd><Hash value={b.paypalBatchId} n={20} /></dd>
+                      <dt className="text-muted">Batch status</dt><dd><StatusBadge status={b.status} /></dd>
+                      <dt className="text-muted">Last checked</dt><dd>{b.lastCheckedAt ? new Date(b.lastCheckedAt).toLocaleTimeString() : '—'}</dd>
+                    </dl>
+                  ))}
+                </div>
               ) : (
                 <p className="text-sm text-muted">No payout batch yet. The batch id is fixed before submission, so a retry can never pay twice.</p>
               )}

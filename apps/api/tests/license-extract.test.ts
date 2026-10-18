@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LicenseTermsSchema } from '@tracepay/shared';
 import { DEMO_ASSETS } from '../src/modules/demo/world';
 import { extractWithRules, findDate } from '../src/modules/licenses/extract';
 
@@ -49,6 +50,33 @@ describe('rule-based license extraction', () => {
       economics: { kind: 'fixed_per_sale', amountCents: 450 },
       validUntil: '2028-03-03',
     });
+  });
+
+  it('reads the END date after "until", not the first date in the sentence', () => {
+    const r = extractWithRules('This license is effective from 1 January 2026 until 31 December 2027 for commercial reports.', TODAY);
+    expect(r.terms.validUntil).toBe('2027-12-31');
+  });
+
+  it('never crashes on impossible or unusual amounts', () => {
+    const over = extractWithRules('Commercial use allowed. Licensor receives 150% of the gross sale price.', TODAY);
+    expect(over.terms.economics).toEqual({ kind: 'none' });
+    expect(over.warnings.join(' ')).toMatch(/above 100%/);
+    const big = extractWithRules('Commercial use allowed. Fee: $1,250.50 per report sold.', TODAY);
+    expect(big.terms.economics).toEqual({ kind: 'fixed_per_sale', amountCents: 125050 });
+  });
+
+  it('still drafts (with a warning) when the document’s term has already ended', () => {
+    const r = extractWithRules('Commercial use permitted until 30 September 2025. Fee: 5% of gross sale price.', TODAY);
+    expect(r.terms.validUntil).toBe('2025-09-30');
+    expect(r.terms.validFrom <= r.terms.validUntil!).toBe(true);
+    expect(r.warnings[0]).toMatch(/ended on 2025-09-30/);
+  });
+
+  it('normalises country codes and rejects reversed dates in the shared schema', () => {
+    const base = DEMO_ASSETS[0]!.terms;
+    expect(LicenseTermsSchema.parse({ ...base, territories: ['us', 'gb'] }).territories).toEqual(['US', 'GB']);
+    expect(LicenseTermsSchema.safeParse({ ...base, validFrom: '2027-01-01', validUntil: '2026-01-01' }).success).toBe(false);
+    expect(LicenseTermsSchema.safeParse({ ...base, commercialUse: true, allowedPurposes: ['internal_research'] }).success).toBe(false);
   });
 
   it('parses common date formats and rejects impossible dates', () => {

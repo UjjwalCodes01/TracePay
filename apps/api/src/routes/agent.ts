@@ -5,6 +5,9 @@ import type { AppDeps } from '../app';
 import { currentUser, requireRole } from '../http/auth';
 import { ownedBuild, publisherScope } from '../http/access';
 import { HttpError } from '../http/errors';
+import { quotas } from '../http/limits';
+
+const MAX_ACTIVE_RUNS = 2;
 import { AgentStateError, createRun, decideReplacement, runAgent } from '../modules/agent/agent.service';
 import { explainPreflight } from '../modules/builds/explain';
 
@@ -25,8 +28,11 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
     void runAgent(db, planner(), writer(), runId).catch((err) => console.error(`agent run ${runId} crashed`, err));
   };
 
-  r.post('/agent/runs', requireRole('publisher'), async (req, res) => {
+  r.post('/agent/runs', requireRole('publisher'), quotas.agentRun(), async (req, res) => {
     const body = StartBody.parse(req.body);
+    // Each run makes model calls in the background: cap how many one publisher has going.
+    const active = await db.agentRun.count({ where: { publisherId: currentUser(req).id, status: 'running' } });
+    if (active >= MAX_ACTIVE_RUNS) throw new HttpError(429, `You already have ${active} assistant runs in progress. Wait for one to finish.`);
     const run = await createRun(db, planner(), {
       publisherId: currentUser(req).id,
       goal: body.goal,

@@ -17,7 +17,7 @@ interface InboxItem {
   sourceText: string | null;
   origin: 'manual' | 'ai_draft' | 'rules_draft';
   updatedAt: string;
-  asset: { id: string; title: string; kind: string; owner: { name: string } };
+  asset: { id: string; title: string; kind: string; owner: { name: string; canBePaid: boolean } };
   current: { version: number; terms: LicenseTerms } | null;
 }
 
@@ -69,6 +69,11 @@ export function OffersPanel() {
                 {o.terms && <TermsSummary terms={o.terms} />}
               </div>
             </div>
+            {!o.asset.owner.canBePaid && (
+              <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                {o.asset.owner.name} hasn’t added a PayPal email yet. You can accept now, but reports using this source can’t be sold until they do.
+              </p>
+            )}
             {o.sourceText && (
               <details className="mt-4 text-sm">
                 <summary className="cursor-pointer text-muted">Read the original license text</summary>

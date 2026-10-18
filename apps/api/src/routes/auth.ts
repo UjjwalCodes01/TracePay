@@ -5,6 +5,8 @@ import type { AppDeps } from '../app';
 import { currentUser, readCookie, requireRole, SESSION_COOKIE } from '../http/auth';
 import { HttpError } from '../http/errors';
 import { AuthError, createApiKey, createSession, destroySession, logIn, signUp } from '../modules/auth/auth.service';
+import { hashPassword, sha256 } from '../modules/auth/crypto';
+import { DEMO_EMAILS } from '../modules/demo/soft-reset';
 
 const SignUpBody = z.object({
   email: z.email().max(254),
@@ -28,7 +30,18 @@ export function authRoutes({ db, config }: AppDeps) {
     message: { error: 'Too many attempts. Try again in a few minutes.' },
   });
 
-  const setSessionCookie = (res: Response, token: string, expiresAt: Date) =>
+  // Per-account limit on FAILED logins: holds even if an attacker rotates IPs.
+  const loginEmailLimiter = rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 10,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req) => `login:${String((req.body as { email?: unknown })?.email ?? '').trim().toLowerCase().slice(0, 254)}`,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'Too many failed attempts for this account. Try again in 15 minutes.' },
+  });
+
+  const setSessionCookie =(res: Response, token: string, expiresAt: Date) =>
     res.cookie(SESSION_COOKIE, token, {
       httpOnly: true,
       secure: config.cookieSecure,
@@ -44,13 +57,15 @@ export function authRoutes({ db, config }: AppDeps) {
 
   r.post('/auth/signup', credentialLimiter, async (req, res) => {
     const body = SignUpBody.parse(req.body);
+    // The demo personas' addresses are reserved.
+    if (DEMO_EMAILS.has(body.email.toLowerCase())) throw new HttpError(409, 'An account with this email already exists.');
     const user = await signUp(db, body).catch(mapAuthError);
     const { token, expiresAt } = await createSession(db, user.id, req.header('user-agent'));
     setSessionCookie(res, token, expiresAt);
     res.status(201).json({ user });
   });
 
-  r.post('/auth/login', credentialLimiter, async (req, res) => {
+  r.post('/auth/login', credentialLimiter, loginEmailLimiter, async (req, res) => {
     const body = LogInBody.parse(req.body);
     const user = await logIn(db, body.email, body.password).catch(mapAuthError);
     const { token, expiresAt } = await createSession(db, user.id, req.header('user-agent'));
@@ -62,6 +77,22 @@ export function authRoutes({ db, config }: AppDeps) {
     const token = readCookie(req, SESSION_COOKIE);
     if (token) await destroySession(db, token);
     res.clearCookie(SESSION_COOKIE, { path: '/' });
+    res.json({ ok: true });
+  });
+
+  /** Change password; every other session is signed out. */
+  r.post('/auth/password', credentialLimiter, async (req, res) => {
+    const user = currentUser(req);
+    if (req.authMethod !== 'session') throw new HttpError(403, 'Sign in with your password to change it.');
+    const body = z.object({ currentPassword: z.string().min(1).max(200), newPassword: z.string().min(10, 'Use at least 10 characters.').max(200) }).parse(req.body);
+    await logIn(db, user.email, body.currentPassword).catch(() => {
+      throw new HttpError(401, 'Your current password is incorrect.');
+    });
+    const keep = sha256(readCookie(req, SESSION_COOKIE) ?? '');
+    await db.$transaction([
+      db.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(body.newPassword) } }),
+      db.session.deleteMany({ where: { userId: user.id, id: { not: keep } } }),
+    ]);
     res.json({ ok: true });
   });
 

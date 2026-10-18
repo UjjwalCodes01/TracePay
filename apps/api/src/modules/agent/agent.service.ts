@@ -84,7 +84,12 @@ export async function runAgent(db: Db, planner: AgentPlanner, writer: ReportWrit
     db.agentStep.create({
       data: { runId, ordinal: ordinal++, kind, tool: data.tool ?? null, input: data.input === undefined ? undefined : json(data.input), output: data.output === undefined ? undefined : json(data.output) },
     });
-  const save = (data: Prisma.AgentRunUpdateInput) => db.agentRun.update({ where: { id: runId }, data: { transcript: json(history), ...data } });
+  // Every write is conditional on the run still being ours to drive: if the recovery
+  // sweep marked it interrupted, a late-finishing loop must not overwrite that.
+  const save = async (data: Prisma.AgentRunUpdateManyMutationInput) => {
+    const res = await db.agentRun.updateMany({ where: { id: runId, status: 'running' }, data: { transcript: json(history), ...data } });
+    return res.count > 0;
+  };
 
   try {
     for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
@@ -118,7 +123,7 @@ export async function runAgent(db: Db, planner: AgentPlanner, writer: ReportWrit
         results.push({ id: call.id, name: call.name, response: result.response });
       }
       history.push({ role: 'tool', results });
-      await save({});
+      if (!(await save({}))) return; // taken over (e.g. marked interrupted): stop quietly
     }
     await step('error', { output: { message: `Stopped after ${MAX_AGENT_TURNS} turns.` } });
     await save({ status: 'failed', finishedAt: new Date(), summary: 'Turn limit reached.' });
@@ -153,10 +158,15 @@ export async function decideReplacement(db: Db, runId: string, publisherId: stri
   ];
   history.push({ role: 'tool', results });
 
-  const ordinal = await db.agentStep.count({ where: { runId } });
   await db.$transaction(async (tx) => {
+    // Claim the decision atomically: a double click (or two tabs) can only apply it once.
+    const claimed = await tx.agentRun.updateMany({
+      where: { id: runId, status: 'awaiting_approval' },
+      data: { status: 'running', pending: Prisma.DbNull, transcript: json(history) },
+    });
+    if (claimed.count === 0) throw new AgentStateError('This decision was already made.');
+    const ordinal = await tx.agentStep.count({ where: { runId } });
     await tx.agentStep.create({ data: { runId, ordinal, kind: 'tool_result', tool: 'propose_replacement', output: json(decision) } });
-    await tx.agentRun.update({ where: { id: runId }, data: { status: 'running', pending: Prisma.DbNull, transcript: json(history) } });
     await appendAudit(tx, {
       entityType: 'agent_run',
       entityId: runId,

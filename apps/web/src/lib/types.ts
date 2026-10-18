@@ -166,7 +166,9 @@ export interface SettlementRun {
   approvedAt: string | null;
   createdAt: string;
   lines: SettlementLine[];
-  batch: { senderBatchId: string; paypalBatchId: string | null; status: string; lastCheckedAt: string | null } | null;
+  /** Payout attempts, newest first. */
+  batches: Array<{ attempt: number; senderBatchId: string; paypalBatchId: string | null; status: string; lastCheckedAt: string | null }>;
+  failureReason: string | null;
   sale: {
     id: string;
     status: string;
@@ -198,6 +200,7 @@ export interface Dashboard {
 export interface SignedReceipt {
   document: Record<string, unknown> & {
     receiptVersion: string;
+    view: 'owner' | 'buyer' | 'contributor';
     issuedAt: string;
     artifact: { id: string; title: string; contentHash: string; model: string; fromFixture: boolean; priceCents: number; credits: string[] };
     rights: { buildId: string; asOf: string; snapshotHash: string; preflight: { verdict: string; rulesEvaluated: number; failed: string[]; obligations: string[]; policyVersion: string } };
@@ -212,7 +215,7 @@ export interface SignedReceipt {
         grossCents: number;
         roundingRule: string;
         lines: Array<{ kind: string; recipientId: string; licenseId: string | null; amountCents: number; formula: string; payout: { status: string; paypalItemId: string | null; transactionId: string | null } | null }>;
-        payoutBatch: { senderBatchId: string; paypalBatchId: string | null; status: string } | null;
+        payoutBatches: Array<{ attempt: number; senderBatchId: string; paypalBatchId: string | null; status: string }>;
       };
     }>;
     auditTrail: Array<{ seq: number; eventType: string; at: string; hash: string }>;

@@ -26,6 +26,7 @@ interface MyAsset {
   title: string;
   kind: string;
   description: string;
+  archivedAt: string | null;
   createdAt: string;
   versions: Array<{ id: string; version: number; sha256: string; createdAt: string; _count: { chunks: number } }>;
   licenses: Grant[];
@@ -59,6 +60,11 @@ function latestPerPublisher(grants: Grant[]): Grant[] {
 export function MySourcesPage() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['my-assets'], queryFn: () => api<{ assets: MyAsset[] }>('/contributor/assets') });
+  const profile = useQuery({ queryKey: ['profile'], queryFn: () => api<{ user: { paypalEmail: string | null } }>('/me/profile') });
+  const archive = useMutation({
+    mutationFn: ({ id, archived }: { id: string; archived: boolean }) => post(`/contributor/assets/${id}/archive`, { archived }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-assets'] }),
+  });
   const act = useMutation({
     mutationFn: ({ id, action }: { id: string; action: 'withdraw' | 'revoke' | 'decline-request' }) => post(`/licenses/${id}/${action}`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-assets'] }),
@@ -81,6 +87,16 @@ export function MySourcesPage() {
         }
       />
 
+      {profile.data && !profile.data.user.paypalEmail && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+          <span>
+            <strong>Add your PayPal email to get paid.</strong> Until you do, publishers can’t sell reports that use your sources.
+          </span>
+          <Link to="/profile" className="inline-flex h-9 items-center rounded-lg bg-amber-900 px-3 font-medium text-white">
+            Add PayPal email
+          </Link>
+        </div>
+      )}
       {requests.length > 0 && (
         <div className="mb-6 space-y-2">
           {requests.map(({ asset, grant }) => (
@@ -124,6 +140,7 @@ export function MySourcesPage() {
                   <span className="flex flex-wrap items-center gap-2">
                     {a.title}
                     <Badge>{KINDS.find((k) => k.value === a.kind)?.label ?? a.kind}</Badge>
+                    {a.archivedAt && <Badge tone="neutral">Hidden from marketplace</Badge>}
                     <span className="text-xs font-normal text-muted">
                       version {v?.version} · {v?._count.chunks} passages
                     </span>
@@ -131,6 +148,9 @@ export function MySourcesPage() {
                 }
                 action={
                   <div className="flex gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => archive.mutate({ id: a.id, archived: !a.archivedAt })}>
+                      {a.archivedAt ? 'Show in marketplace' : 'Hide from marketplace'}
+                    </Button>
                     <Link to={`/sources/${a.id}/version`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-sm hover:bg-slate-50">
                       <Upload className="size-3.5" /> New version
                     </Link>
@@ -446,6 +466,7 @@ export function OfferLicensePage() {
 
 export function ProfilePage() {
   const qc = useQueryClient();
+  const { authMethod } = useSession();
   const q = useQuery({ queryKey: ['profile'], queryFn: () => api<{ user: { name: string; email: string; role: string; paypalEmail: string | null } }>('/me/profile') });
   const [form, setForm] = useState<{ name: string; paypalEmail: string } | null>(null);
   useEffect(() => {
@@ -481,6 +502,39 @@ export function ProfilePage() {
           <Button loading={m.isPending}>Save</Button>
         </form>
       </Card>
+      {authMethod === 'session' && <ChangePassword />}
     </div>
+  );
+}
+
+function ChangePassword() {
+  const [form, setForm] = useState({ currentPassword: '', newPassword: '' });
+  const m = useMutation({
+    mutationFn: () => post('/auth/password', form),
+    onSuccess: () => setForm({ currentPassword: '', newPassword: '' }),
+  });
+  return (
+    <Card title="Change password" className="mt-6">
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          m.mutate();
+        }}
+      >
+        <label className="block space-y-1.5 text-sm">
+          <span className="font-medium">Current password</span>
+          <input className={`${input} h-10`} type="password" autoComplete="current-password" required value={form.currentPassword} onChange={(e) => setForm({ ...form, currentPassword: e.target.value })} />
+        </label>
+        <label className="block space-y-1.5 text-sm">
+          <span className="font-medium">New password</span>
+          <input className={`${input} h-10`} type="password" autoComplete="new-password" required minLength={10} value={form.newPassword} onChange={(e) => setForm({ ...form, newPassword: e.target.value })} />
+          <span className="text-xs text-muted">At least 10 characters. You’ll stay signed in here; other devices are signed out.</span>
+        </label>
+        <ErrorNote error={m.error} />
+        {m.isSuccess && <p className="text-sm text-pass">Password changed.</p>}
+        <Button loading={m.isPending}>Change password</Button>
+      </form>
+    </Card>
   );
 }

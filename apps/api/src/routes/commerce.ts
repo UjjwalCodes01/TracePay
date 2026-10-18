@@ -4,9 +4,10 @@ import type { AppDeps } from '../app';
 import { currentUser, requireRole } from '../http/auth';
 import { ownedSettlement } from '../http/access';
 import { HttpError } from '../http/errors';
+import { quotas } from '../http/limits';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
 import { handlePayPalWebhook, readVerificationHeaders } from '../modules/payments/webhooks.service';
-import { approveSettlement, refreshPayouts, submitPayouts } from '../modules/settlements/settlement.service';
+import { approveSettlement, recalculateSettlement, refreshPayouts, retryFailedPayouts, submitPayouts } from '../modules/settlements/settlement.service';
 
 const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 
@@ -15,7 +16,7 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
 
   // ---- buyer checkout ----------------------------------------------------------
 
-  r.post('/checkout/orders', requireRole('buyer'), async (req, res) => {
+  r.post('/checkout/orders', requireRole('buyer'), quotas.checkout(), async (req, res) => {
     const { artifactId } = z.object({ artifactId: z.string().min(1) }).parse(req.body);
     const started = await startCheckout(db, paypal(), { artifactId, buyerId: currentUser(req).id, appBaseUrl: config.appBaseUrl });
     res.status(201).json(started);
@@ -24,8 +25,8 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
   r.post('/checkout/:saleId/capture', requireRole('buyer'), async (req, res) => {
     const saleId = param(req, 'saleId');
     const sale = await db.sale.findUnique({ where: { id: saleId }, select: { buyerId: true } });
-    if (!sale) throw new HttpError(404, 'Sale not found.');
-    if (sale.buyerId !== currentUser(req).id) throw new HttpError(403, 'This is not your sale.');
+    // Same answer whether the sale doesn't exist or isn't yours.
+    if (!sale || sale.buyerId !== currentUser(req).id) throw new HttpError(404, 'Sale not found.');
     res.json(await captureSale(db, paypal(), saleId));
   });
 
@@ -35,7 +36,13 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
       where: user.role === 'buyer' ? { buyerId: user.id } : user.role === 'admin' ? {} : { artifact: { buildJob: { publisherId: user.id } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
-      include: { payment: true, artifact: { select: { id: true, title: true } }, settlement: { select: { id: true, status: true } } },
+      // Explicit fields: never the frozen terms (they hold every contributor's payout address) or raw PayPal payloads.
+      select: {
+        id: true, status: true, amountCents: true, currency: true, createdAt: true,
+        artifact: { select: { id: true, title: true } },
+        payment: { select: { orderId: true, captureId: true, captureStatus: true, capturedCents: true } },
+        ...(user.role === 'buyer' ? {} : { settlement: { select: { id: true, status: true } } }),
+      },
     });
     res.json({ sales });
   });
@@ -44,7 +51,7 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
 
   const settlementInclude = {
     lines: { include: { payoutItem: true }, orderBy: { amountCents: 'desc' as const } },
-    batch: true,
+    batches: { orderBy: { attempt: 'desc' as const } },
     sale: { include: { payment: true, artifact: { select: { id: true, title: true, buildJobId: true } } } },
   };
 
@@ -77,6 +84,18 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
     res.json(await refreshPayouts(db, paypal(), id));
   });
 
+  /** Re-send only the payouts PayPal reported as failed or returned, to contributors' current addresses. */
+  r.post('/settlements/:id/retry-failed', requireRole('publisher'), async (req, res) => {
+    const { id } = await ownedSettlement(db, currentUser(req), param(req, 'id'));
+    res.status(201).json({ batch: await retryFailedPayouts(db, paypal(), id) });
+  });
+
+  /** Recalculate a settlement whose calculation failed, once the cause is fixed. */
+  r.post('/settlements/:id/recalculate', requireRole('publisher'), async (req, res) => {
+    const { id } = await ownedSettlement(db, currentUser(req), param(req, 'id'));
+    res.json({ settlement: await recalculateSettlement(db, id) });
+  });
+
   // ---- contributor view: "every contributor gets a settlement record" -------------
 
   r.get('/contributor/earnings', requireRole('contributor'), async (req, res) => {
@@ -84,9 +103,19 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
     const lines = await db.settlementLine.findMany({
       where: { recipientId: user.id, kind: 'contributor' },
       orderBy: { run: { createdAt: 'desc' } },
-      include: { payoutItem: true, run: { include: { sale: { include: { artifact: { select: { id: true, title: true } }, payment: { select: { captureId: true } } } } } } },
+      take: 200,
+      select: {
+        id: true, amountCents: true, formula: true, payable: true, note: true, licenseGrantId: true,
+        payoutItem: { select: { status: true, receiver: true, transactionId: true, paypalItemId: true } },
+        run: { select: { status: true, createdAt: true, sale: { select: { id: true, artifact: { select: { id: true, title: true } }, payment: { select: { captureId: true } } } } } },
+      },
     });
-    const licenses = await db.licenseGrant.findMany({ where: { asset: { ownerId: user.id } }, include: { asset: { select: { title: true } } }, orderBy: { version: 'desc' } });
+    const licenses = await db.licenseGrant.findMany({
+      where: { asset: { ownerId: user.id } },
+      orderBy: { version: 'desc' },
+      take: 200,
+      select: { id: true, version: true, status: true, terms: true, asset: { select: { title: true } } },
+    });
     res.json({ lines, licenses });
   });
 
@@ -102,6 +131,8 @@ export function webhookRoute({ db, paypal, config }: AppDeps): RequestHandler {
       headers: readVerificationHeaders((n) => req.header(n)),
       rawBody,
     });
+    // 500 on a failed apply so PayPal redelivers; never echo internal error text to the caller.
+    if (result.status === 'failed') return res.status(500).json({ status: 'failed', eventId: result.eventId });
     res.status(result.status === 'rejected' ? 400 : 200).json(result);
   };
 }

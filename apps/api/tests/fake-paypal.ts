@@ -95,6 +95,14 @@ export class FakePayPal implements PayPalGateway {
     for (const k of b.status.keys()) b.status.set(k, status);
   }
 
+  private denied = new Set<string>();
+  denyBatch(batchId: string) {
+    this.denied.add(batchId);
+  }
+  undenyBatch(batchId: string) {
+    this.denied.delete(batchId);
+  }
+
   batchIdFor(senderBatchId: string) {
     return this.batchBySender.get(senderBatchId);
   }
@@ -103,7 +111,13 @@ export class FakePayPal implements PayPalGateway {
     const b = this.batches.get(payoutBatchId);
     if (!b) throw new PayPalApiError(404, 'payouts.get', { name: 'RESOURCE_NOT_FOUND' }, 'dbg');
     const states = [...b.status.values()];
-    const batchStatus = states.every((s) => s === 'SUCCESS') ? 'SUCCESS' : states.some((s) => s === 'PENDING') ? 'PROCESSING' : 'SUCCESS';
+    const batchStatus = this.denied.has(payoutBatchId)
+      ? 'DENIED'
+      : states.every((s) => s === 'SUCCESS')
+        ? 'SUCCESS'
+        : states.some((s) => s === 'PENDING')
+          ? 'PROCESSING'
+          : 'SUCCESS';
     return {
       batch_header: { payout_batch_id: payoutBatchId, batch_status: batchStatus, sender_batch_header: { sender_batch_id: b.senderBatchId } },
       items: b.items.map((i, n) => ({

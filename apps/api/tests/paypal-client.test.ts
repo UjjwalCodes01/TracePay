@@ -42,14 +42,16 @@ describe('PayPal client', () => {
     expect(calls.map((c) => header(c, 'PayPal-Request-Id'))).toEqual(['capture-O1', 'capture-O1']);
   });
 
-  it('retries a payout after a network failure with the same sender_batch_id', async () => {
-    const { client, calls } = fakePayPal([
-      new TypeError('fetch failed'),
-      { status: 201, body: { batch_header: { payout_batch_id: 'B1', batch_status: 'PENDING', sender_batch_header: { sender_batch_id: 'run_1' } } } },
-    ]);
-    await client.createPayoutBatch({ senderBatchId: 'run_1', emailSubject: 's', emailMessage: 'm', items: [] });
-    const ids = calls.map((c) => JSON.parse(c.init.body as string).sender_batch_header.sender_batch_id);
-    expect(ids).toEqual(['run_1', 'run_1']);
+  it('never auto-retries a payout POST (the service owns retries with the same sender_batch_id)', async () => {
+    const { client, calls } = fakePayPal([new TypeError('fetch failed')]);
+    await expect(client.createPayoutBatch({ senderBatchId: 'run_1', emailSubject: 's', emailMessage: 'm', items: [] })).rejects.toThrow('fetch failed');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('puts a deadline on every PayPal call', async () => {
+    const { client, calls } = fakePayPal([{ status: 200, body: { id: 'O1', status: 'CREATED', links: [] } }]);
+    await client.getOrder('O1');
+    expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('does not retry client errors and surfaces the PayPal issue', async () => {

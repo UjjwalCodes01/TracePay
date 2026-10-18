@@ -140,18 +140,22 @@ export function extractWithRules(text: string, today: string): ExtractionResult 
 
   // Economics
   const pctSentence = find(/\d{1,3}(?:\.\d{1,2})?\s?%/);
-  const fixedSentence = find(/(?:USD|US\$|\$)\s?\d+(?:\.\d{1,2})?\s*(?:per|for each|each)\s+(?:report|sale|copy|unit|deliverable|download)/i);
+  const fixedSentence = find(/(?:USD|US\$|\$)\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s*(?:per|for each|each)\s+(?:report|sale|copy|unit|deliverable|download)/i);
+  const pct = pctSentence ? Number(/(\d{1,3}(?:\.\d{1,2})?)\s?%/.exec(pctSentence)![1]) : null;
   let economics: LicenseTerms['economics'];
-  if (pctSentence) {
-    const pct = Number(/(\d{1,3}(?:\.\d{1,2})?)\s?%/.exec(pctSentence)![1]);
+  if (pct !== null && pct <= 100) {
     economics = { kind: 'percent_of_gross', bps: Math.round(pct * 100) };
     ev('economics', pctSentence, 'high');
     if (fixedSentence) warnings.push('Both a percentage and a fixed fee were found. Only one payment rule per license is supported; the draft uses the percentage.');
   } else if (fixedSentence) {
-    const amount = /(?:USD|US\$|\$)\s?(\d+(?:\.\d{1,2})?)/.exec(fixedSentence)![1]!;
+    const amount = /(?:USD|US\$|\$)\s?(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/.exec(fixedSentence)![1]!.replace(/,/g, '');
     const [whole, frac = ''] = amount.split('.');
     economics = { kind: 'fixed_per_sale', amountCents: Number(whole) * 100 + Number(frac.padEnd(2, '0')) };
     ev('economics', fixedSentence, 'high');
+  } else if (pct !== null) {
+    economics = { kind: 'none' };
+    ev('economics', pctSentence, 'low', 'A share above 100% is not possible.');
+    warnings.push(`The document states a ${pct}% share, which is above 100%. Enter the correct payment.`);
   } else {
     economics = { kind: 'none' };
     ev('economics', null, 'low', 'No payment term found.');
@@ -185,11 +189,18 @@ export function extractWithRules(text: string, today: string): ExtractionResult 
 
   // Validity
   const untilSentence = find(/\b(?:until|through|expires?|expiring|ends?|valid to|terminat\w*)\b[^.]*\d{4}/i);
-  const validUntil = untilSentence ? findDate(untilSentence) : null;
+  // Read the date that follows the keyword, so "from 1 Jan 2026 until 31 Dec 2027" ends in 2027.
+  const untilKeyword = untilSentence ? /\b(?:until|through|expires?(?: on)?|expiring|ends?(?: on)?|valid to|terminat\w*)\b/i.exec(untilSentence) : null;
+  const validUntil = untilSentence ? findDate(untilSentence.slice(untilKeyword ? untilKeyword.index : 0)) : null;
   ev('validUntil', validUntil ? untilSentence : null, validUntil ? 'high' : 'medium', validUntil ? undefined : 'No end date found; open-ended.');
   const fromSentence = find(/\b(?:from|starting|effective|commenc\w*|begins?)\b[^.]*\d{4}/i);
-  const validFrom = (fromSentence && findDate(fromSentence)) || today;
+  let validFrom = (fromSentence && findDate(fromSentence)) || today;
   ev('validFrom', validFrom !== today ? fromSentence : null, validFrom !== today ? 'high' : 'medium', validFrom !== today ? undefined : 'Starts today.');
+  if (validUntil && validUntil < validFrom) {
+    // The document's term has already ended: keep a valid draft, and say so loudly.
+    validFrom = validUntil;
+    warnings.unshift(`This license ended on ${validUntil}. It can't be offered as-is; set a new end date if it has been renewed.`);
+  }
 
   if (/\b(?:EUR|GBP|INR|€|£|₹)/.test(text)) warnings.push('Only USD payment terms are supported; amounts in other currencies were not converted.');
 
@@ -273,6 +284,10 @@ export async function extractWithVertex(text: string, today: string): Promise<Ex
     payableOn: data.payableOn,
     currency: 'USD' as const,
   };
+  if (draft.validUntil && draft.validUntil < draft.validFrom) {
+    draft.validFrom = draft.validUntil;
+    data.warnings.unshift(`This license ended on ${draft.validUntil}. Set a new end date if it has been renewed.`);
+  }
   const parsed = LicenseTermsSchema.safeParse(draft);
   if (!parsed.success) {
     const fallback = extractWithRules(text, today);

@@ -25,6 +25,9 @@ export const serverEnv = () =>
       DEMO_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
       RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
       AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
+      WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
+      /** Proxies in front of the API (Vercel rewrite + Render load balancer = 2). */
+      TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
       DATABASE_URL: nonEmpty,
       APP_BASE_URL: z.url().default('http://localhost:5173'),
       API_BASE_URL: z.url().default('http://localhost:4000'),

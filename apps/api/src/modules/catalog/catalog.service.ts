@@ -54,11 +54,20 @@ async function grantsFor(tx: Tx, licenseeId: string, assetIds: string[]) {
   return { governing, pending };
 }
 
-const parseTerms = (t: unknown) => (t ? LicenseTermsSchema.parse(t) : null);
+/** Lenient read of stored terms: a grant written under older rules must not crash the catalog. */
+const parseTerms = (t: unknown) => {
+  if (!t) return null;
+  const r = LicenseTermsSchema.safeParse(t);
+  return r.success ? r.data : null;
+};
 
 export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogEntry[]> {
+  // Bounded: the catalog shows sources this publisher holds or has pending licenses for,
+  // plus the newest public listings.
   const assets = await tx.asset.findMany({
+    where: { OR: [{ licenses: { some: { licenseeId: publisherId } } }, { archivedAt: null }] },
     orderBy: { createdAt: 'asc' },
+    take: 500,
     include: {
       owner: { select: { id: true, name: true } },
       versions: { orderBy: { version: 'desc' }, take: 1, include: { _count: { select: { chunks: true } } } },
@@ -83,7 +92,7 @@ export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogE
         sha256: v.sha256,
         chunkCount: v._count.chunks,
         license:
-          g && g.termsHash
+          g && g.termsHash && parseTerms(g.terms)
             ? { id: g.id, version: g.version, status: g.status as LicenseStatus, terms: parseTerms(g.terms)!, termsHash: g.termsHash, sourceText: g.sourceText }
             : null,
         pending: p ? { id: p.id, version: p.version, status: p.status as LicenseStatus, terms: parseTerms(p.terms) } : null,
@@ -113,6 +122,7 @@ export async function resolveSources(tx: Tx, publisherId: string, assetVersionId
   return assetVersionIds.map((id) => {
     const v = byId.get(id)!;
     const g = governing.get(v.assetId);
+    const terms = g ? parseTerms(g.terms) : null;
     return {
       assetId: v.assetId,
       assetTitle: v.asset.title,
@@ -121,7 +131,8 @@ export async function resolveSources(tx: Tx, publisherId: string, assetVersionId
       contributorName: v.asset.owner.name,
       payeeEmail: v.asset.owner.paypalEmail,
       termsHash: g?.termsHash ?? null,
-      license: g?.terms ? { id: g.id, status: g.status as LicenseStatus, terms: parseTerms(g.terms)! } : null,
+      license: g && terms ? { id: g.id, status: g.status as LicenseStatus, terms } : null,
+      ...(g && !terms ? { licenseProblem: 'has license terms that no longer pass validation; ask the contributor to send the terms again.' } : {}),
     };
   });
 }

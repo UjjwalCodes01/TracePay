@@ -63,7 +63,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', ()
 
     // 4. Buy through (fake) PayPal
     const order = await request(app).post('/api/checkout/orders').set(buyer).send({ artifactId }).expect(201);
-    await request(app).post(`/api/checkout/${order.body.saleId}/capture`).set(as('user_admin')).expect(403);
+    // The admin persona can't be assumed through the demo header at all.
+    await request(app).post(`/api/checkout/${order.body.saleId}/capture`).set(as('user_admin')).expect(401);
+    await request(app).post(`/api/checkout/${order.body.saleId}/capture`).set(as('user_northwind')).expect(403);
     await request(app).post(`/api/checkout/${order.body.saleId}/capture`).set(buyer).expect(409); // not approved yet
     paypal.approve(order.body.orderId);
     const cap = await request(app).post(`/api/checkout/${order.body.saleId}/capture`).set(buyer).expect(200);

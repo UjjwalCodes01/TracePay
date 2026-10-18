@@ -87,6 +87,8 @@ model Asset {
   title       String
   kind        AssetKind
   description String
+  /// Hidden from the marketplace; existing licenses are unaffected.
+  archivedAt  DateTime?
   createdAt   DateTime  @default(now())
 
   versions AssetVersion[]
@@ -207,6 +209,8 @@ model AgentRun {
   pending     Json?
   summary     String?
   createdAt   DateTime       @default(now())
+  /// Last activity; used to detect runs interrupted by a restart.
+  updatedAt   DateTime       @default(now()) @updatedAt
   finishedAt  DateTime?
 
   steps  AgentStep[]
@@ -258,6 +262,8 @@ model BuildJob {
   /// sha256 of the frozen intent + terms; settlement must match it.
   snapshotHash  String
   createdAt     DateTime    @default(now())
+  /// Last activity; used to detect generation interrupted by a restart.
+  updatedAt     DateTime    @default(now()) @updatedAt
 
   sources  BuildSource[]
   events   SourceEvent[]
@@ -362,6 +368,11 @@ model Sale {
   amountCents Int
   currency    String     @default("USD")
   status      SaleStatus @default(pending_payment)
+  /// Rights re-checked when the buyer started checkout (licenses can be revoked or expire after a build).
+  rightsCheck   Json?
+  /// The license terms in force at the moment of sale; the settlement applies exactly these.
+  termsSnapshot Json?
+  snapshotHash  String?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -419,10 +430,13 @@ model SettlementRun {
   status                 SettlementStatus @default(calculated)
   approvedById           String?
   approvedAt             DateTime?
+  /// Why the settlement could not be calculated (the capture is still recorded).
+  failureReason          String?
   createdAt              DateTime         @default(now())
 
-  lines SettlementLine[]
-  batch PayoutBatch?
+  lines   SettlementLine[]
+  /// Payout attempts: 1 is the original batch; retries of failed items get 2, 3, ...
+  batches PayoutBatch[]
 }
 
 enum SettlementLineKind {
@@ -449,8 +463,9 @@ model SettlementLine {
 
 model PayoutBatch {
   id            String        @id @default(cuid())
-  runId         String        @unique
+  runId         String
   run           SettlementRun @relation(fields: [runId], references: [id])
+  attempt       Int           @default(1)
   /// Our idempotency key, reused verbatim on every retry.
   senderBatchId String        @unique
   paypalBatchId String?       @unique
@@ -458,8 +473,11 @@ model PayoutBatch {
   lastResponse  Json?
   lastCheckedAt DateTime?
   createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @default(now()) @updatedAt
 
   items PayoutItem[]
+
+  @@unique([runId, attempt])
 }
 
 model PayoutItem {
@@ -475,6 +493,8 @@ model PayoutItem {
   amountCents      Int
   status           String
   errorName        String?
+  /// Earlier attempts for this line (batch, receiver, final status), newest last.
+  attempts         Json           @default("[]")
   updatedAt        DateTime       @updatedAt
 }
 

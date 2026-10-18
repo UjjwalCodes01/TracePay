@@ -37,13 +37,17 @@ export interface AppDeps {
     rateLimitPerMinute: number;
     /** Sign-up / log-in attempts per 15 minutes per IP. */
     authRateLimit: number;
+    webhookRateLimitPerMinute: number;
+    trustProxyHops: number;
   };
 }
 
 export function createApp(deps: AppDeps) {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+  // Number of proxies in front of the API. Behind Vercel's rewrite AND Render's
+  // load balancer this is 2; getting it wrong makes every user share one rate limit.
+  app.set('trust proxy', deps.config.trustProxyHops);
 
   app.use(httpLogger);
   // A JSON API: no HTML is served, so lock everything down.
@@ -52,7 +56,12 @@ export function createApp(deps: AppDeps) {
 
   // Webhook signature verification needs the exact raw bytes, so this route is
   // mounted before the JSON body parser and outside the general rate limit.
-  app.post('/api/webhooks/paypal', express.raw({ type: '*/*', limit: '1mb' }), webhookRoute(deps));
+  app.post(
+    '/api/webhooks/paypal',
+    rateLimit({ windowMs: 60_000, limit: deps.config.webhookRateLimitPerMinute, standardHeaders: 'draft-8', legacyHeaders: false }),
+    express.raw({ type: '*/*', limit: '256kb' }),
+    webhookRoute(deps),
+  );
 
   app.use(
     '/api',
