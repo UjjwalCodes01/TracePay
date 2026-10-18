@@ -144,6 +144,14 @@ model AgentRun {
   policy      Json
   status      AgentRunStatus @default(running)
   model       String?
+  /// Initial build intent and source selection set by the publisher; the agent cannot change them.
+  intent      Json
+  selection   Json
+  /// Provider-neutral conversation history, so a run paused for approval can resume.
+  transcript  Json           @default("[]")
+  /// The tool call waiting on a publisher decision, if any.
+  pending     Json?
+  summary     String?
   createdAt   DateTime       @default(now())
   finishedAt  DateTime?
 

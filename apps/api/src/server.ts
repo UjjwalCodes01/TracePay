@@ -4,6 +4,7 @@ import { db } from './db';
 import { PayPalClient } from './integrations/paypal/client';
 import { loadSigningKeys, type SigningKeys } from './modules/audit/signing';
 import { pickWriter } from './modules/generation/writers';
+import { pickPlanner } from './modules/agent/planners';
 import { HttpError } from './http/errors';
 
 const env = serverEnv();
@@ -20,6 +21,7 @@ const app = createApp({
   },
   signingKeys: () => (keys ??= loadSigningKeys(signingEnv().AUDIT_SIGNING_PRIVATE_KEY)),
   writer: () => pickWriter(),
+  planner: () => pickPlanner(),
   config: {
     appBaseUrl: env.APP_BASE_URL,
     corsOrigins: env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean),
@@ -30,5 +32,5 @@ const app = createApp({
 });
 
 app.listen(env.PORT, () => {
-  console.log(`TracePay API listening on :${env.PORT} (generation: ${pickWriter().name}, paypal: ${paypalConfigured ? 'sandbox' : 'not configured'})`);
+  console.log(`TracePay API listening on :${env.PORT} (generation: ${pickWriter().name}, agent: ${pickPlanner().name}, paypal: ${paypalConfigured ? 'sandbox' : 'not configured'})`);
 });

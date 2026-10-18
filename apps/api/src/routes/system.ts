@@ -5,7 +5,7 @@ import { verifyAuditChain } from '../modules/audit/audit-log';
 import { publicKeyPem } from '../modules/audit/signing';
 import { resetAndSeed } from '../modules/demo/seed';
 
-export function systemRoutes({ db, config, signingKeys, writer }: AppDeps) {
+export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDeps) {
   const r = Router();
 
   r.get('/health', (_req, res) => {
@@ -18,6 +18,7 @@ export function systemRoutes({ db, config, signingKeys, writer }: AppDeps) {
       paypalEnv: 'sandbox',
       paypalClientId: config.paypalClientId,
       generation: writer().name,
+      agentPlanner: planner().name,
       vertexReady: config.vertexReady,
       demoMode: true,
     });

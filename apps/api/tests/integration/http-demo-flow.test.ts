@@ -5,6 +5,7 @@ import { db } from '../../src/db';
 import { generateSigningKeys, loadSigningKeys } from '../../src/modules/audit/signing';
 import { resetAndSeed } from '../../src/modules/demo/seed';
 import { FixtureReportWriter } from '../../src/modules/generation/writers';
+import { RuleBasedPlanner } from '../../src/modules/agent/planners';
 import { FakePayPal } from '../fake-paypal';
 
 const keys = loadSigningKeys(generateSigningKeys().privateKeyB64);
@@ -16,6 +17,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', ()
     paypal: () => paypal,
     signingKeys: () => keys,
     writer: () => new FixtureReportWriter(),
+    planner: () => new RuleBasedPlanner(),
     config: { appBaseUrl: 'http://localhost:5173', corsOrigins: ['http://localhost:5173'], paypalClientId: 'test-client', paypalWebhookId: 'WH-ID', vertexReady: false },
   });
   const as = (user: string) => ({ 'X-Demo-User': user });
@@ -110,6 +112,35 @@ describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', ()
     // Dashboard numbers reconcile
     const dash = await request(app).get('/api/dashboard').set(publisher).expect(200);
     expect(dash.body).toMatchObject({ buildsBlocked: 1, verifiedSales: 1, verifiedSalesCents: 2000, paidOutCents: 1000, unsettledContributorCents: 0, exceptions: 0 });
+  });
+
+  it('runs the publisher agent over HTTP with an approval pause', async () => {
+    await resetAndSeed(db());
+    const start = await request(app)
+      .post('/api/agent/runs')
+      .set(publisher)
+      .send({ goal: 'Create a commercial developer-tools market report from approved sources.', intent, assetVersionIds: ['asset_northwind_index_v1', 'asset_okafor_notes_v1', 'asset_kestrel_panel_v1'], autoReplace: false })
+      .expect(202);
+    const runId: string = start.body.runId;
+    const waitFor = async (status: string) => {
+      for (let i = 0; i < 50; i++) {
+        const r = await request(app).get(`/api/agent/runs/${runId}`).set(publisher).expect(200);
+        if (r.body.run.status === status) return r.body.run;
+        await new Promise((res) => setTimeout(res, 50));
+      }
+      throw new Error(`run never reached ${status}`);
+    };
+    const paused = await waitFor('awaiting_approval');
+    expect(paused.pending.replacementAssetVersionId).toBe('asset_lumen_digest_v1');
+
+    const blockedBuild = paused.builds[0].id;
+    const explain = await request(app).get(`/api/builds/${blockedBuild}/explain`).set(publisher).expect(200);
+    expect(explain.body).toMatchObject({ verdict: 'block', source: 'rules' });
+
+    await request(app).post(`/api/agent/runs/${runId}/decision`).set(publisher).send({ approved: true }).expect(202);
+    const done = await waitFor('completed');
+    expect(done.builds.map((b: { status: string }) => b.status)).toEqual(['preflight_blocked', 'generated']);
+    await request(app).post(`/api/agent/runs/${runId}/decision`).set(publisher).send({ approved: true }).expect(409);
   });
 
   it('rejects a webhook with a forged signature over HTTP', async () => {

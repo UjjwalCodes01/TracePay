@@ -4,8 +4,10 @@ import type { Db } from './db';
 import type { PayPalGateway } from './integrations/paypal/gateway';
 import type { SigningKeys } from './modules/audit/signing';
 import type { ReportWriter } from './modules/generation/writers';
+import type { AgentPlanner } from './modules/agent/planners';
 import { demoAuth } from './http/demo-auth';
 import { errorHandler, HttpError } from './http/errors';
+import { agentRoutes } from './routes/agent';
 import { buildRoutes } from './routes/builds';
 import { commerceRoutes, webhookRoute } from './routes/commerce';
 import { systemRoutes } from './routes/system';
@@ -16,6 +18,7 @@ export interface AppDeps {
   paypal: () => PayPalGateway;
   signingKeys: () => SigningKeys;
   writer: () => ReportWriter;
+  planner: () => AgentPlanner;
   config: {
     appBaseUrl: string;
     corsOrigins: string[];
@@ -41,6 +44,7 @@ export function createApp(deps: AppDeps) {
   app.use('/api', systemRoutes(deps));
   app.use('/api', buildRoutes(deps));
   app.use('/api', commerceRoutes(deps));
+  app.use('/api', agentRoutes(deps));
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found.')));
   app.use(errorHandler);
