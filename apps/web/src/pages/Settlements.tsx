@@ -88,7 +88,7 @@ export function SettlementsPage() {
   if (!run) {
     return (
       <>
-        <PageHeader title="Settlement Console" />
+        <PageHeader title="Pay Contributors" />
         <Empty>No settlements yet. A settlement is calculated automatically when a PayPal capture is verified.</Empty>
       </>
     );
@@ -104,7 +104,7 @@ export function SettlementsPage() {
   return (
     <>
       <PageHeader
-        title="Settlement Console"
+        title="Pay Contributors"
         subtitle="Each verified PayPal sale is split under the license terms frozen when its report was built. Nothing is paid until the publisher approves, and a payout is only 'paid' when PayPal says so."
       />
       <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">

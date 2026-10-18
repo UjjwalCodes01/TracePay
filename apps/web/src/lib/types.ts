@@ -176,6 +176,11 @@ export interface SettlementRun {
 }
 
 export interface Dashboard {
+  settlementsToApprove: number;
+  settlementsToPay: number;
+  payoutsInProgress: number;
+  agentWaiting: number;
+  latestArtifact: { id: string; title: string } | null;
   buildsPassed: number;
   buildsBlocked: number;
   artifacts: number;
@@ -185,7 +190,7 @@ export interface Dashboard {
   paidOutCents: number;
   payoutsCompleted: number;
   exceptions: number;
-  recentEvents: Array<{ seq: number; eventType: string; entityType: string; entityId: string; createdAt: string; hash: string }>;
+  recentEvents: Array<{ seq: number; eventType: string; entityType: string; entityId: string; createdAt: string; hash: string; payload: Record<string, unknown> | null }>;
 }
 
 export interface SignedReceipt {

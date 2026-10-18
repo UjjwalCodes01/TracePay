@@ -51,9 +51,27 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
       }),
       db.payoutItem.aggregate({ where: { status: 'SUCCESS' }, _sum: { amountCents: true }, _count: true }),
       db.settlementRun.count({ where: { status: 'exception' } }),
-      db.auditEvent.findMany({ orderBy: { seq: 'desc' }, take: 12, select: { seq: true, eventType: true, entityType: true, entityId: true, createdAt: true, hash: true } }),
+      db.auditEvent.findMany({
+        where: { eventType: { notIn: ['sale.created'] } },
+        orderBy: { seq: 'desc' },
+        take: 12,
+        select: { seq: true, eventType: true, entityType: true, entityId: true, createdAt: true, hash: true, payload: true },
+      }),
+    ]);
+    // What the publisher should do next, for the plain-language dashboard.
+    const [toApprove, toPay, paying, agentWaiting, latestArtifact] = await Promise.all([
+      db.settlementRun.count({ where: { status: 'calculated' } }),
+      db.settlementRun.count({ where: { status: 'approved' } }),
+      db.settlementRun.count({ where: { status: 'payout_submitted' } }),
+      db.agentRun.count({ where: { status: 'awaiting_approval' } }),
+      db.artifact.findFirst({ orderBy: { createdAt: 'desc' }, select: { id: true, title: true } }),
     ]);
     res.json({
+      settlementsToApprove: toApprove,
+      settlementsToPay: toPay,
+      payoutsInProgress: paying,
+      agentWaiting,
+      latestArtifact,
       buildsPassed,
       buildsBlocked,
       artifacts,

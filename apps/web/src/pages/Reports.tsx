@@ -14,10 +14,10 @@ export function ReportsPage() {
 
   return (
     <>
-      <PageHeader title="Reports" subtitle="Generated deliverables that passed preflight and citation validation, listed for sale." />
+      <PageHeader title="My Reports" subtitle="Reports you’ve created. Each one was checked against its sources’ licenses before it was written." />
       {artifacts.length === 0 ? (
         <Empty>
-          No reports yet. Start one in the <Link className="font-medium text-ink underline" to="/studio">Build Studio</Link>.
+          No reports yet. <Link className="font-medium text-ink underline" to="/studio">Create your first report</Link>.
         </Empty>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">

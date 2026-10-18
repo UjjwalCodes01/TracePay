@@ -20,7 +20,7 @@ export function StorePage() {
     <>
       <PageHeader title="Report Store" subtitle="Research reports built only from licensed sources. Part of every purchase is paid to the people whose work it uses." />
       {items.length === 0 ? (
-        <Empty>No reports are listed yet. Switch to the Publisher role and build one in the Build Studio.</Empty>
+        <Empty>No reports are listed yet. Switch to the Publisher role and create one.</Empty>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {items.map((a) => (

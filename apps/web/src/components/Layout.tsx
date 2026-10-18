@@ -8,11 +8,11 @@ import type { Role } from '../lib/types';
 import { Badge, Button } from './ui';
 
 const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; roles: Role[] }> = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['publisher', 'admin'] },
-  { to: '/registry', label: 'Asset & License Registry', icon: Library, roles: ['publisher', 'admin'] },
-  { to: '/studio', label: 'Build Studio', icon: Bot, roles: ['publisher'] },
-  { to: '/reports', label: 'Reports', icon: FileStack, roles: ['publisher', 'admin'] },
-  { to: '/settlements', label: 'Settlement Console', icon: Receipt, roles: ['publisher', 'admin'] },
+  { to: '/dashboard', label: 'Home', icon: LayoutDashboard, roles: ['publisher', 'admin'] },
+  { to: '/registry', label: 'Sources & Licenses', icon: Library, roles: ['publisher', 'admin'] },
+  { to: '/studio', label: 'Create a Report', icon: Bot, roles: ['publisher'] },
+  { to: '/reports', label: 'My Reports', icon: FileStack, roles: ['publisher', 'admin'] },
+  { to: '/settlements', label: 'Pay Contributors', icon: Receipt, roles: ['publisher', 'admin'] },
   { to: '/store', label: 'Report Store', icon: ShoppingBag, roles: ['buyer'] },
   { to: '/earnings', label: 'My Earnings', icon: Wallet, roles: ['contributor'] },
 ];
@@ -34,7 +34,7 @@ export function Layout() {
           <img src="/favicon.svg" alt="" className="size-7" />
           <div>
             <div className="font-semibold tracking-tight">TracePay</div>
-            <div className="text-[11px] text-muted">License compiler · settlement engine</div>
+            <div className="text-[11px] text-muted">Sell AI reports fairly</div>
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 px-3">
@@ -53,12 +53,12 @@ export function Layout() {
         </nav>
         <div className="space-y-2 border-t border-line p-4 text-xs text-muted">
           <div className="flex flex-wrap gap-1.5">
-            <Badge tone="info">PayPal sandbox</Badge>
-            {config && (config.generation === 'vertex' ? <Badge tone="ai">Gemini · Vertex AI</Badge> : <Badge tone="warn">AI fixture mode</Badge>)}
+            <Badge tone="info">PayPal test mode</Badge>
+            {config && (config.generation === 'vertex' ? <Badge tone="ai">AI: Gemini</Badge> : <Badge tone="warn">AI: demo mode</Badge>)}
           </div>
           <p className="flex items-start gap-1.5">
             <BookOpenCheck className="mt-0.5 size-3.5 shrink-0" />
-            Synthetic demo data. Not legal advice; enforces recorded license terms only.
+            Demo with made-up data. TracePay follows the license terms on record; it isn’t legal advice.
           </p>
         </div>
       </aside>

@@ -2,7 +2,7 @@ import type { BuildIntent } from '@tracepay/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Bot, ListChecks, Sparkles } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AgentTrace } from '../components/AgentTrace';
 import { PreflightMatrix } from '../components/PreflightMatrix';
@@ -64,6 +64,15 @@ export function StudioPage() {
 
   // ---- agent
   const [runId, setRunId] = useState<string | null>(null);
+  // Coming back to the page (e.g. from the dashboard), reopen a run that still needs attention.
+  const openRun = useQuery({
+    queryKey: ['agent-runs'],
+    queryFn: () => api<{ runs: Array<{ id: string; status: string }> }>('/agent/runs'),
+    select: (d) => d.runs.find((r) => r.status === 'awaiting_approval' || r.status === 'running')?.id ?? null,
+  });
+  useEffect(() => {
+    if (!runId && openRun.data) setRunId(openRun.data);
+  }, [openRun.data, runId]);
   const start = useMutation({
     mutationFn: () => post<{ runId: string }>('/agent/runs', { goal, intent, assetVersionIds: selection, autoReplace }),
     onSuccess: (r) => setRunId(r.runId),
@@ -94,7 +103,7 @@ export function StudioPage() {
   return (
     <>
       <PageHeader
-        title="Build Studio"
+        title="Create a Report"
         subtitle="Describe the deliverable and pick licensed sources. The license compiler decides what can be built; the agent can only work within that decision."
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">

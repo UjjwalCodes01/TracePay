@@ -70,7 +70,7 @@ export function RegistryPage() {
   return (
     <>
       <PageHeader
-        title="Asset & License Registry"
+        title="Sources & Licenses"
         subtitle="Each source is pinned to a fingerprinted version and governed by normalized, approved license terms. Only approved terms are ever enforced or paid."
       />
       <div>
