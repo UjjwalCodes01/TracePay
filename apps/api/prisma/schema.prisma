@@ -1,0 +1,434 @@
+// TracePay data model.
+// Principles: asset versions and approved terms are immutable once used;
+// settlements snapshot the terms they apply; money is integer cents;
+// every financial transition is idempotent and keyed on provider ids.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- identities
+
+enum Role {
+  publisher
+  contributor
+  buyer
+  admin
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  role        Role
+  /// PayPal account that receives payouts (sandbox personal account in the demo).
+  paypalEmail String?
+  createdAt   DateTime @default(now())
+
+  assets       Asset[]
+  licensesHeld LicenseGrant[] @relation("licensee")
+  buildJobs    BuildJob[]
+  agentRuns    AgentRun[]
+  purchases    Sale[]
+}
+
+// ---------------------------------------------------------------- assets & licenses
+
+enum AssetKind {
+  dataset
+  research_notes
+  expert_brief
+  api_feed
+}
+
+model Asset {
+  id          String    @id @default(cuid())
+  ownerId     String
+  owner       User      @relation(fields: [ownerId], references: [id])
+  title       String
+  kind        AssetKind
+  description String
+  createdAt   DateTime  @default(now())
+
+  versions AssetVersion[]
+  licenses LicenseGrant[]
+}
+
+/// An immutable, fingerprinted snapshot of an asset's content.
+model AssetVersion {
+  id        String   @id @default(cuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id])
+  version   Int
+  sha256    String
+  content   String
+  createdAt DateTime @default(now())
+
+  chunks       SourceChunk[]
+  buildSources BuildSource[]
+
+  @@unique([assetId, version])
+}
+
+model SourceChunk {
+  id             String       @id @default(cuid())
+  assetVersionId String
+  assetVersion   AssetVersion @relation(fields: [assetVersionId], references: [id])
+  ordinal        Int
+  text           String
+
+  events    SourceEvent[]
+  citations ArtifactCitation[]
+
+  @@unique([assetVersionId, ordinal])
+}
+
+enum LicenseStatus {
+  draft
+  approved
+  revoked
+  superseded
+}
+
+enum TermsOrigin {
+  manual
+  ai_draft
+}
+
+/// A grant of rights from an asset owner to a licensee. Terms are frozen once
+/// approved; editing creates a new version and supersedes the old one.
+model LicenseGrant {
+  id           String        @id @default(cuid())
+  assetId      String
+  asset        Asset         @relation(fields: [assetId], references: [id])
+  licenseeId   String
+  licensee     User          @relation("licensee", fields: [licenseeId], references: [id])
+  version      Int
+  status       LicenseStatus @default(draft)
+  terms        Json
+  termsHash    String
+  origin       TermsOrigin   @default(manual)
+  /// Raw AI extraction kept for comparison; never enforced.
+  aiExtraction Json?
+  sourceText   String?
+  approvedAt   DateTime?
+  approvedById String?
+  createdAt    DateTime      @default(now())
+
+  buildSources BuildSource[]
+
+  @@unique([assetId, licenseeId, version])
+  @@index([assetId, licenseeId, status])
+}
+
+// ---------------------------------------------------------------- agent & builds
+
+enum AgentRunStatus {
+  running
+  awaiting_approval
+  completed
+  failed
+}
+
+model AgentRun {
+  id          String         @id @default(cuid())
+  publisherId String
+  publisher   User           @relation(fields: [publisherId], references: [id])
+  goal        String
+  /// Publisher's pre-authorization, e.g. { autoReplace: true }.
+  policy      Json
+  status      AgentRunStatus @default(running)
+  model       String?
+  createdAt   DateTime       @default(now())
+  finishedAt  DateTime?
+
+  steps  AgentStep[]
+  builds BuildJob[]
+}
+
+enum AgentStepKind {
+  plan
+  tool_call
+  tool_result
+  approval_request
+  message
+  error
+}
+
+model AgentStep {
+  id        String        @id @default(cuid())
+  runId     String
+  run       AgentRun      @relation(fields: [runId], references: [id])
+  ordinal   Int
+  kind      AgentStepKind
+  tool      String?
+  input     Json?
+  output    Json?
+  createdAt DateTime      @default(now())
+
+  @@unique([runId, ordinal])
+}
+
+enum BuildStatus {
+  preflight_blocked
+  preflight_passed
+  generating
+  generated
+  generation_failed
+}
+
+model BuildJob {
+  id            String      @id @default(cuid())
+  publisherId   String
+  publisher     User        @relation(fields: [publisherId], references: [id])
+  agentRunId    String?
+  agentRun      AgentRun?   @relation(fields: [agentRunId], references: [id])
+  intent        Json
+  asOf          String
+  status        BuildStatus
+  preflight     Json
+  policyVersion String
+  /// sha256 of the frozen intent + terms; settlement must match it.
+  snapshotHash  String
+  createdAt     DateTime    @default(now())
+
+  sources  BuildSource[]
+  events   SourceEvent[]
+  artifact Artifact?
+}
+
+/// A source pinned into a build, with the license terms frozen at that moment.
+model BuildSource {
+  id             String        @id @default(cuid())
+  buildJobId     String
+  buildJob       BuildJob      @relation(fields: [buildJobId], references: [id])
+  assetVersionId String
+  assetVersion   AssetVersion  @relation(fields: [assetVersionId], references: [id])
+  licenseGrantId String?
+  licenseGrant   LicenseGrant? @relation(fields: [licenseGrantId], references: [id])
+  termsSnapshot  Json?
+  payeeEmail     String?
+
+  @@unique([buildJobId, assetVersionId])
+}
+
+enum SourceEventType {
+  retrieved
+  cited
+}
+
+model SourceEvent {
+  id             String          @id @default(cuid())
+  buildJobId     String
+  buildJob       BuildJob        @relation(fields: [buildJobId], references: [id])
+  assetVersionId String
+  chunkId        String
+  chunk          SourceChunk     @relation(fields: [chunkId], references: [id])
+  eventType      SourceEventType
+  handle         String
+  createdAt      DateTime        @default(now())
+
+  @@index([buildJobId, eventType])
+}
+
+// ---------------------------------------------------------------- artifacts
+
+enum ArtifactStatus {
+  draft
+  listed
+  withdrawn
+}
+
+model Artifact {
+  id             String         @id @default(cuid())
+  buildJobId     String         @unique
+  buildJob       BuildJob       @relation(fields: [buildJobId], references: [id])
+  version        Int            @default(1)
+  title          String
+  /// { sections: [{ key, heading, body, requiresCitation }], credits: [...] }
+  content        Json
+  contentHash    String
+  priceCents     Int
+  currency       String         @default("USD")
+  status         ArtifactStatus @default(draft)
+  citationReport Json
+  model          String
+  /// true when content came from a labeled fixture instead of a live model call.
+  fromFixture    Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+
+  citations ArtifactCitation[]
+  sales     Sale[]
+}
+
+model ArtifactCitation {
+  id             String      @id @default(cuid())
+  artifactId     String
+  artifact       Artifact    @relation(fields: [artifactId], references: [id])
+  sectionKey     String
+  handle         String
+  chunkId        String
+  chunk          SourceChunk @relation(fields: [chunkId], references: [id])
+  assetVersionId String
+
+  @@unique([artifactId, sectionKey, chunkId])
+}
+
+// ---------------------------------------------------------------- sales & PayPal
+
+enum SaleStatus {
+  pending_payment
+  captured
+  payment_failed
+  refunded
+  exception
+}
+
+model Sale {
+  id          String     @id @default(cuid())
+  artifactId  String
+  artifact    Artifact   @relation(fields: [artifactId], references: [id])
+  buyerId     String?
+  buyer       User?      @relation(fields: [buyerId], references: [id])
+  amountCents Int
+  currency    String     @default("USD")
+  status      SaleStatus @default(pending_payment)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  payment    PayPalPayment?
+  settlement SettlementRun?
+}
+
+model PayPalPayment {
+  id             String   @id @default(cuid())
+  saleId         String   @unique
+  sale           Sale     @relation(fields: [saleId], references: [id])
+  orderId        String   @unique
+  orderStatus    String
+  captureId      String?  @unique
+  captureStatus  String?
+  capturedCents  Int?
+  paypalFeeCents Int?
+  payerEmail     String?
+  rawCapture     Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+/// Every PayPal webhook we receive, keyed by PayPal's event id for idempotency.
+model WebhookEvent {
+  id          String    @id
+  eventType   String
+  resourceId  String?
+  verified    Boolean
+  payload     Json
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  outcome     String?
+}
+
+// ---------------------------------------------------------------- settlement & payouts
+
+enum SettlementStatus {
+  calculated
+  approved
+  payout_submitted
+  completed
+  exception
+}
+
+model SettlementRun {
+  id                     String           @id @default(cuid())
+  saleId                 String           @unique
+  sale                   Sale             @relation(fields: [saleId], references: [id])
+  snapshotHash           String
+  grossCents             Int
+  contributorTotalCents  Int
+  publisherResidualCents Int
+  roundingRule           String
+  status                 SettlementStatus @default(calculated)
+  approvedById           String?
+  approvedAt             DateTime?
+  createdAt              DateTime         @default(now())
+
+  lines SettlementLine[]
+  batch PayoutBatch?
+}
+
+enum SettlementLineKind {
+  contributor
+  publisher_residual
+}
+
+model SettlementLine {
+  id             String             @id @default(cuid())
+  runId          String
+  run            SettlementRun      @relation(fields: [runId], references: [id])
+  kind           SettlementLineKind
+  recipientId    String
+  payeeEmail     String?
+  licenseGrantId String?
+  assetVersionId String?
+  amountCents    Int
+  formula        String
+  payable        Boolean
+  note           String?
+
+  payoutItem PayoutItem?
+}
+
+model PayoutBatch {
+  id            String        @id @default(cuid())
+  runId         String        @unique
+  run           SettlementRun @relation(fields: [runId], references: [id])
+  /// Our idempotency key, reused verbatim on every retry.
+  senderBatchId String        @unique
+  paypalBatchId String?       @unique
+  status        String
+  lastResponse  Json?
+  lastCheckedAt DateTime?
+  createdAt     DateTime      @default(now())
+
+  items PayoutItem[]
+}
+
+model PayoutItem {
+  id               String         @id @default(cuid())
+  batchId          String
+  batch            PayoutBatch    @relation(fields: [batchId], references: [id])
+  settlementLineId String         @unique
+  settlementLine   SettlementLine @relation(fields: [settlementLineId], references: [id])
+  senderItemId     String         @unique
+  paypalItemId     String?        @unique
+  transactionId    String?
+  receiver         String
+  amountCents      Int
+  status           String
+  errorName        String?
+  updatedAt        DateTime       @updatedAt
+}
+
+// ---------------------------------------------------------------- audit
+
+/// Append-only, hash-chained history: hash = sha256(previousHash || canonical(entry)).
+model AuditEvent {
+  seq          Int      @id @default(autoincrement())
+  entityType   String
+  entityId     String
+  eventType    String
+  payload      Json
+  /// Artifact this event belongs to, for building receipts.
+  artifactId   String?
+  previousHash String
+  hash         String   @unique
+  createdAt    DateTime @default(now())
+
+  @@index([artifactId])
+  @@index([entityType, entityId])
+}
