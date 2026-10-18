@@ -71,6 +71,7 @@ The innovation isn't splitting $20 — many systems can do that. It's that **the
 |---|---|---|
 | **Publisher Agent** (function calling) | Plans the build, calls 7 TracePay tools (`run_license_preflight`, `find_compatible_replacement`, `propose_replacement`, `generate_report`, …), recovers from a blocked plan | Override the compiler, preflight unapproved sources, change price/purpose, touch money — enforced in code, not in the prompt |
 | **Report writer** (structured output) | Synthesises findings from retrieved passages with `[Cn]` citation markers | Cite anything not retrieved (validated; one repair attempt, then rejected) |
+| **License drafter** (structured output) | Reads a contributor's license document and drafts normalized terms with a verbatim quote per field | Bind anyone — both parties confirm; quotes not found in the document are flagged |
 | **Explainer** | Turns failed rules into plain language for the publisher | Change the verdict — the compiler's decision is returned, never the model's |
 
 When Vertex AI isn't configured, TracePay falls back to a **rule-based planner** and an **extractive fixture writer**. Both are clearly labeled in the UI and in the receipt (`fromFixture: true`) and are never presented as model output.
@@ -173,8 +174,10 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Request security** | Helmet security headers and a locked-down CSP; CSRF origin check on cookie-authenticated writes; per-IP rate limits with stricter limits on credential endpoints; 1 MB body limit; zod validation on every input |
 | **Money safety** | Integer cents, idempotency keys on every PayPal write, row locks on capture, terms frozen per build, publisher approval before payouts, exceptions for refunds and failed payouts |
 | **Operability** | Structured JSON logs (pino) with request ids echoed in `X-Request-Id` and secrets redacted; `/api/health` (liveness) and `/api/ready` (database); graceful shutdown on SIGTERM; fail-fast config validation |
+| **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
+| **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
-| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 74 tests against real Postgres, Render Blueprint, Vercel config |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 92 tests against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 
@@ -200,7 +203,7 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 ## Tests
 
 ```bash
-npm run test:integration -w @tracepay/api   # 74 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api   # 92 tests; creates/migrates a tracepay_test database
 ```
 
 | Suite | Covers |
@@ -213,6 +216,8 @@ npm run test:integration -w @tracepay/api   # 74 tests; creates/migrates a trace
 | Money path (13) | capture before approval, duplicate webhooks, webhook-before-response, forged signature, amount mismatch, **frozen terms after a license edit**, pending ≠ paid, failed/returned items, **lost payout response never pays twice**, missing Payouts permission, refunds |
 | Publisher agent (5) | recovery, approval pause, decline, guardrail violations, turn limit |
 | Security (13) | sign-up/sign-in/sign-out, hashed passwords and sessions, no account enumeration, rate limits, demo mode off, cross-tenant 404s on every resource, role-appropriate provenance views, API keys, CSRF, security headers, readiness |
+| License extraction (9) | the rule-based extractor reproduces all five demo licenses' approved terms; restrictive defaults with warnings; dates, territories, fixed fees |
+| Licensing lifecycle (9) | source registration, private marketplace listings, request → offer → accept, hash-bound acceptance, renegotiation, decline/withdraw, revocation vs. frozen settlement, contributor isolation, audit trail |
 | HTTP end-to-end (3) | the full demo script, the agent with an approval pause, and a forged webhook — through the REST API |
 
 ---

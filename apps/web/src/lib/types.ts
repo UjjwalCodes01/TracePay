@@ -29,6 +29,7 @@ export interface CatalogEntry {
   sha256: string;
   chunkCount: number;
   license: { id: string; version: number; status: string; terms: LicenseTerms; termsHash: string; sourceText: string | null } | null;
+  pending: { id: string; version: number; status: string; terms: LicenseTerms | null } | null;
 }
 
 export interface PreflightOutcome {
@@ -176,6 +177,7 @@ export interface SettlementRun {
 }
 
 export interface Dashboard {
+  licenseOffers: number;
   settlementsToApprove: number;
   settlementsToPay: number;
   payoutsInProgress: number;

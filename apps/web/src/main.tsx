@@ -13,6 +13,7 @@ import { EarningsPage } from './pages/Earnings';
 import { ReceiptPage } from './pages/Receipt';
 import { ReportsPage } from './pages/Reports';
 import { StorePage, StoreItemPage } from './pages/Store';
+import { MySourcesPage, NewSourcePage, NewVersionPage, OfferLicensePage, ProfilePage } from './pages/Sources';
 import { StudioPage } from './pages/Studio';
 
 const queryClient = new QueryClient({
@@ -22,7 +23,7 @@ const queryClient = new QueryClient({
 function Home() {
   const { user } = useSession();
   if (!user) return <Spinner />;
-  const target = { publisher: '/dashboard', admin: '/dashboard', buyer: '/store', contributor: '/earnings' }[user.role];
+  const target = { publisher: '/dashboard', admin: '/dashboard', buyer: '/store', contributor: '/sources' }[user.role];
   return <Navigate to={target} replace />;
 }
 
@@ -44,6 +45,11 @@ const router = createBrowserRouter([
       { path: 'store', element: <StorePage /> },
       { path: 'store/:id', element: <StoreItemPage /> },
       { path: 'earnings', element: <EarningsPage /> },
+      { path: 'sources', element: <MySourcesPage /> },
+      { path: 'sources/new', element: <NewSourcePage /> },
+      { path: 'sources/:id/offer', element: <OfferLicensePage /> },
+      { path: 'sources/:id/version', element: <NewVersionPage /> },
+      { path: 'profile', element: <ProfilePage /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },

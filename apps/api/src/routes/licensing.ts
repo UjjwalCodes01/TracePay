@@ -143,7 +143,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
         id: true, title: true, kind: true, description: true, createdAt: true,
         owner: { select: { id: true, name: true } },
         versions: { orderBy: { version: 'desc' }, take: 1, select: { version: true, _count: { select: { chunks: true } } } },
-        licenses: { where: { licenseeId: me }, orderBy: { version: 'desc' }, take: 1, select: { id: true, status: true, version: true } },
+        licenses: { where: { licenseeId: me }, orderBy: { version: 'desc' }, take: 1, select: { id: true, status: true, version: true, terms: true } },
       },
     });
     res.json({

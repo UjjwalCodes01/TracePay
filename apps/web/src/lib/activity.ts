@@ -62,6 +62,20 @@ export function describeEvent(eventType: string, payload: Record<string, unknown
       return { text: 'Sending payments didn’t go through. It’s safe to try again.', tone: 'bad' };
     case 'payout.duplicate_rejected':
       return { text: 'PayPal blocked a duplicate payment, so nobody was paid twice.', tone: 'waiting' };
+    case 'license.requested':
+      return { text: 'You asked a contributor for a license.', tone: 'neutral' };
+    case 'license.offered':
+      return { text: 'A contributor offered you license terms to review.', tone: 'waiting' };
+    case 'license.accepted':
+      return { text: 'You accepted a license. The source can now be used in reports.', tone: 'good' };
+    case 'license.declined':
+      return { text: 'You declined a license offer.', tone: 'neutral' };
+    case 'license.withdrawn':
+      return { text: 'A contributor withdrew a license offer.', tone: 'neutral' };
+    case 'license.request_declined':
+      return { text: 'A contributor declined your license request.', tone: 'neutral' };
+    case 'license.revoked':
+      return { text: 'A contributor revoked a license. New reports can’t use that source.', tone: 'bad' };
     default:
       return { text: eventType.replace(/[._]/g, ' '), tone: 'neutral' };
   }

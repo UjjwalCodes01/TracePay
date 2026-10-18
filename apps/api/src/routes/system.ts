@@ -86,7 +86,9 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
       db.agentRun.count({ where: { ...mine, status: 'awaiting_approval' } }),
       db.artifact.findFirst({ where: { buildJob: mine }, orderBy: { createdAt: 'desc' }, select: { id: true, title: true } }),
     ]);
+    const licenseOffers = await db.licenseGrant.count({ where: { status: 'offered', ...(user.role === 'admin' ? {} : { licenseeId: user.id }) } });
     res.json({
+      licenseOffers,
       settlementsToApprove: toApprove,
       settlementsToPay: toPay,
       payoutsInProgress: paying,

@@ -20,6 +20,8 @@ interface NextStep {
 function nextStep(d: Dashboard): NextStep {
   if (d.exceptions > 0)
     return { tone: 'attention', title: 'Something needs your attention', text: 'A refund or a failed payment was reported by PayPal. Take a look so contributors are treated fairly.', cta: { to: '/settlements', label: 'Review it' } };
+  if (d.licenseOffers > 0)
+    return { tone: 'action', title: d.licenseOffers === 1 ? 'A contributor offered you a license' : `${d.licenseOffers} license offers are waiting`, text: 'Review the terms in plain language. Nothing applies until you accept.', cta: { to: '/registry?tab=offers', label: 'Review offers' } };
   if (d.agentWaiting > 0)
     return { tone: 'action', title: 'Your assistant is waiting for your OK', text: 'One of your sources can’t be used for a paid report. The assistant found a replacement and needs you to approve it.', cta: { to: '/studio', label: 'Review the suggestion' } };
   if (d.settlementsToApprove > 0)
