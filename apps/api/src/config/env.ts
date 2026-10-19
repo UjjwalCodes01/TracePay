@@ -28,7 +28,9 @@ export const serverEnv = () =>
       WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
       /** Proxies in front of the API (Vercel rewrite + Render load balancer = 2). */
       TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+      /** Runtime connection. On Neon, use the pooled ("-pooler") connection string. */
       DATABASE_URL: nonEmpty,
+      DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
       APP_BASE_URL: z.url().default('http://localhost:5173'),
       API_BASE_URL: z.url().default('http://localhost:4000'),
       CORS_ORIGINS: z.string().default('http://localhost:5173'),

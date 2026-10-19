@@ -96,7 +96,7 @@ flowchart LR
     Settle[Settlement engine<br/>integer cents · frozen terms]
     Audit[Hash-chained audit log<br/>Ed25519 receipts]
   end
-  DB[(PostgreSQL)]
+  DB[(PostgreSQL · Neon)]
   Vertex[[Vertex AI · Gemini]]
   PayPal[[PayPal sandbox<br/>Orders v2 · Payouts · Webhooks]]
 
@@ -151,6 +151,8 @@ npm run dev:web                                # http://localhost:5173
 
 | Variable | Required | Notes |
 |---|---|---|
+| `DATABASE_URL` | yes | Local Docker URL, or Neon's **pooled** connection string (host contains `-pooler`) |
+| `DIRECT_URL` | on Neon | Neon's **direct** connection string; used only by `prisma migrate` (needs session-level locks) |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | yes | **Sandbox** REST app. Enable *Payouts* in the app's features |
 | `DEMO_PAYEE_EMAILS` | for payouts | Three sandbox **personal** account emails (Northwind, Okafor, Lumen) |
 | `PAYPAL_WEBHOOK_ID` | for webhooks | Register `https://<api>/api/webhooks/paypal` in the dashboard |
@@ -173,13 +175,22 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Tenant isolation** | Every build, run, report, sale, settlement and audit event is scoped to its publisher. Other tenants get **404** (not 403), so they can't even confirm a record exists. Buyers see sourcing but not the money split; only the owner sees payout addresses |
 | **Request security** | Helmet security headers and a locked-down CSP; CSRF origin check on cookie-authenticated writes; per-IP rate limits with stricter limits on credential endpoints; 1 MB body limit; zod validation on every input |
 | **Money safety** | Integer cents, idempotency keys on every PayPal write, row locks on capture, terms frozen per build, publisher approval before payouts, exceptions for refunds and failed payouts |
-| **Operability** | Structured JSON logs (pino) with request ids echoed in `X-Request-Id` and secrets redacted; `/api/health` (liveness) and `/api/ready` (database); graceful shutdown on SIGTERM; fail-fast config validation |
+| **Operability** | Structured JSON logs (pino) with request ids echoed in `X-Request-Id` and secrets redacted; `/api/health` (liveness) and `/api/ready` (database); graceful shutdown on SIGTERM; fail-fast config validation; a recovery sweep for work interrupted by a restart |
+| **Database** | **Neon** serverless Postgres: the app uses the pooled endpoint, migrations the direct one; the pool survives compute suspend/resume; health checks and an idle API never wake the database; the seed script refuses to run once real accounts exist, and integration tests refuse non-local databases |
 | **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
 | **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
 | **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 124 tests against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
+
+### Deploying the database (Neon)
+
+1. Create a Neon project (Postgres 17). In **Connect**, copy two strings: the **pooled** one (host contains `-pooler`) → `DATABASE_URL`, and the one with pooling switched off → `DIRECT_URL`.
+2. Put both in the Render service's environment. On every deploy Render runs `prisma migrate deploy` over `DIRECT_URL` before starting.
+3. Load the demo data once: `npm run db:seed -w @tracepay/api` with those variables set. It refuses to run once the database has real accounts; use **Reset demo** in the app instead, which only touches the demo personas.
+
+Neon's free plan suspends the compute after a few idle minutes and wakes it on the next query (allow a second or two on the first request). Render's health check uses `/api/health`, which doesn't touch the database, so an idle deployment lets Neon sleep.
 
 Check your PayPal setup before running the app:
 
@@ -229,7 +240,7 @@ npm run test:integration -w @tracepay/api   # 124 tests; creates/migrates a trac
 apps/api      Express API, Prisma schema & migrations, services, tests
 apps/web      React app (Vite, Tailwind, React Router, TanStack Query, AG Grid, React Flow)
 packages/shared  Money helpers and zod schemas shared by API and web
-render.yaml   Render Blueprint (API + Postgres); apps/web/vercel.json for the frontend
+render.yaml   Render Blueprint (API; database on Neon); apps/web/vercel.json for the frontend
 ```
 
 ## Tools used
@@ -237,7 +248,7 @@ render.yaml   Render Blueprint (API + Postgres); apps/web/vercel.json for the fr
 - **PayPal Developer Platform (sandbox):** Orders v2, JS SDK Smart Buttons, Payouts, Webhooks.
 - **Google Vertex AI (Gemini):** function-calling agent, structured-output report writer, failure explanations — via `@google/genai`.
 - **AG Grid Community:** registry and settlement ledger. **React Flow:** provenance graph.
-- **Render** (API + Postgres) and **Vercel** (web).
+- **Render** (API), **Neon** (serverless Postgres) and **Vercel** (web).
 - Node.js, TypeScript, Express 5, Prisma 7, PostgreSQL 17, React 19, Tailwind CSS 4, Vitest.
 
 ## License

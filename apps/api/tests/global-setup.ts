@@ -11,6 +11,12 @@ export default async function setup() {
 
   const target = new URL(url);
   const dbName = target.pathname.slice(1);
+  // Integration suites truncate tables. Never let them run against a hosted database
+  // (Neon, Render, …) by a mis-set variable.
+  const localHosts = ['localhost', '127.0.0.1', '::1', '[::1]', 'postgres', 'db'];
+  if (!localHosts.includes(target.hostname) && process.env.ALLOW_REMOTE_TEST_DB !== '1') {
+    throw new Error(`TEST_DATABASE_URL points at ${target.hostname}; integration tests erase data and only run against a local database.`);
+  }
   const admin = new URL(url);
   admin.pathname = '/postgres';
 

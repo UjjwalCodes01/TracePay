@@ -7,7 +7,7 @@ import { PayPalClient } from './integrations/paypal/client';
 import { pickPlanner } from './modules/agent/planners';
 import { loadSigningKeys, type SigningKeys } from './modules/audit/signing';
 import { pickWriter } from './modules/generation/writers';
-import { recoverStaleWork } from './modules/maintenance/recovery';
+import { recoverStaleWork, STALE_WORK_MS } from './modules/maintenance/recovery';
 
 const env = serverEnv();
 
@@ -54,12 +54,22 @@ const server = app.listen(env.PORT, () => {
 });
 
 // Recover work interrupted by a previous restart, then keep sweeping periodically.
+// Work only goes stale if it was started recently, so an idle API skips the sweep:
+// that lets a serverless database (Neon) suspend instead of being woken every few
+// minutes. Health checks don't count as activity.
+const SWEEP_EVERY_MS = 5 * 60_000;
+let lastActivity = Date.now();
+server.on('request', (req: { url?: string }) => {
+  if (!/^\/api\/(health|ready)\b/.test(req.url ?? '')) lastActivity = Date.now();
+});
 const sweep = () =>
   recoverStaleWork(db())
     .then((r) => (r.agentRuns || r.builds) && logger.warn(r, 'recovered interrupted work'))
     .catch((err) => logger.error({ err }, 'stale-work sweep failed'));
 void sweep();
-setInterval(sweep, 5 * 60_000).unref();
+setInterval(() => {
+  if (Date.now() - lastActivity <= STALE_WORK_MS + SWEEP_EVERY_MS) void sweep();
+}, SWEEP_EVERY_MS).unref();
 
 // Graceful shutdown: stop accepting connections, let in-flight requests finish, close the pool.
 let shuttingDown = false;
