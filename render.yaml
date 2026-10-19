@@ -7,6 +7,9 @@ services:
     # Same AWS region as the Neon database (us-east-2 / Ohio): every query is a
     # network round trip, and transactions hold locks across them.
     region: ohio
+    # Free sleeps after 15 idle minutes (the first request then takes ~1 minute).
+    # Switch to starter for an always-on API, e.g. while judging is open.
+    plan: free
     # --include=dev: NODE_ENV=production (below) also applies to the build, and would
     # make npm skip the build tools (prisma, tsup, typescript).
     buildCommand: npm ci --include=dev && npm run build -w @tracepay/api
