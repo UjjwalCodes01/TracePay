@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "typecheck": "prisma generate && tsc -p tsconfig.json",
     "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
+    "db:deploy": "node scripts/migrate-deploy.mjs",
     "db:seed": "tsx --env-file-if-exists=.env --env-file-if-exists=../../.env.local src/scripts/seed.ts",
     "smoke:paypal": "tsx --env-file-if-exists=.env --env-file-if-exists=../../.env.local src/scripts/smoke-paypal.ts",
     "smoke:vertex": "tsx --env-file-if-exists=.env --env-file-if-exists=../../.env.local src/scripts/smoke-vertex.ts",

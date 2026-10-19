@@ -16,16 +16,27 @@ import { defineConfig } from 'prisma/config';
  */
 function databaseUrl(): string {
   const fromProcess = process.env.DATABASE_URL;
-  if (fromProcess) return process.env.DATABASE_URL_UNPOOLED || fromProcess;
+  if (fromProcess) return withConnectTimeout(process.env.DATABASE_URL_UNPOOLED || fromProcess);
 
   const files = [path.join(import.meta.dirname, '../../.env.local'), path.join(import.meta.dirname, '.env')];
   for (const file of files) {
     if (!existsSync(file)) continue;
     const vars = parseEnv(readFileSync(file, 'utf8'));
-    if (vars.DATABASE_URL) return vars.DATABASE_URL_UNPOOLED || vars.DATABASE_URL;
+    if (vars.DATABASE_URL) return withConnectTimeout(vars.DATABASE_URL_UNPOOLED || vars.DATABASE_URL);
   }
   // Generation doesn't need a live database; migrate/seed do.
   return 'postgresql://tracepay:tracepay@localhost:5433/tracepay';
+}
+
+/** The schema engine gives up after 5 s by default; a waking Neon compute can take longer. */
+function withConnectTimeout(url: string): string {
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has('connect_timeout')) u.searchParams.set('connect_timeout', '30');
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 export default defineConfig({
