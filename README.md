@@ -8,6 +8,8 @@ An AI can assemble a paid deliverable out of a dozen licensed sources in seconds
 
 ![CI](https://github.com/UjjwalCodes01/TracePay/actions/workflows/ci.yml/badge.svg)
 
+**Live demo:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — PayPal sandbox; pick a demo role on the sign-in page.
+
 ---
 
 ## The story in 60 seconds

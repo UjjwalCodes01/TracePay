@@ -45,11 +45,11 @@ services:
       - key: DATABASE_URL_UNPOOLED
         sync: false
       - key: APP_BASE_URL
-        sync: false # your Vercel URL, e.g. https://tracepay.vercel.app
+        sync: false # the Vercel site: https://trace-pay-umber.vercel.app
       - key: API_BASE_URL
         sync: false # this service's URL
       - key: CORS_ORIGINS
-        sync: false # your Vercel URL (comma-separate several)
+        sync: false # https://trace-pay-umber.vercel.app (comma-separate several)
       - key: PAYPAL_ENV
         value: sandbox
       - key: PAYPAL_CLIENT_ID
