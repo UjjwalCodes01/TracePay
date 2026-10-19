@@ -4,8 +4,11 @@ services:
   - type: web
     name: tracepay-api
     runtime: node
+    # Same AWS region as the Neon database (us-east-2 / Ohio): every query is a
+    # network round trip, and transactions hold locks across them.
+    region: ohio
     buildCommand: npm ci && npm run build -w @tracepay/api
-    # Apply migrations (over DIRECT_URL), then start. Seed the demo data once, from your
+    # Apply migrations (over DATABASE_URL_UNPOOLED), then start. Seed the demo data once, from your
     # machine or the Render shell: npm run db:seed -w @tracepay/api (it refuses to run
     # once real accounts exist).
     startCommand: npm run db:deploy -w @tracepay/api && npm run start -w @tracepay/api
@@ -32,8 +35,9 @@ services:
       # Neon → Connect: the POOLED string (host contains "-pooler"), with ?sslmode=require
       - key: DATABASE_URL
         sync: false
-      # Neon → Connect with "Connection pooling" off: the DIRECT string, used for migrations
-      - key: DIRECT_URL
+      # Neon → Connect with "Connection pooling" off: the DIRECT string, used for migrations.
+      # (`neon env pull` writes both under these names.)
+      - key: DATABASE_URL_UNPOOLED
         sync: false
       - key: APP_BASE_URL
         sync: false # your Vercel URL, e.g. https://tracepay.vercel.app

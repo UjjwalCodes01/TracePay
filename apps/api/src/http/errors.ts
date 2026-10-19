@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
+import { Prisma } from '../generated/prisma/client';
 import { AssetError } from '../modules/assets/asset.service';
 import { CryptoBusyError } from '../modules/auth/crypto';
 import { UnknownAssetVersionError } from '../modules/catalog/catalog.service';
@@ -10,11 +11,14 @@ import { SettlementError } from '../modules/settlements/engine';
 import { SettlementStateError } from '../modules/settlements/settlement.service';
 
 export class HttpError extends Error {
-  constructor(readonly status: number, message: string, readonly details?: unknown) {
+  constructor(readonly status: number, message: string, readonly details?: unknown, readonly retryAfterSeconds?: number) {
     super(message);
     this.name = 'HttpError';
   }
 }
+
+/** Transaction timed out or no pooled connection was free: the database is saturated, not broken. */
+const DB_BUSY_CODES = new Set(['P2024', 'P2028']);
 
 const PAYMENT_STATUS = { not_found: 404, not_for_sale: 409, state: 409, verification: 422, provider: 502 } as const;
 const SETTLEMENT_STATUS = { not_found: 404, state: 409, payouts_unavailable: 503, provider: 502 } as const;
@@ -30,7 +34,10 @@ function toHttp(err: unknown): HttpError {
   if (err instanceof SettlementStateError) return new HttpError(SETTLEMENT_STATUS[err.code], err.message, { code: err.code });
   if (err instanceof SettlementError) return new HttpError(422, err.message);
   if (err instanceof LicenseError) return new HttpError(LICENSE_STATUS[err.code], err.message, { code: err.code });
-  if (err instanceof CryptoBusyError) return new HttpError(503, err.message);
+  if (err instanceof CryptoBusyError) return new HttpError(503, err.message, undefined, 2);
+  if (err instanceof Prisma.PrismaClientKnownRequestError && DB_BUSY_CODES.has(err.code)) {
+    return new HttpError(503, 'The server is busy. Please try again in a moment.', undefined, 2);
+  }
   if (err instanceof AssetError) return new HttpError(ASSET_STATUS[err.code], err.message, { code: err.code });
   return new HttpError(500, 'Internal error.');
 }
@@ -39,5 +46,6 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   const http = toHttp(err);
   // Unexpected errors are logged with the request id; clients only ever see a generic message.
   if (http.status >= 500 && !(err instanceof HttpError)) (req.log ?? console).error({ err }, 'unhandled error');
+  if (http.retryAfterSeconds) res.setHeader('Retry-After', String(http.retryAfterSeconds));
   res.status(http.status).json({ error: http.message, ...(http.details !== undefined ? { details: http.details } : {}) });
 }

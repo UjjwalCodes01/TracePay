@@ -26,5 +26,5 @@ export default async function setup() {
   if (exists.rowCount === 0) await client.query(`CREATE DATABASE "${dbName.replace(/"/g, '')}"`);
   await client.end();
 
-  execSync('npx prisma migrate deploy', { env: { ...process.env, DATABASE_URL: url }, stdio: 'ignore' });
+  execSync('npx prisma migrate deploy', { env: { ...process.env, DATABASE_URL: url, DATABASE_URL_UNPOOLED: url }, stdio: 'ignore' });
 }

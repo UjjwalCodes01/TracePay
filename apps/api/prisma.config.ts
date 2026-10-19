@@ -1,4 +1,32 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { parseEnv } from 'node:util';
 import { defineConfig } from 'prisma/config';
+
+/**
+ * The Prisma CLI doesn't load env files, so resolve the connection here with the
+ * same precedence as the npm scripts: the real environment (Render, CI, tests), then
+ * the repo-root .env.local written by `neon env pull`, then apps/api/.env.
+ *
+ * Migrations take session-level locks, so they need a DIRECT connection. On Neon
+ * that's DATABASE_URL_UNPOOLED (no "-pooler" in the host); the app itself uses the
+ * pooled DATABASE_URL. The direct URL is always taken from the same source as
+ * DATABASE_URL, so an explicitly set database (e.g. the test DB) is never paired
+ * with Neon's URL from a file.
+ */
+function databaseUrl(): string {
+  const fromProcess = process.env.DATABASE_URL;
+  if (fromProcess) return process.env.DATABASE_URL_UNPOOLED || fromProcess;
+
+  const files = [path.join(import.meta.dirname, '../../.env.local'), path.join(import.meta.dirname, '.env')];
+  for (const file of files) {
+    if (!existsSync(file)) continue;
+    const vars = parseEnv(readFileSync(file, 'utf8'));
+    if (vars.DATABASE_URL) return vars.DATABASE_URL_UNPOOLED || vars.DATABASE_URL;
+  }
+  // Generation doesn't need a live database; migrate/seed do.
+  return 'postgresql://tracepay:tracepay@localhost:5433/tracepay';
+}
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',
@@ -6,10 +34,6 @@ export default defineConfig({
     path: 'prisma/migrations',
   },
   datasource: {
-    // Migrations take session-level locks, so they need a direct connection. On Neon
-    // that is the connection string WITHOUT "-pooler"; the app itself uses DATABASE_URL
-    // (pooled). Locally both point at the same Docker database.
-    // Generation doesn't need a live database; migrate/seed do.
-    url: process.env.DIRECT_URL || process.env.DATABASE_URL || 'postgresql://tracepay:tracepay@localhost:5433/tracepay',
+    url: databaseUrl(),
   },
 });
