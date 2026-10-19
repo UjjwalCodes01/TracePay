@@ -43,6 +43,7 @@ const app = createApp({
     authRateLimit: env.AUTH_RATE_LIMIT,
     webhookRateLimitPerMinute: env.WEBHOOK_RATE_LIMIT_PER_MINUTE,
     trustProxyHops: env.TRUST_PROXY_HOPS,
+    clientIpHeader: env.CLIENT_IP_HEADER || undefined,
   },
 });
 

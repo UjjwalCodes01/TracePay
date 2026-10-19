@@ -78,6 +78,20 @@ describe.runIf(process.env.TEST_DATABASE_URL)('security (integration)', () => {
       for (let i = 0; i < 2; i++) await request(limited).post('/api/auth/login').send({ email: 'x@y.example', password: 'whatever pass' }).expect(401);
       await request(limited).post('/api/auth/login').send({ email: 'x@y.example', password: 'whatever pass' }).expect(429);
     });
+
+    it('rate-limits per visitor using the edge-set client IP header', async () => {
+      const app = testApp(paypal, { demoMode: false, authRateLimit: 2, clientIpHeader: 'cf-connecting-ip' });
+      const login = (ip: string, extra: Record<string, string> = {}) =>
+        request(app).post('/api/auth/login').set({ 'cf-connecting-ip': ip, ...extra }).send({ email: `${ip}@y.example`, password: 'whatever pass' });
+      await login('203.0.113.1').expect(401);
+      await login('203.0.113.1').expect(401);
+      // Forwarding headers a client adds don't buy a fresh allowance…
+      await login('203.0.113.1', { 'x-forwarded-for': '198.51.100.9' }).expect(429);
+      // …while a different visitor behind the same proxy still gets in.
+      await login('203.0.113.2').expect(401);
+      // A malformed header value is ignored rather than becoming a rate-limit key.
+      await request(app).post('/api/auth/login').set('cf-connecting-ip', 'not-an-ip').send({ email: 'z@y.example', password: 'whatever pass' }).expect(401);
+    });
   });
 
   describe('demo mode', () => {

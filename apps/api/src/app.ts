@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
+import { isIP } from 'node:net';
 import type { Db } from './db';
 import type { PayPalGateway } from './integrations/paypal/gateway';
 import type { SigningKeys } from './modules/audit/signing';
@@ -39,15 +40,32 @@ export interface AppDeps {
     authRateLimit: number;
     webhookRateLimitPerMinute: number;
     trustProxyHops: number;
+    /**
+     * A header set by the platform's edge that carries the visitor's address and can't
+     * be supplied by clients (Render: Cloudflare's cf-connecting-ip). When set, it is
+     * the client IP for rate limits and logs instead of counting proxy hops.
+     */
+    clientIpHeader?: string;
   };
 }
 
 export function createApp(deps: AppDeps) {
   const app = express();
   app.disable('x-powered-by');
-  // Number of proxies in front of the API. Behind Vercel's rewrite AND Render's
-  // load balancer this is 2; getting it wrong makes every user share one rate limit.
+  // Number of proxies in front of the API. Getting it wrong makes users share rate
+  // limits (too few hops) or lets clients forge their address (too many). Platforms
+  // whose proxy chain isn't fixed should use clientIpHeader instead.
   app.set('trust proxy', deps.config.trustProxyHops);
+  const ipHeader = deps.config.clientIpHeader?.trim().toLowerCase();
+  if (ipHeader) {
+    app.use((req, _res, next) => {
+      const value = req.headers[ipHeader];
+      const ip = typeof value === 'string' ? value.trim() : '';
+      // Shadow Express's req.ip getter: rate limiters and logs all read req.ip.
+      if (isIP(ip)) Object.defineProperty(req, 'ip', { value: ip, configurable: true, enumerable: true });
+      next();
+    });
+  }
 
   app.use(httpLogger);
   // A JSON API: no HTML is served, so lock everything down.

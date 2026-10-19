@@ -35,6 +35,11 @@ services:
       # login limits and per-user quotas cover the case where Vercel traffic shares IPs.
       - key: TRUST_PROXY_HOPS
         value: "1"
+      # The real visitor IP for rate limits. Render's proxy chain has several hops (so
+      # TRUST_PROXY_HOPS alone made all visitors share one limit); Cloudflare sets this
+      # header at Render's edge and overwrites any client-supplied value.
+      - key: CLIENT_IP_HEADER
+        value: cf-connecting-ip
       - key: LOG_LEVEL
         value: info
       # Neon → Connect: the POOLED string (host contains "-pooler"), with ?sslmode=require

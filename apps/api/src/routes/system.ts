@@ -11,7 +11,8 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
   const r = Router();
 
   r.get('/health', (_req, res) => {
-    res.json({ ok: true, service: 'tracepay-api', paypalEnv: 'sandbox' });
+    // The deployed commit (Render provides it), so it's always clear which version is live.
+    res.json({ ok: true, service: 'tracepay-api', paypalEnv: 'sandbox', commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null });
   });
 
   /** Readiness: the process is up AND can reach the database. */

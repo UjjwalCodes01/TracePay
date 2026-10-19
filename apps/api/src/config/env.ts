@@ -26,8 +26,15 @@ export const serverEnv = () =>
       RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
       AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
       WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
-      /** Proxies in front of the API (Vercel rewrite + Render load balancer = 2). */
+      /** Proxies in front of the API; ignored for client IPs when CLIENT_IP_HEADER is set. */
       TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+      /**
+       * Header carrying the visitor's IP, set by the platform edge (never by clients).
+       * On Render that is Cloudflare's cf-connecting-ip: Render's own proxy chain has
+       * several hops, so counting hops made every visitor share one rate limit.
+       * Defaults to it when running on Render (which sets RENDER=true).
+       */
+      CLIENT_IP_HEADER: z.string().trim().default(process.env.RENDER === 'true' ? 'cf-connecting-ip' : ''),
       /** Runtime connection. On Neon, use the pooled ("-pooler") connection string. */
       DATABASE_URL: nonEmpty,
       DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
