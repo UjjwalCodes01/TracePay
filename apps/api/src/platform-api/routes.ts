@@ -4,7 +4,7 @@ import { ownedBuild, ownedSettlement, publisherScope, requireArtifactAccess } fr
 import { HttpError } from '../http/errors';
 import { quotas } from '../http/limits';
 import type { AuthUser } from '../modules/auth/auth.service';
-import { AgentStateError, createRun, decideReplacement, runAgent } from '../modules/agent/agent.service';
+import { AgentStateError, createRunWithinCap, decideReplacement, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
 import { appendAudit } from '../modules/audit/audit-log';
 import { buildReceipt } from '../modules/audit/receipt.service';
 import { preflightAndRecord } from '../modules/builds/preflight.service';
@@ -27,6 +27,7 @@ import * as R from './resources';
 const Id = (what: string) => z.object({ id: z.string().min(1).max(64).meta({ description: `The ${what} id.` }) });
 const Empty = z.object({}).strict();
 const MAX_ACTIVE_AGENT_RUNS = 2;
+const CATALOG_LIMIT = 500;
 
 export interface PlatformDeps extends AppDeps {
   webhooks: () => WebhookDeps;
@@ -77,7 +78,11 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       summary: 'List licensable sources with your license status',
       description: 'Every source you hold a license for, plus the current marketplace (up to 500). Use `version.id` in `source_version_ids` when creating a build.',
       response: R.SourceList,
-      handler: async ({ user }) => ({ object: 'list' as const, data: (await listCatalog(db, user.id)).map(R.sourceOut), has_more: false, next_cursor: null }),
+      handler: async ({ user }) => {
+        const entries = await listCatalog(db, user.id);
+        // The catalog is capped (CATALOG_LIMIT); say so rather than pretend it's complete.
+        return { object: 'list' as const, data: entries.map(R.sourceOut), has_more: entries.length >= CATALOG_LIMIT, next_cursor: null };
+      },
     }),
     defineRoute({
       method: 'get', path: '/sources/:id', operationId: 'getSource', tag: 'Sources & licenses', summary: 'Retrieve a source',
@@ -89,7 +94,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/sources/:id/license_requests', operationId: 'requestLicense', middleware: [quotas.request()], tag: 'Sources & licenses',
+      method: 'post', path: '/sources/:id/license_requests', operationId: 'requestLicense', roles: ['publisher'], middleware: [quotas.request()], tag: 'Sources & licenses',
       summary: 'Ask the source’s owner for a license',
       description: 'The owner answers with an offer (event `license.offered`), which you then accept or decline.',
       params: Id('source'), body: z.object({ message: z.string().max(1000).nullable().optional() }), response: R.License, status: 201,
@@ -119,7 +124,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       handler: async ({ user, params }) => licenseById(user.id, params.id),
     }),
     defineRoute({
-      method: 'post', path: '/licenses/:id/accept', operationId: 'acceptLicense', tag: 'Sources & licenses', summary: 'Accept an offer',
+      method: 'post', path: '/licenses/:id/accept', operationId: 'acceptLicense', roles: ['publisher'], tag: 'Sources & licenses', summary: 'Accept an offer',
       description: 'Binds exactly the terms you reviewed: `terms_hash` must equal the offer’s current hash, so terms that changed meanwhile can’t be accepted by accident.',
       params: Id('license'), body: z.object({ terms_hash: z.string().length(64) }), response: R.License,
       handler: async ({ user, params, body }) => {
@@ -128,7 +133,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/licenses/:id/decline', operationId: 'declineLicense', tag: 'Sources & licenses', summary: 'Decline an offer',
+      method: 'post', path: '/licenses/:id/decline', operationId: 'declineLicense', roles: ['publisher'], tag: 'Sources & licenses', summary: 'Decline an offer',
       params: Id('license'), body: z.object({ reason: z.string().max(500).nullable().optional() }), response: R.License,
       handler: async ({ user, params, body }) => {
         await declineOffer(db, { grantId: params.id, publisherId: user.id, reason: body.reason ?? null });
@@ -138,7 +143,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
 
     // ---- builds -------------------------------------------------------------------------------
     defineRoute({
-      method: 'post', path: '/builds', operationId: 'createBuild', middleware: [quotas.preflight()], tag: 'Builds & reports', summary: 'Run the license preflight for a planned report',
+      method: 'post', path: '/builds', operationId: 'createBuild', roles: ['publisher'], middleware: [quotas.preflight()], tag: 'Builds & reports', summary: 'Run the license preflight for a planned report',
       description: 'Evaluates every source’s license against the intent and records the result. The response is `201` whether it passed or was blocked: check `preflight.verdict`. Terms in force now are frozen onto the build.',
       body: z.object({ intent: R.IntentIn, source_version_ids: z.array(z.string().min(1).max(64)).min(1).max(20) }),
       response: R.Build, status: 201,
@@ -168,7 +173,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/builds/:id/generate', operationId: 'generateReport', tag: 'Builds & reports', summary: 'Generate the report for a passed build',
+      method: 'post', path: '/builds/:id/generate', operationId: 'generateReport', roles: ['publisher'], tag: 'Builds & reports', summary: 'Generate the report for a passed build',
       description: 'Licenses are re-checked first; if one changed since the preflight, nothing is generated (`409`). Every citation is validated against the retrieved passages; a draft that fails validation is rejected (`422`, code `generation_failed`). A report built for sale is listed in the store.',
       params: Id('build'), body: Empty.optional(), response: R.Generation, status: 201, errors: [409, 422],
       handler: async ({ user, params }) => {
@@ -311,7 +316,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/settlements/:id/approve', operationId: 'approveSettlement', tag: 'Sales & settlements', summary: 'Approve a calculated settlement',
+      method: 'post', path: '/settlements/:id/approve', operationId: 'approveSettlement', roles: ['publisher'], tag: 'Sales & settlements', summary: 'Approve a calculated settlement',
       params: Id('settlement'), body: Empty.optional(), response: R.Settlement, errors: [409],
       handler: async ({ user, params }) => {
         await ownedSettlement(db, user, params.id);
@@ -320,7 +325,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/settlements/:id/payouts', operationId: 'sendPayouts', tag: 'Sales & settlements', summary: 'Send the PayPal payouts of an approved settlement',
+      method: 'post', path: '/settlements/:id/payouts', operationId: 'sendPayouts', roles: ['publisher'], tag: 'Sales & settlements', summary: 'Send the PayPal payouts of an approved settlement',
       description: 'Safe to retry: the PayPal batch id is deterministic, so PayPal never pays the same batch twice. Final statuses arrive via `payout_batch.updated` events.',
       params: Id('settlement'), body: Empty.optional(), response: R.Settlement, status: 201, errors: [409, 502, 503],
       handler: async ({ user, params }) => {
@@ -339,7 +344,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/settlements/:id/retry_failed', operationId: 'retryFailedPayouts', tag: 'Sales & settlements', summary: 'Re-send only the payouts that failed',
+      method: 'post', path: '/settlements/:id/retry_failed', operationId: 'retryFailedPayouts', roles: ['publisher'], tag: 'Sales & settlements', summary: 'Re-send only the payouts that failed',
       description: 'Creates a new numbered attempt for payouts PayPal reported as failed, returned or blocked, to the contributors’ current addresses.',
       params: Id('settlement'), body: Empty.optional(), response: R.Settlement, status: 201, errors: [409, 502],
       handler: async ({ user, params }) => {
@@ -349,7 +354,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/settlements/:id/recalculate', operationId: 'recalculateSettlement', tag: 'Sales & settlements', summary: 'Recalculate a failed settlement',
+      method: 'post', path: '/settlements/:id/recalculate', operationId: 'recalculateSettlement', roles: ['publisher'], tag: 'Sales & settlements', summary: 'Recalculate a failed settlement',
       params: Id('settlement'), body: Empty.optional(), response: R.Settlement, errors: [409],
       handler: async ({ user, params }) => {
         await ownedSettlement(db, user, params.id);
@@ -360,7 +365,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
 
     // ---- agent ---------------------------------------------------------------------------------
     defineRoute({
-      method: 'post', path: '/agent_runs', operationId: 'startAgentRun', middleware: [quotas.agentRun()], tag: 'Publisher Agent', summary: 'Start a Publisher Agent run',
+      method: 'post', path: '/agent_runs', operationId: 'startAgentRun', roles: ['publisher'], middleware: [quotas.agentRun()], tag: 'Publisher Agent', summary: 'Start a Publisher Agent run',
       description: 'Runs in the background (`202`). Follow it with `GET /agent_runs/{id}` or the `agent_run.*` events; a run waiting for you has status `awaiting_approval`.',
       body: z.object({
         goal: z.string().min(10).max(2000),
@@ -370,11 +375,18 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       }),
       response: R.AgentRun, status: 202, errors: [429],
       handler: async ({ user, body }) => {
-        const active = await db.agentRun.count({ where: { publisherId: user.id, status: 'running' } });
-        if (active >= MAX_ACTIVE_AGENT_RUNS) throw new HttpError(429, `You already have ${active} agent runs in progress. Wait for one to finish.`, { code: 'too_many_active_runs' });
-        const run = await createRun(db, planner(), {
-          publisherId: user.id, goal: body.goal, intent: R.intentIn(body.intent), selection: body.source_version_ids, policy: { autoReplace: body.auto_replace },
-        });
+        let run;
+        try {
+          run = await createRunWithinCap(
+            db,
+            planner(),
+            { publisherId: user.id, goal: body.goal, intent: R.intentIn(body.intent), selection: body.source_version_ids, policy: { autoReplace: body.auto_replace } },
+            MAX_ACTIVE_AGENT_RUNS,
+          );
+        } catch (err) {
+          if (err instanceof TooManyRunsError) throw new HttpError(429, err.message, { code: 'too_many_active_runs' });
+          throw err;
+        }
         runInBackground(run.id);
         return R.agentRunOut(await db.agentRun.findUniqueOrThrow({ where: { id: run.id }, select: R.agentRunSelect }));
       },
@@ -397,7 +409,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/agent_runs/:id/decision', operationId: 'decideAgentRun', tag: 'Publisher Agent', summary: 'Approve or decline what the agent proposes',
+      method: 'post', path: '/agent_runs/:id/decision', operationId: 'decideAgentRun', roles: ['publisher'], tag: 'Publisher Agent', summary: 'Approve or decline what the agent proposes',
       params: Id('agent run'), body: z.object({ approved: z.boolean() }), response: R.AgentRun, status: 202, errors: [409],
       handler: async ({ user, params, body }) => {
         const owned = await db.agentRun.findFirst({ where: { id: params.id, ...publisherScope(user) }, select: { id: true } });
@@ -459,7 +471,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
 
     // ---- webhook endpoints -----------------------------------------------------------------------
     defineRoute({
-      method: 'post', path: '/webhook_endpoints', operationId: 'createWebhookEndpoint', middleware: [quotas.webhookManage()], tag: 'Events & webhooks', summary: 'Add a webhook endpoint',
+      method: 'post', path: '/webhook_endpoints', operationId: 'createWebhookEndpoint', secretFields: ['secret'], middleware: [quotas.webhookManage()], tag: 'Events & webhooks', summary: 'Add a webhook endpoint',
       description: 'The response contains the signing `secret` — the only time it is shown. Verify every delivery with it (see the `TracePay-Signature` scheme in the API description).',
       body: z.object({
         url: z.string().min(1).max(2048).meta({ description: 'Public https URL that receives POSTs.' }),
@@ -512,7 +524,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       },
     }),
     defineRoute({
-      method: 'post', path: '/webhook_endpoints/:id/rotate_secret', operationId: 'rotateWebhookSecret', middleware: [quotas.webhookManage()], tag: 'Events & webhooks', summary: 'Rotate the signing secret',
+      method: 'post', path: '/webhook_endpoints/:id/rotate_secret', operationId: 'rotateWebhookSecret', secretFields: ['secret'], middleware: [quotas.webhookManage()], tag: 'Events & webhooks', summary: 'Rotate the signing secret',
       description: 'Returns the new secret (shown once). The old one keeps signing alongside it for `previous_secret_valid_hours` (default 24, 0 = stop now), so you can switch without missing events.',
       params: Id('endpoint'),
       body: z.object({ previous_secret_valid_hours: z.number().int().min(0).max(168).default(24) }),

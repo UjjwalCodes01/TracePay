@@ -11,6 +11,7 @@ import { recoverStaleWork, STALE_WORK_MS } from './modules/maintenance/recovery'
 import { setOutboxListener } from './modules/platform/events';
 import { pruneWebhookData, WebhookDispatcher, type WebhookDeps } from './modules/platform/webhooks';
 import { SecretBox } from './modules/platform/webhook-crypto';
+import { DEMO_USERS } from './modules/demo/world';
 
 const env = serverEnv();
 
@@ -39,6 +40,15 @@ if (env.WEBHOOK_ALLOW_PRIVATE_TARGETS && env.NODE_ENV === 'production') {
   logger.warn('WEBHOOK_ALLOW_PRIVATE_TARGETS is ON in production: webhooks may reach private networks. Turn it off.');
 }
 
+// Activity from signed-in callers (see app.ts): keeps the maintenance sweep and
+// webhook retries going while the API is in use.
+let lastActivity = Date.now();
+let dispatcherRef: { kick: (r: 'activity') => void } | null = null;
+const onActivity = () => {
+  lastActivity = Date.now();
+  dispatcherRef?.kick('activity');
+};
+
 const app = createApp({
   db: db(),
   paypal: () => {
@@ -49,6 +59,7 @@ const app = createApp({
   writer: () => pickWriter(),
   planner: () => pickPlanner(),
   webhooks,
+  onActivity,
   config: {
     appBaseUrl: env.APP_BASE_URL,
     corsOrigins,
@@ -79,24 +90,38 @@ const server = app.listen(env.PORT, () => {
 // that lets a serverless database (Neon) suspend instead of being woken every few
 // minutes. Health checks don't count as activity.
 const SWEEP_EVERY_MS = 5 * 60_000;
-let lastActivity = Date.now();
-// Webhook deliveries run in the background: woken by new events and by API activity,
-// otherwise asleep until the next scheduled retry (so an idle API lets Neon suspend).
-const dispatcher = new WebhookDispatcher(webhooks());
-setOutboxListener(() => dispatcher.kick());
-server.on('request', (req: { url?: string }) => {
-  if (/^\/api\/(health|ready)\b/.test(req.url ?? '')) return;
-  lastActivity = Date.now();
-  dispatcher.kick();
-});
+// Webhook deliveries run in the background: woken by new events and by signed-in
+// API activity, otherwise asleep until the next scheduled retry (so an idle API —
+// or one only hit by scanners — lets Neon suspend). A first pass runs at boot so
+// retries that were pending before a restart aren't stranded.
+const dispatcher = new WebhookDispatcher(webhooks);
+dispatcherRef = dispatcher;
+setOutboxListener(() => dispatcher.kick('event'));
+dispatcher.kick('activity');
 const sweep = () =>
   Promise.all([
     recoverStaleWork(db()).then((r) => (r.agentRuns || r.builds) && logger.warn(r, 'recovered interrupted work')),
     pruneWebhookData(db()).then((r) => (r.events || r.idempotencyKeys) && logger.info(r, 'pruned old platform API data')),
   ]).catch((err) => logger.error({ err }, 'maintenance sweep failed'));
 void sweep();
+
+// Keys minted by anonymous demo visitors must not outlive demo mode.
+if (!env.DEMO_MODE) {
+  void db()
+    .apiKey.updateMany({ where: { userId: { in: DEMO_USERS.map((u) => u.id) }, revokedAt: null }, data: { revokedAt: new Date() } })
+    .then((r) => r.count && logger.warn({ revoked: r.count }, 'revoked API keys of demo personas (DEMO_MODE is off)'))
+    .catch((err) => logger.error({ err }, 'could not revoke demo API keys'));
+}
 setInterval(() => {
   if (Date.now() - lastActivity <= STALE_WORK_MS + SWEEP_EVERY_MS) void sweep();
+
+// Keys minted by anonymous demo visitors must not outlive demo mode.
+if (!env.DEMO_MODE) {
+  void db()
+    .apiKey.updateMany({ where: { userId: { in: DEMO_USERS.map((u) => u.id) }, revokedAt: null }, data: { revokedAt: new Date() } })
+    .then((r) => r.count && logger.warn({ revoked: r.count }, 'revoked API keys of demo personas (DEMO_MODE is off)'))
+    .catch((err) => logger.error({ err }, 'could not revoke demo API keys'));
+}
 }, SWEEP_EVERY_MS).unref();
 
 // Graceful shutdown: stop accepting connections, let in-flight requests finish, close the pool.

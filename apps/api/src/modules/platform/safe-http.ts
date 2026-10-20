@@ -69,6 +69,23 @@ export function checkWebhookUrl(raw: string, policy: UrlPolicy): { ok: true; url
 
 export type Lookup = typeof dns.lookup;
 
+/**
+ * Production DNS for deliveries: c-ares (asynchronous, with its own timeout) rather
+ * than getaddrinfo, which runs on libuv's small thread pool — a customer domain
+ * whose DNS never answers must not stall password hashing and other pool work.
+ */
+const resolver = new dns.promises.Resolver({ timeout: 2_500, tries: 2 });
+const caresLookup = ((hostname: string, _options: unknown, callback: (err: NodeJS.ErrnoException | null, addresses?: dns.LookupAddress[]) => void) => {
+  void Promise.allSettled([resolver.resolve4(hostname), resolver.resolve6(hostname)]).then(([v4, v6]) => {
+    const list: dns.LookupAddress[] = [
+      ...(v4.status === 'fulfilled' ? v4.value.map((address) => ({ address, family: 4 })) : []),
+      ...(v6.status === 'fulfilled' ? v6.value.map((address) => ({ address, family: 6 })) : []),
+    ];
+    if (list.length === 0) return callback(Object.assign(new Error(`No address for ${hostname}`), { code: 'ENOTFOUND' }));
+    callback(null, list);
+  });
+}) as unknown as Lookup;
+
 export interface PostResult {
   statusCode: number | null;
   /** First bytes of the response body (UTF-8, truncated). */
@@ -89,7 +106,8 @@ export async function safePost(
   const checked = checkWebhookUrl(rawUrl, opts);
   if (!checked.ok) return done({ statusCode: null, body: '', error: checked.reason });
   const url = checked.url;
-  const baseLookup = opts.lookup ?? dns.lookup;
+  // The OS resolver (hosts file, localhost) only where private targets are allowed: local development.
+  const baseLookup = opts.lookup ?? (opts.allowPrivate ? dns.lookup : caresLookup);
 
   // Runs inside the socket connect: whatever is resolved here is what gets dialled.
   const guardedLookup = ((hostname: string, options: dns.LookupOptions, callback: (...args: unknown[]) => void) => {

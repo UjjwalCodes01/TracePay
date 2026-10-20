@@ -73,6 +73,18 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       expect(await db().buildJob.count({ where: { intent: { path: ['title'], equals: 'never' } } })).toBe(0);
     });
 
+    it('demo visitors get short-lived keys, revoked by “Reset demo”', async () => {
+      const res = await request(app).post('/api/auth/api-keys').set({ 'X-Demo-User': 'user_atlas', Origin: TEST_ORIGIN }).send({ name: 'Judge', expiresInDays: 365 }).expect(201);
+      expect(new Date(res.body.expiresAt).getTime()).toBeLessThanOrEqual(Date.now() + 86_400_000 + 5_000);
+    });
+
+    it('limits publisher-only actions to publishers, as the dashboard does', async () => {
+      const adminKey = (await createApiKey(db(), 'user_admin', 'ops')).key;
+      const res = await request(app).post('/api/v1/builds').set(bearer(adminKey)).send({ intent, source_version_ids: PASSING }).expect(403);
+      expect(res.body.error.code).toBe('forbidden');
+      await request(app).get('/api/v1/builds').set(bearer(adminKey)).expect(200);
+    });
+
     it('is for publisher accounts only', async () => {
       const contributorKey = (await createApiKey(db(), 'user_northwind', 'c')).key;
       expect((await request(app).get('/api/v1/sources').set(bearer(contributorKey)).expect(403)).body.error.code).toBe('publisher_account_required');
@@ -90,8 +102,10 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
         .send({ name: 'Reporting', access: 'read_only', expiresInDays: 30 })
         .expect(201);
       expect(created.body).toMatchObject({ access: 'read_only', key: expect.stringMatching(/^tp_/) });
-      expect(new Date(created.body.expiresAt).getTime()).toBeGreaterThan(Date.now() + 29 * 86_400_000);
-      await request(app).post('/api/auth/api-keys').set(atlas).send({ name: 'x' }).expect(403);
+      // A demo visitor asked for 30 days and got at most one.
+      expect(new Date(created.body.expiresAt).getTime()).toBeLessThanOrEqual(Date.now() + 86_400_000 + 5_000);
+      // Keys never manage keys (they aren't accepted outside /api/v1 at all).
+      await request(app).post('/api/auth/api-keys').set(atlas).send({ name: 'x' }).expect(401);
       await request(app).post('/api/auth/api-keys').set({ 'X-Demo-User': 'user_atlas', Origin: TEST_ORIGIN }).send({ name: 'x', expiresInDays: 0 }).expect(400);
     });
   });
@@ -279,7 +293,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       await db().idempotencyKey.update({ where: { userId_key: { userId: 'user_atlas', key: 'gen-running' } }, data: { statusCode: null, responseBody: undefined, lockedAt: new Date() } });
       expect((await request(app).post('/api/v1/builds').set({ ...atlas, 'Idempotency-Key': 'gen-running' }).send(body).expect(409)).body.error.code).toBe('idempotency_in_progress');
       // A request that died long ago is taken over.
-      await db().idempotencyKey.update({ where: { userId_key: { userId: 'user_atlas', key: 'gen-running' } }, data: { lockedAt: new Date(Date.now() - 10 * 60_000) } });
+      await db().idempotencyKey.update({ where: { userId_key: { userId: 'user_atlas', key: 'gen-running' } }, data: { lockedAt: new Date(Date.now() - 20 * 60_000) } });
       await request(app).post('/api/v1/builds').set({ ...atlas, 'Idempotency-Key': 'gen-running' }).send(body).expect(201);
     });
 
@@ -319,6 +333,8 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
 
     it('slows down key guessing from one address', async () => {
       const guarded = testApp(paypal);
+      // An integration that has been working from this address…
+      await request(guarded).get('/api/v1/account').set(atlas).expect(200);
       let attempts = 0;
       let status = 401;
       while (status === 401 && attempts < 40) {
@@ -327,7 +343,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       expect(status).toBe(429);
       expect(attempts).toBeGreaterThan(25);
       await request(guarded).get('/api/v1/account').set(bearer('tp_guess-more')).expect(429);
-      // A valid key from the same address still works: only guesses are blocked.
+      // …keeps working while the address is throttled, and the guesses never reach the database.
       await request(guarded).get('/api/v1/account').set(atlas).expect(200);
     });
   });
@@ -347,6 +363,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       expect(JSON.stringify(spec)).not.toContain('$defs');
       expect(Object.keys(spec.webhooks)).toContain('sale.completed');
       expect(spec).toEqual(openApiDocument('http://localhost:4000/api/v1'));
+      // Optional bodies are documented as optional; required ones as required.
+      expect(spec.paths['/reports/{id}/withdraw'].post.requestBody.required).toBe(false);
+      expect(spec.paths['/builds'].post.requestBody.required).toBe(true);
     });
   });
 });

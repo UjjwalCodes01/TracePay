@@ -50,6 +50,8 @@ const router = createBrowserRouter([
       { path: 'sources/:id/offer', element: <OfferLicensePage /> },
       { path: 'sources/:id/version', element: <NewVersionPage /> },
       { path: 'profile', element: <ProfilePage /> },
+      { path: 'developers', lazy: async () => ({ Component: (await import('./pages/Developers')).DevelopersPage }) },
+      { path: 'developers/api', lazy: async () => ({ Component: (await import('./pages/ApiReference')).ApiReferencePage }) },
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },

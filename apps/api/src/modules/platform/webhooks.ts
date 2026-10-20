@@ -2,6 +2,7 @@ import type { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
 import { logger } from '../../http/logger';
 import { EVENT_TYPE_NAMES, newDeliveryId, PING_EVENT, recordPublicEvent } from './events';
+import type { EventRow } from './event-row';
 import { checkWebhookUrl, safePost, type Lookup, type UrlPolicy } from './safe-http';
 import { generateWebhookSecret, SecretBox, signatureHeader, SIGNATURE_HEADER } from './webhook-crypto';
 
@@ -24,13 +25,13 @@ export interface WebhookDeps {
 export const MAX_ENDPOINTS_PER_ACCOUNT = 10;
 export const DELIVERY_TIMEOUT_MS = 10_000;
 export const MAX_RESPONSE_BYTES = 2_048;
-/** Delays before attempts 2…8: about 1.5 days of retries in total. */
+/** Delays before attempts 2…8: about 27 hours of retries in total. */
 export const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000, 5 * 3_600_000, 10 * 3_600_000, 10 * 3_600_000];
 export const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1;
 /** An endpoint failing without a single success for this long (and at least this many times) is disabled. */
 export const DISABLE_AFTER_MS = 3 * 24 * 3_600_000;
 export const DISABLE_AFTER_FAILURES = 5;
-const LEASE_MS = 2 * 60_000;
+export const LEASE_MS = 2 * 60_000;
 const HISTORY_LIMIT = 20;
 
 // ---- endpoint management ------------------------------------------------------------
@@ -94,24 +95,31 @@ export async function updateEndpoint(
   id: string,
   patch: { url?: string; description?: string | null; enabledEvents?: string[]; status?: 'enabled' | 'disabled' },
 ): Promise<EndpointRow> {
-  const current = await getEndpoint(deps.db, ownerId, id);
-  const data: Prisma.WebhookEndpointUpdateInput = {};
-  if (patch.url !== undefined) {
-    const url = validUrl(patch.url, deps.policy);
-    if (url !== current.url && (await deps.db.webhookEndpoint.count({ where: { ownerId, url, id: { not: id } } }))) {
-      throw new WebhookError('An endpoint with this URL already exists.', 'conflict');
+  // Validate before taking the lock.
+  const url = patch.url !== undefined ? validUrl(patch.url, deps.policy) : undefined;
+  const enabledEvents = patch.enabledEvents !== undefined ? normaliseEvents(patch.enabledEvents) : undefined;
+  return deps.db.$transaction(async (tx) => {
+    // Same per-owner lock as createEndpoint: the duplicate-URL check can't race.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`webhook-endpoints:${ownerId}`}))`;
+    const current = await tx.webhookEndpoint.findFirst({ where: { id, ownerId }, select: { url: true, status: true } });
+    if (!current) throw new WebhookError('Webhook endpoint not found.', 'not_found');
+    const data: Prisma.WebhookEndpointUpdateInput = {};
+    if (url !== undefined) {
+      if (url !== current.url && (await tx.webhookEndpoint.count({ where: { ownerId, url, id: { not: id } } }))) {
+        throw new WebhookError('An endpoint with this URL already exists.', 'conflict');
+      }
+      data.url = url;
     }
-    data.url = url;
-  }
-  if (patch.description !== undefined) data.description = patch.description?.trim() || null;
-  if (patch.enabledEvents !== undefined) data.enabledEvents = normaliseEvents(patch.enabledEvents);
-  if (patch.status === 'enabled' && current.status !== 'enabled') {
-    // A fresh start: the failure streak that disabled it no longer counts.
-    Object.assign(data, { status: 'enabled', disabledReason: null, consecutiveFailures: 0, failingSince: null });
-  } else if (patch.status === 'disabled' && current.status !== 'disabled') {
-    Object.assign(data, { status: 'disabled', disabledReason: 'Disabled by you.' });
-  }
-  return deps.db.webhookEndpoint.update({ where: { id }, data, select: endpointSelect });
+    if (patch.description !== undefined) data.description = patch.description?.trim() || null;
+    if (enabledEvents !== undefined) data.enabledEvents = enabledEvents;
+    if (patch.status === 'enabled' && current.status !== 'enabled') {
+      // A fresh start: the failure streak that disabled it no longer counts.
+      Object.assign(data, { status: 'enabled', disabledReason: null, consecutiveFailures: 0, failingSince: null });
+    } else if (patch.status === 'disabled' && current.status !== 'disabled') {
+      Object.assign(data, { status: 'disabled', disabledReason: 'Disabled by you.' });
+    }
+    return tx.webhookEndpoint.update({ where: { id }, data, select: endpointSelect });
+  });
 }
 
 export async function deleteEndpoint(db: Db, ownerId: string, id: string): Promise<void> {
@@ -122,34 +130,28 @@ export async function deleteEndpoint(db: Db, ownerId: string, id: string): Promi
 /**
  * New signing secret. The previous one keeps signing alongside it for
  * `previousValidHours` (0 = stop immediately), so receivers can switch over.
+ * One atomic UPDATE: concurrent rotations can't hand out a secret that never signs.
  */
 export async function rotateSecret(deps: WebhookDeps, ownerId: string, id: string, previousValidHours = 24): Promise<{ endpoint: EndpointRow; secret: string }> {
   if (!Number.isInteger(previousValidHours) || previousValidHours < 0 || previousValidHours > 168) {
     throw new WebhookError('The old secret can stay valid for 0 to 168 hours.', 'invalid');
   }
-  const row = await deps.db.webhookEndpoint.findFirst({ where: { id, ownerId }, select: { secretEnc: true } });
-  if (!row) throw new WebhookError('Webhook endpoint not found.', 'not_found');
   const secret = generateWebhookSecret();
-  const endpoint = await deps.db.webhookEndpoint.update({
-    where: { id },
-    data: {
-      secretEnc: deps.box.seal(secret),
-      previousSecretEnc: previousValidHours > 0 ? row.secretEnc : null,
-      previousSecretExpires: previousValidHours > 0 ? new Date(Date.now() + previousValidHours * 3_600_000) : null,
-    },
-    select: endpointSelect,
-  });
-  return { endpoint, secret };
+  const sealed = deps.box.seal(secret);
+  const keepOld = previousValidHours > 0;
+  const expires = keepOld ? new Date(Date.now() + previousValidHours * 3_600_000) : null;
+  const updated = await deps.db.$executeRaw`
+    UPDATE "WebhookEndpoint"
+    SET "previousSecretEnc" = CASE WHEN ${keepOld} THEN "secretEnc" ELSE NULL END,
+        "previousSecretExpires" = ${expires},
+        "secretEnc" = ${sealed},
+        "updatedAt" = now()
+    WHERE id = ${id} AND "ownerId" = ${ownerId}`;
+  if (updated === 0) throw new WebhookError('Webhook endpoint not found.', 'not_found');
+  return { endpoint: await getEndpoint(deps.db, ownerId, id), secret };
 }
 
 // ---- deliveries ---------------------------------------------------------------------
-
-export interface EventRow {
-  id: string;
-  type: string;
-  data: Prisma.JsonValue;
-  createdAt: Date;
-}
 
 /** The JSON body of a delivery, and of `GET /events/{id}`. */
 export function eventEnvelope(e: EventRow) {
@@ -162,24 +164,23 @@ export const deliverySelect = {
 } as const;
 export type DeliveryRow = Prisma.WebhookDeliveryGetPayload<{ select: typeof deliverySelect }>;
 
+interface Claim {
+  id: string;
+  /** The lease this worker holds: results are only written while it still holds it. */
+  lease: Date;
+}
+
 /** Claims due deliveries with a lease. SKIP LOCKED: concurrent workers never claim the same one. */
-async function claimDue(db: Db, now: Date, limit: number, onlyId?: string): Promise<string[]> {
+async function claimDue(db: Db, now: Date, limit: number): Promise<Claim[]> {
   const lease = new Date(now.getTime() + LEASE_MS);
-  const rows = onlyId
-    ? await db.$queryRaw<{ id: string }[]>`
-        UPDATE "WebhookDelivery" SET "lockedUntil" = ${lease}, "updatedAt" = ${now}
-        WHERE id IN (SELECT id FROM "WebhookDelivery"
-                     WHERE id = ${onlyId} AND status = 'pending' AND ("lockedUntil" IS NULL OR "lockedUntil" < ${now})
-                     FOR UPDATE SKIP LOCKED)
-        RETURNING id`
-    : await db.$queryRaw<{ id: string }[]>`
-        UPDATE "WebhookDelivery" SET "lockedUntil" = ${lease}, "updatedAt" = ${now}
-        WHERE id IN (SELECT id FROM "WebhookDelivery"
-                     WHERE status = 'pending' AND "nextAttemptAt" <= ${now} AND ("lockedUntil" IS NULL OR "lockedUntil" < ${now})
-                     ORDER BY "nextAttemptAt" ASC LIMIT ${limit}
-                     FOR UPDATE SKIP LOCKED)
-        RETURNING id`;
-  return rows.map((r) => r.id);
+  const rows = await db.$queryRaw<{ id: string }[]>`
+    UPDATE "WebhookDelivery" SET "lockedUntil" = ${lease}, "updatedAt" = ${now}
+    WHERE id IN (SELECT id FROM "WebhookDelivery"
+                 WHERE status = 'pending' AND "nextAttemptAt" <= ${now} AND ("lockedUntil" IS NULL OR "lockedUntil" < ${now})
+                 ORDER BY "nextAttemptAt" ASC LIMIT ${limit}
+                 FOR UPDATE SKIP LOCKED)
+    RETURNING id`;
+  return rows.map((r) => ({ id: r.id, lease }));
 }
 
 function retryDelay(attemptsMade: number): number | null {
@@ -189,18 +190,31 @@ function retryDelay(attemptsMade: number): number | null {
   return Math.round(base * (0.9 + Math.random() * 0.2));
 }
 
-/** Sends one claimed delivery and records the outcome. */
-async function attempt(deps: WebhookDeps, deliveryId: string, now: Date): Promise<void> {
-  const delivery = await deps.db.webhookDelivery.findUnique({
-    where: { id: deliveryId },
-    include: { event: true, endpoint: true },
-  });
+/** Receiver-controlled text is stored: strip NUL and other control characters Postgres (or a UI) chokes on. */
+function clean(text: string, max: number): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, max);
+}
+
+type HistoryEntry = { at: string; attempt: number; status_code: number | null; error: string | null; duration_ms: number };
+
+/**
+ * Sends one claimed delivery and records the outcome — but only while this
+ * worker still holds the lease, so a stalled worker can't overwrite the result
+ * of the one that took over.
+ *
+ * Pings (test events) are sent once: they report how the endpoint answers right
+ * now and never count toward its failure streak or disable it.
+ */
+async function attempt(deps: WebhookDeps, claim: Claim, now: Date): Promise<void> {
+  const delivery = await deps.db.webhookDelivery.findUnique({ where: { id: claim.id }, include: { event: true, endpoint: true } });
   if (!delivery || delivery.status !== 'pending') return;
   const { endpoint } = delivery;
+  const holdsLease = { id: claim.id, status: 'pending' as const, lockedUntil: claim.lease };
 
   if (endpoint.status !== 'enabled') {
-    await deps.db.webhookDelivery.update({
-      where: { id: deliveryId },
+    await deps.db.webhookDelivery.updateMany({
+      where: holdsLease,
       data: { status: 'skipped', lockedUntil: null, nextAttemptAt: null, lastError: 'Not sent: the endpoint is disabled.' },
     });
     return;
@@ -211,6 +225,7 @@ async function attempt(deps: WebhookDeps, deliveryId: string, now: Date): Promis
   const body = JSON.stringify(eventEnvelope(delivery.event));
   const timestamp = Math.floor(now.getTime() / 1000);
   const attemptNo = delivery.attempts + 1;
+  const isPing = delivery.event.type === PING_EVENT.type;
 
   const result = await safePost(
     endpoint.url,
@@ -228,47 +243,91 @@ async function attempt(deps: WebhookDeps, deliveryId: string, now: Date): Promis
 
   const ok = result.statusCode !== null && result.statusCode >= 200 && result.statusCode < 300;
   const gone = result.statusCode === 410;
-  const error = ok
+  const reason = ok
     ? null
     : (result.error ?? (result.statusCode !== null && result.statusCode >= 300 && result.statusCode < 400 ? `HTTP ${result.statusCode}: redirects are not followed` : `HTTP ${result.statusCode}`));
-  const delay = ok || gone ? null : retryDelay(attemptNo);
-  const status = ok ? 'succeeded' : gone || delay === null ? 'failed' : 'pending';
-  const history = [
-    ...((delivery.history as Prisma.JsonArray) ?? []),
+  const error = reason === null ? null : clean(reason, 500);
+  const responseSnippet = clean(result.body, 300);
+  const delay = ok || gone || isPing ? null : retryDelay(attemptNo);
+  const status = ok ? 'succeeded' : delay === null ? 'failed' : 'pending';
+  const history: HistoryEntry[] = [
+    ...(((delivery.history as unknown as HistoryEntry[]) ?? []) as HistoryEntry[]),
     { at: now.toISOString(), attempt: attemptNo, status_code: result.statusCode, error, duration_ms: result.durationMs },
   ].slice(-HISTORY_LIMIT);
 
   await deps.db.$transaction(async (tx) => {
-    await tx.webhookDelivery.update({
-      where: { id: deliveryId },
+    const written = await tx.webhookDelivery.updateMany({
+      where: holdsLease,
       data: {
         status,
         attempts: attemptNo,
         lastAttemptAt: now,
         lastStatusCode: result.statusCode,
-        lastError: error ? `${error}${result.body ? ` — ${result.body.slice(0, 300)}` : ''}` : null,
+        lastError: error ? `${error}${responseSnippet ? ` — ${responseSnippet}` : ''}` : null,
         nextAttemptAt: status === 'pending' ? new Date(now.getTime() + delay!) : null,
         lockedUntil: null,
-        history: history as Prisma.InputJsonValue,
+        history: history as unknown as Prisma.InputJsonValue,
       },
     });
+    if (written.count === 0) {
+      logger.warn({ deliveryId: claim.id }, 'webhook delivery lease lost before its result was recorded');
+      return;
+    }
+    if (isPing) return;
     if (ok) {
       await tx.webhookEndpoint.updateMany({ where: { id: endpoint.id, consecutiveFailures: { gt: 0 } }, data: { consecutiveFailures: 0, failingSince: null } });
       return;
     }
-    const failingSince = endpoint.failingSince ?? now;
-    const failures = endpoint.consecutiveFailures + 1;
+    // Atomic: concurrent failures each count, and a streak reset (re-enable or a
+    // success) that landed meanwhile isn't overwritten with a stale snapshot.
+    const [streak] = await tx.$queryRaw<{ consecutiveFailures: number; failingSince: Date }[]>`
+      UPDATE "WebhookEndpoint"
+      SET "consecutiveFailures" = "consecutiveFailures" + 1, "failingSince" = COALESCE("failingSince", ${now}), "updatedAt" = now()
+      WHERE id = ${endpoint.id} AND status = 'enabled'
+      RETURNING "consecutiveFailures", "failingSince"`;
+    if (!streak) return;
     const disable = gone
       ? 'Disabled: the receiver answered 410 Gone.'
-      : failures >= DISABLE_AFTER_FAILURES && now.getTime() - failingSince.getTime() >= DISABLE_AFTER_MS
+      : streak.consecutiveFailures >= DISABLE_AFTER_FAILURES && now.getTime() - new Date(streak.failingSince).getTime() >= DISABLE_AFTER_MS
         ? 'Disabled automatically: every delivery failed for 3 days.'
         : null;
-    await tx.webhookEndpoint.update({
-      where: { id: endpoint.id },
-      data: { consecutiveFailures: failures, failingSince, ...(disable ? { status: 'disabled', disabledReason: disable } : {}) },
-    });
-    if (disable) logger.warn({ endpointId: endpoint.id, reason: disable }, 'webhook endpoint disabled');
+    if (disable) {
+      await tx.webhookEndpoint.updateMany({ where: { id: endpoint.id, status: 'enabled' }, data: { status: 'disabled', disabledReason: disable } });
+      logger.warn({ endpointId: endpoint.id, reason: disable }, 'webhook endpoint disabled');
+    }
   });
+}
+
+/**
+ * An attempt that threw (an unreadable secret, a database error after sending…)
+ * still counts: it is rescheduled with backoff — or failed after the last
+ * attempt — so it can never be re-sent in a tight loop.
+ */
+async function recordCrash(db: Db, claim: Claim, now: Date, err: unknown): Promise<void> {
+  const row = await db.webhookDelivery.findUnique({ where: { id: claim.id }, select: { attempts: true, event: { select: { type: true } } } });
+  if (!row) return;
+  const attemptNo = row.attempts + 1;
+  const delay = row.event.type === PING_EVENT.type ? null : retryDelay(attemptNo);
+  await db.webhookDelivery.updateMany({
+    where: { id: claim.id, status: 'pending', lockedUntil: claim.lease },
+    data: {
+      attempts: attemptNo,
+      lastAttemptAt: now,
+      lastError: clean(`Internal error while delivering: ${(err as Error)?.message ?? 'unknown'}`, 500),
+      status: delay === null ? 'failed' : 'pending',
+      nextAttemptAt: delay === null ? null : new Date(now.getTime() + delay),
+      lockedUntil: null,
+    },
+  });
+}
+
+async function attemptSafely(deps: WebhookDeps, claim: Claim, now: Date) {
+  try {
+    await attempt(deps, claim, now);
+  } catch (err) {
+    logger.error({ err, deliveryId: claim.id }, 'webhook delivery crashed');
+    await recordCrash(deps.db, claim, now, err).catch((e) => logger.error({ err: e, deliveryId: claim.id }, 'could not record webhook crash'));
+  }
 }
 
 /** Delivers everything due, in batches. Returns how many deliveries were attempted. */
@@ -277,29 +336,27 @@ export async function deliverDue(deps: WebhookDeps, opts: { now?: () => Date; ba
   const batchSize = opts.batchSize ?? 10;
   let total = 0;
   for (let batch = 0; batch < (opts.maxBatches ?? 20); batch++) {
-    const ids = await claimDue(deps.db, now(), batchSize);
-    if (ids.length === 0) break;
-    total += ids.length;
-    await Promise.all(
-      ids.map((id) =>
-        attempt(deps, id, now()).catch(async (err) => {
-          logger.error({ err, deliveryId: id }, 'webhook delivery crashed');
-          // Release the lease; the regular schedule retries it.
-          await deps.db.webhookDelivery.updateMany({ where: { id, status: 'pending' }, data: { lockedUntil: null } }).catch(() => undefined);
-        }),
-      ),
-    );
-    if (ids.length < batchSize) break;
+    const claims = await claimDue(deps.db, now(), batchSize);
+    if (claims.length === 0) break;
+    total += claims.length;
+    await Promise.all(claims.map((c) => attemptSafely(deps, c, now())));
+    if (claims.length < batchSize) break;
   }
   return total;
 }
 
-/** When the next pending delivery is due (null if none). */
-export async function nextDueAt(db: Db): Promise<Date | null> {
-  const next = await db.webhookDelivery.findFirst({ where: { status: 'pending' }, orderBy: { nextAttemptAt: 'asc' }, select: { nextAttemptAt: true, lockedUntil: true } });
-  if (!next) return null;
-  const due = next.nextAttemptAt ?? new Date();
-  return next.lockedUntil && next.lockedUntil > due ? next.lockedUntil : due;
+/** When the next pending delivery can be sent: the earliest of unleased due times and lease expiries. */
+export async function nextDueAt(db: Db, now = new Date()): Promise<Date | null> {
+  const [free, leased] = await Promise.all([
+    db.webhookDelivery.findFirst({
+      where: { status: 'pending', OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] },
+      orderBy: { nextAttemptAt: 'asc' },
+      select: { nextAttemptAt: true },
+    }),
+    db.webhookDelivery.findFirst({ where: { status: 'pending', lockedUntil: { gte: now } }, orderBy: { lockedUntil: 'asc' }, select: { lockedUntil: true } }),
+  ]);
+  const candidates = [free?.nextAttemptAt ?? (free ? now : null), leased?.lockedUntil ?? null].filter((d): d is Date => d !== null);
+  return candidates.length ? new Date(Math.min(...candidates.map((d) => d.getTime()))) : null;
 }
 
 /** Sends a `ping` event to one endpoint right away and returns the delivery's outcome. */
@@ -307,6 +364,8 @@ export async function sendTestEvent(deps: WebhookDeps, ownerId: string, endpoint
   const endpoint = await getEndpoint(deps.db, ownerId, endpointId);
   if (endpoint.status !== 'enabled') throw new WebhookError('Enable the endpoint before sending a test event.', 'state');
   const now = new Date();
+  // Created already leased by this request, so no background worker can take it.
+  const lease = new Date(now.getTime() + LEASE_MS);
   const { eventId } = await deps.db.$transaction((tx) =>
     recordPublicEvent(tx, {
       auditSeq: null,
@@ -315,11 +374,11 @@ export async function sendTestEvent(deps: WebhookDeps, ownerId: string, endpoint
       data: { object_type: 'webhook_endpoint', object_id: endpointId, message: 'This is a test event from TracePay.' },
       createdAt: now,
       onlyEndpointId: endpointId,
+      leasedUntil: lease,
     }),
   );
   const delivery = await deps.db.webhookDelivery.findUniqueOrThrow({ where: { eventId_endpointId: { eventId, endpointId } }, select: { id: true } });
-  const claimed = await claimDue(deps.db, now, 1, delivery.id);
-  if (claimed.length) await attempt(deps, delivery.id, now);
+  await attemptSafely(deps, { id: delivery.id, lease }, now);
   return deps.db.webhookDelivery.findUniqueOrThrow({ where: { id: delivery.id }, select: deliverySelect });
 }
 
@@ -342,12 +401,23 @@ export async function resendEvent(db: Db, ownerId: string, eventId: string, endp
   if (!event) throw new WebhookError('Event not found.', 'not_found');
   if (!endpoint) throw new WebhookError('Webhook endpoint not found.', 'not_found');
   if (endpoint.status !== 'enabled') throw new WebhookError('Enable the endpoint before sending events to it.', 'state');
+
+  const requeue = async (id: string) =>
+    retryDelivery(db, ownerId, id).catch(async (err) => {
+      // Already queued: that is the outcome the caller wants.
+      if (err instanceof WebhookError && err.code === 'state') return db.webhookDelivery.findUniqueOrThrow({ where: { id }, select: deliverySelect });
+      throw err;
+    });
   const existing = await db.webhookDelivery.findUnique({ where: { eventId_endpointId: { eventId, endpointId } }, select: { id: true } });
-  if (existing) return retryDelivery(db, ownerId, existing.id).catch((err) => {
-    if (err instanceof WebhookError && err.code === 'state') return db.webhookDelivery.findUniqueOrThrow({ where: { id: existing.id }, select: deliverySelect });
-    throw err;
-  });
-  return db.webhookDelivery.create({ data: { id: newDeliveryId(), eventId, endpointId, nextAttemptAt: new Date() }, select: deliverySelect });
+  if (existing) return requeue(existing.id);
+  try {
+    return await db.webhookDelivery.create({ data: { id: newDeliveryId(), eventId, endpointId, nextAttemptAt: new Date() }, select: deliverySelect });
+  } catch (err) {
+    // A concurrent resend created it first.
+    if ((err as { code?: string }).code !== 'P2002') throw err;
+    const row = await db.webhookDelivery.findUniqueOrThrow({ where: { eventId_endpointId: { eventId, endpointId } }, select: { id: true } });
+    return requeue(row.id);
+  }
 }
 
 // ---- housekeeping -------------------------------------------------------------------
@@ -357,33 +427,41 @@ export const EVENT_RETENTION_MS = 30 * 24 * 3_600_000;
 /** Prunes old events (and their deliveries), expired idempotency records and expired rotated secrets. */
 export async function pruneWebhookData(db: Db, now = new Date()): Promise<{ events: number; idempotencyKeys: number }> {
   const events = await db.outboundEvent.deleteMany({ where: { createdAt: { lt: new Date(now.getTime() - EVENT_RETENTION_MS) }, deliveries: { none: { status: 'pending' } } } });
-  const idempotencyKeys = await db.idempotencyKey.deleteMany({ where: { createdAt: { lt: new Date(now.getTime() - 24 * 3_600_000) } } });
+  // Completed records after 24 h; unfinished ones too once their holder stopped heartbeating (crashed).
+  const idempotencyKeys = await db.idempotencyKey.deleteMany({
+    where: {
+      createdAt: { lt: new Date(now.getTime() - 24 * 3_600_000) },
+      OR: [{ statusCode: { not: null } }, { lockedAt: { lt: new Date(now.getTime() - 15 * 60_000) } }],
+    },
+  });
   await db.webhookEndpoint.updateMany({ where: { previousSecretExpires: { lt: now } }, data: { previousSecretEnc: null, previousSecretExpires: null } });
   return { events: events.count, idempotencyKeys: idempotencyKeys.count };
 }
 
 /**
- * Runs deliveries in the background without keeping a serverless database awake:
- * it polls only while the API is active (kicked by requests and new events) and
- * otherwise sleeps until the next scheduled retry. Safe to run on several
- * instances at once (claims use SKIP LOCKED and leases).
+ * Runs deliveries in the background without keeping a serverless database awake.
+ *  - `kick('event')`: new events were written (maybe not committed yet): poll for
+ *    a short window until they are delivered.
+ *  - `kick('activity')`: the API is in use: run one pass (retries that came due
+ *    while it was asleep), then sleep until the next scheduled retry.
+ * Otherwise it is idle. Safe on several instances at once (SKIP LOCKED claims, leases).
  */
 export class WebhookDispatcher {
   private timer: NodeJS.Timeout | null = null;
   private dueAt = Infinity;
   private running = false;
-  private lastKick = 0;
+  private eventWindowUntil = 0;
   private stopped = false;
+  private failures = 0;
 
   constructor(
-    private readonly deps: WebhookDeps,
-    private readonly opts: { pollMs?: number; activeWindowMs?: number } = {},
+    private readonly deps: () => WebhookDeps,
+    private readonly opts: { pollMs?: number; eventWindowMs?: number } = {},
   ) {}
 
-  /** Something happened (a request, a new event): deliver soon and keep polling for a while. */
-  kick(): void {
-    this.lastKick = Date.now();
-    this.schedule(500);
+  kick(reason: 'event' | 'activity' = 'activity'): void {
+    if (reason === 'event') this.eventWindowUntil = Date.now() + (this.opts.eventWindowMs ?? 60_000);
+    this.schedule(reason === 'event' ? 300 : 1_000);
   }
 
   stop(): void {
@@ -394,11 +472,13 @@ export class WebhookDispatcher {
 
   private schedule(delayMs: number) {
     if (this.stopped) return;
-    const at = Date.now() + Math.max(0, delayMs);
+    // Never spin: at least 250 ms between passes, whatever the database says.
+    const delay = Math.min(Math.max(250, delayMs), 2_147_000_000);
+    const at = Date.now() + delay;
     if (this.timer && at >= this.dueAt) return;
     if (this.timer) clearTimeout(this.timer);
     this.dueAt = at;
-    this.timer = setTimeout(() => void this.tick(), Math.min(Math.max(0, delayMs), 2_147_000_000));
+    this.timer = setTimeout(() => void this.tick(), delay);
     this.timer.unref();
   }
 
@@ -408,20 +488,22 @@ export class WebhookDispatcher {
     if (this.running) return this.schedule(1_000);
     this.running = true;
     try {
-      await deliverDue(this.deps);
-      const active = Date.now() - this.lastKick < (this.opts.activeWindowMs ?? 60_000);
-      if (active) {
+      const deps = this.deps();
+      await deliverDue(deps);
+      this.failures = 0;
+      if (Date.now() < this.eventWindowUntil) {
         this.schedule(this.opts.pollMs ?? 3_000);
       } else {
-        const next = await nextDueAt(this.deps.db);
-        if (next) this.schedule(next.getTime() - Date.now());
+        const next = await nextDueAt(deps.db);
+        if (next) this.schedule(Math.max(next.getTime() - Date.now(), 1_000));
       }
     } catch (err) {
-      logger.error({ err }, 'webhook dispatcher tick failed');
-      this.schedule(30_000);
+      // Back off on repeated failures (database down, misconfiguration).
+      this.failures += 1;
+      if (this.failures <= 3) logger.error({ err }, 'webhook dispatcher pass failed');
+      this.schedule(Math.min(30_000 * 2 ** (this.failures - 1), 30 * 60_000));
     } finally {
       this.running = false;
     }
   }
 }
-

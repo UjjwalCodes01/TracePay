@@ -32,6 +32,36 @@ export interface StartRunInput {
   policy: AgentPolicy;
 }
 
+export class TooManyRunsError extends Error {}
+
+/**
+ * Starts a run unless the publisher already has `max` running. Race-safe without
+ * locks: after creating the run, only runs created BEFORE it count, so of several
+ * simultaneous starts exactly the ones within the cap survive; the rest are
+ * recorded as not started.
+ */
+export async function createRunWithinCap(db: Db, planner: AgentPlanner, input: StartRunInput, max: number) {
+  const active = await db.agentRun.count({ where: { publisherId: input.publisherId, status: 'running' } });
+  if (active >= max) throw new TooManyRunsError(`You already have ${active} agent runs in progress. Wait for one to finish.`);
+  const run = await createRun(db, planner, input);
+  const earlier = await db.agentRun.count({
+    where: {
+      publisherId: input.publisherId,
+      status: 'running',
+      id: { not: run.id },
+      OR: [{ createdAt: { lt: run.createdAt } }, { createdAt: run.createdAt, id: { lt: run.id } }],
+    },
+  });
+  if (earlier >= max) {
+    await db.$transaction(async (tx) => {
+      await tx.agentRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), summary: 'Not started: too many runs were already in progress.' } });
+      await appendAudit(tx, { entityType: 'agent_run', entityId: run.id, eventType: 'agent.failed', payload: { error: 'too many active runs' } });
+    });
+    throw new TooManyRunsError(`You already have ${earlier} agent runs in progress. Wait for one to finish.`);
+  }
+  return run;
+}
+
 export async function createRun(db: Db, planner: AgentPlanner, input: StartRunInput) {
   const opening: AgentMessage = {
     role: 'user',

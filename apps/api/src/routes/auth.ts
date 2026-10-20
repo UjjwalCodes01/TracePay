@@ -112,7 +112,6 @@ export function authRoutes({ db, config }: AppDeps) {
   });
 
   r.post('/auth/api-keys', requireRole('publisher', 'admin'), async (req, res) => {
-    if (req.authMethod === 'api_key') throw new HttpError(403, 'API keys cannot create other API keys.');
     const body = z
       .object({
         name: z.string().trim().min(1).max(80),
@@ -120,6 +119,8 @@ export function authRoutes({ db, config }: AppDeps) {
         expiresInDays: z.number().int().min(1).max(730).nullable().default(null),
       })
       .parse(req.body);
+    // Anyone exploring the demo acts as the same shared persona: their keys are short-lived.
+    if (req.authMethod === 'demo') body.expiresInDays = Math.min(body.expiresInDays ?? 1, 1);
     const userId = currentUser(req).id;
     if ((await db.apiKey.count({ where: { userId, revokedAt: null } })) >= 25) {
       throw new HttpError(409, 'You can have at most 25 active API keys. Revoke one you no longer use.', { code: 'resource_limit' });

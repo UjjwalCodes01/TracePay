@@ -143,19 +143,38 @@ export function toPage<R extends { createdAt: Date; id: string }, T>(rows: R[], 
 // ---- idempotency --------------------------------------------------------------------------
 
 export const IDEMPOTENCY_HEADER = 'Idempotency-Key';
-const IN_PROGRESS_STALE_MS = 2 * 60_000;
+/** A first attempt that hasn't finished after this long (it heartbeats every 30 s) is assumed dead. */
+const IN_PROGRESS_STALE_MS = 15 * 60_000;
+const HEARTBEAT_MS = 30_000;
 
 function requestHash(req: Request): string {
   return createHash('sha256').update(`${req.method} ${req.baseUrl}${req.path}\n${canonicalJson(req.body ?? null)}`).digest('hex');
 }
 
+/** What gets stored for replay: never secrets (they are shown exactly once). */
+function storable(body: unknown, secretFields: readonly string[]): unknown {
+  if (!secretFields.length || !body || typeof body !== 'object' || Array.isArray(body)) return body;
+  return { ...(body as Record<string, unknown>), ...Object.fromEntries(secretFields.map((f) => [f, null])) };
+}
+
 /**
  * `Idempotency-Key` on POST: the first request runs; a retry with the same key and
  * the same input gets the stored response (header `Idempotent-Replayed: true`); the
- * same key with different input is refused. Server errors (5xx) aren't stored, so
- * they can be retried with the same key. Keys are per account and kept 24 hours.
+ * same key with different input is refused. Server errors (5xx) and rate limits
+ * aren't stored, so they can be retried with the same key. Keys are per account
+ * and kept 24 hours.
+ *
+ * The running request holds the key with a token it refreshes (heartbeat), so a
+ * slow handler is never taken over and run twice, and only the holder can store
+ * the final response.
  */
-async function withIdempotency(db: Db, req: Request, res: Response, run: () => Promise<{ status: number; body: unknown }>) {
+async function withIdempotency(
+  db: Db,
+  req: Request,
+  res: Response,
+  secretFields: readonly string[],
+  run: () => Promise<{ status: number; body: unknown }>,
+): Promise<{ status: number; body: unknown }> {
   const key = req.header(IDEMPOTENCY_HEADER);
   if (key === undefined) return run();
   if (!/^[\x21-\x7e]{1,255}$/.test(key)) {
@@ -165,17 +184,14 @@ async function withIdempotency(db: Db, req: Request, res: Response, run: () => P
   const hash = requestHash(req);
   const now = new Date();
 
-  const claimed = await db.idempotencyKey
-    .create({ data: { userId, key, requestHash: hash, lockedAt: now } })
-    .then(() => true)
-    .catch((err: { code?: string }) => {
-      if (err.code === 'P2002') return false;
-      throw err;
-    });
-
-  if (!claimed) {
+  let rowId: string;
+  let token = now;
+  try {
+    rowId = (await db.idempotencyKey.create({ data: { userId, key, requestHash: hash, lockedAt: token }, select: { id: true } })).id;
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'P2002') throw err;
     const existing = await db.idempotencyKey.findUnique({ where: { userId_key: { userId, key } } });
-    if (!existing) return withIdempotency(db, req, res, run); // expired between the two queries
+    if (!existing) return withIdempotency(db, req, res, secretFields, run); // expired between the two queries
     if (existing.requestHash !== hash) {
       throw new HttpError(422, 'This Idempotency-Key was already used with a different request. Use a new key for a new request.', { code: 'idempotency_key_reused' });
     }
@@ -183,13 +199,28 @@ async function withIdempotency(db: Db, req: Request, res: Response, run: () => P
       res.setHeader('Idempotent-Replayed', 'true');
       return { status: existing.statusCode, body: existing.responseBody };
     }
-    // Still running elsewhere, unless that attempt died (crash) long ago: then take it over.
     if (now.getTime() - existing.lockedAt.getTime() < IN_PROGRESS_STALE_MS) {
       throw new HttpError(409, 'A request with this Idempotency-Key is still in progress. Retry shortly.', { code: 'idempotency_in_progress' });
     }
-    const taken = await db.idempotencyKey.updateMany({ where: { id: existing.id, statusCode: null, lockedAt: existing.lockedAt }, data: { lockedAt: now } });
+    // The first attempt stopped heartbeating long ago (crashed): take the key over.
+    const taken = await db.idempotencyKey.updateMany({ where: { id: existing.id, statusCode: null, lockedAt: existing.lockedAt }, data: { lockedAt: token } });
     if (taken.count === 0) throw new HttpError(409, 'A request with this Idempotency-Key is still in progress. Retry shortly.', { code: 'idempotency_in_progress' });
+    rowId = existing.id;
   }
+
+  // Heartbeat: keep the claim fresh while the handler runs.
+  let held = true;
+  const heartbeat = setInterval(() => {
+    const next = new Date();
+    void db.idempotencyKey
+      .updateMany({ where: { id: rowId, statusCode: null, lockedAt: token }, data: { lockedAt: next } })
+      .then((r) => {
+        if (r.count === 1) token = next;
+        else held = false;
+      })
+      .catch(() => undefined);
+  }, HEARTBEAT_MS);
+  heartbeat.unref();
 
   let outcome: { status: number; body: unknown };
   try {
@@ -197,16 +228,25 @@ async function withIdempotency(db: Db, req: Request, res: Response, run: () => P
   } catch (err) {
     const { status, body } = v1ErrorBody(err, (req.id as string | undefined) ?? null);
     if (status >= 500 || status === 429) {
+      clearInterval(heartbeat);
       // Not a final answer: release the key so the same request can be retried.
-      await db.idempotencyKey.deleteMany({ where: { userId, key, statusCode: null } });
+      await db.idempotencyKey.deleteMany({ where: { id: rowId, statusCode: null, lockedAt: token } }).catch(() => undefined);
       throw err;
     }
     outcome = { status, body };
+  } finally {
+    clearInterval(heartbeat);
   }
-  await db.idempotencyKey.updateMany({
-    where: { userId, key, statusCode: null },
-    data: { statusCode: outcome.status, responseBody: outcome.body as Prisma.InputJsonValue },
-  });
+  // Store the final answer — only while we still hold the key. A failure to store
+  // must not turn a completed action into an error for the caller.
+  if (held) {
+    await db.idempotencyKey
+      .updateMany({
+        where: { id: rowId, statusCode: null, lockedAt: token },
+        data: { statusCode: outcome.status, responseBody: storable(outcome.body, secretFields) as Prisma.InputJsonValue },
+      })
+      .catch((err) => req.log?.error({ err }, 'could not store idempotent response'));
+  }
   return outcome;
 }
 
@@ -238,8 +278,12 @@ export interface RouteDef<P extends z.ZodType, Q extends z.ZodType, B extends z.
   status?: number;
   /** Error statuses worth documenting beyond the common ones. */
   errors?: number[];
-  /** Extra middleware (e.g. per-account quotas), run after authentication. */
+  /** Per-account quotas etc. Run after the idempotency replay check, so a replay is never rate-limited. */
   middleware?: RequestHandler[];
+  /** Who may call it (default: publishers and admins). */
+  roles?: AuthUser['role'][];
+  /** Response fields that are secrets: shown once, never stored for idempotent replay (replayed as null). */
+  secretFields?: string[];
   handler: (ctx: RouteContext<z.infer<P>, z.infer<Q>, z.infer<B>>) => Promise<z.input<R> | z.infer<R>>;
 }
 
@@ -258,14 +302,25 @@ export interface MountOptions {
   validateResponses: boolean;
 }
 
+/** Runs Express middleware (e.g. a rate limiter) as a promise. */
+function runMiddleware(mw: RequestHandler, req: Request, res: Response): Promise<void> {
+  return new Promise((resolve, reject) => {
+    void mw(req, res, (err?: unknown) => (err ? reject(err) : resolve()));
+  });
+}
+
 export function mount(router: Router, defs: AnyRoute[], opts: MountOptions) {
   for (const def of defs) {
     // One entry per method+path (several app instances, e.g. in tests, mount the same routes).
     const existing = routes.findIndex((r) => r.method === def.method && r.path === def.path);
     if (existing >= 0) routes[existing] = def;
     else routes.push(def);
+    const roles = def.roles ?? ['publisher', 'admin'];
     const handler: RequestHandler = async (req, res) => {
       const user = req.user!;
+      if (!roles.includes(user.role)) {
+        throw new HttpError(403, `This request needs a ${roles.join(' or ')} account.`, { code: 'forbidden' });
+      }
       // Read-only API keys: GET only.
       if (def.method !== 'get' && req.apiKey?.access === 'read_only') {
         throw new HttpError(403, 'This API key is read-only. Use a read & write key for this request.', { code: 'read_only_key' });
@@ -275,6 +330,7 @@ export function mount(router: Router, defs: AnyRoute[], opts: MountOptions) {
       const body = def.body ? def.body.parse(req.body ?? {}) : {};
 
       const run = async () => {
+        for (const mw of def.middleware ?? []) await runMiddleware(mw, req, res);
         const result = await def.handler({ req, user, params, query, body });
         if (opts.validateResponses) {
           const check = def.response.safeParse(result);
@@ -282,10 +338,10 @@ export function mount(router: Router, defs: AnyRoute[], opts: MountOptions) {
         }
         return { status: def.status ?? 200, body: result as unknown };
       };
-      const outcome = def.method === 'post' ? await withIdempotency(opts.db, req, res, run) : await run();
+      const outcome = def.method === 'post' ? await withIdempotency(opts.db, req, res, def.secretFields ?? [], run) : await run();
       res.status(outcome.status).json(outcome.body);
     };
-    router[def.method](def.path, ...(def.middleware ?? []), handler);
+    router[def.method](def.path, handler);
   }
 }
 
@@ -346,7 +402,9 @@ export function buildOpenApi(opts: { serverUrl: string; title: string; version: 
           ? [{ name: IDEMPOTENCY_HEADER, in: 'header', required: false, description: 'Makes the request safe to retry: the same key and body return the first response instead of running again. Kept for 24 hours.', schema: { type: 'string', maxLength: 255 } }]
           : []),
       ],
-      ...(def.body ? { requestBody: { required: true, content: { 'application/json': { schema: jsonSchema(def.body, 'input') } } } } : {}),
+      ...(def.body
+        ? { requestBody: { required: !def.body.safeParse(undefined).success, content: { 'application/json': { schema: jsonSchema(def.body, 'input') } } } }
+        : {}),
       responses: {
         [String(def.status ?? 200)]: { description: 'Success', content: { 'application/json': { schema: jsonSchema(def.response, 'output') } } },
         ...Object.fromEntries([...errors].sort().map((s) => [String(s), errorResponse(ERROR_DESCRIPTIONS[s] ?? 'Error')])),

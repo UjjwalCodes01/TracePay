@@ -53,6 +53,8 @@ export async function softResetDemo(db: Db): Promise<{ removedBuilds: number; re
       await tx.outboundEvent.deleteMany({ where: { ownerId: { in: publisherIds } } });
       await tx.webhookEndpoint.deleteMany({ where: { ownerId: { in: publisherIds } } });
       await tx.idempotencyKey.deleteMany({ where: { userId: { in: publisherIds } } });
+      // Keys minted by anonymous demo visitors stop working on reset.
+      await tx.apiKey.updateMany({ where: { userId: { in: publisherIds }, revokedAt: null }, data: { revokedAt: new Date() } });
 
       // 2. Restore the demo personas and fixtures idempotently.
       for (const u of DEMO_USERS) {

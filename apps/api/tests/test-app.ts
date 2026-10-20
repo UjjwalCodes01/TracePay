@@ -16,8 +16,8 @@ export function testWebhookDeps(overrides: Partial<WebhookDeps> = {}): WebhookDe
   return { db: db(), box: testWebhookBox, policy: { allowHttp: true, allowPrivate: true }, timeoutMs: 2_000, ...overrides };
 }
 
-export function testApp(paypal: PayPalGateway, config: Partial<AppDeps['config']> = {}, webhookOverrides: Partial<WebhookDeps> = {}) {
-  return createApp({
+export function testDeps(paypal: PayPalGateway, config: Partial<AppDeps['config']> = {}, webhookOverrides: Partial<WebhookDeps> = {}): AppDeps {
+  return {
     db: db(),
     paypal: () => paypal,
     signingKeys: () => keys,
@@ -42,5 +42,9 @@ export function testApp(paypal: PayPalGateway, config: Partial<AppDeps['config']
       validateResponses: true,
       ...config,
     },
-  });
+  };
+}
+
+export function testApp(paypal: PayPalGateway, config: Partial<AppDeps['config']> = {}, webhookOverrides: Partial<WebhookDeps> = {}) {
+  return createApp(testDeps(paypal, config, webhookOverrides));
 }

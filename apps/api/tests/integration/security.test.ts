@@ -162,12 +162,19 @@ describe.runIf(process.env.TEST_DATABASE_URL)('security (integration)', () => {
       expect(row.keyHash).not.toContain(key);
 
       const bearer = { Authorization: `Bearer ${key}` };
-      expect((await request(prodApp).get('/api/me').set(bearer).expect(200)).body).toMatchObject({ user: { id: 'user_atlas' }, authMethod: 'api_key' });
-      await request(prodApp).post('/api/auth/api-keys').set(bearer).send({ name: 'nested' }).expect(403);
+      expect((await request(prodApp).get('/api/v1/account').set(bearer).expect(200)).body).toMatchObject({ id: 'user_atlas', authenticated_with: 'api_key' });
+      // Keys are for the platform API only: never the dashboard (payout details, key management…).
+      for (const [method, path] of [['get', '/api/me'], ['patch', '/api/me'], ['post', '/api/auth/api-keys'], ['post', `/api/settlements/${atlasRun}/approve`], ['delete', `/api/auth/api-keys/${created.body.id}`]] as const) {
+        const res = await request(prodApp)[method](path).set(bearer).send({ name: 'nested', paypalEmail: 'attacker@example.com' });
+        expect(res.status, `${method} ${path}`).toBe(401);
+        expect(res.body.error).toMatch(/platform API/);
+      }
+      // The scheme is case-insensitive (RFC 7235), parsed the same way everywhere.
+      await request(prodApp).get('/api/v1/account').set({ Authorization: `bearer ${key}` }).expect(200);
 
       await request(app).delete(`/api/auth/api-keys/${created.body.id}`).set(atlas).expect(200);
-      await request(prodApp).get('/api/me').set(bearer).expect(401);
-      await request(prodApp).get('/api/me').set({ Authorization: 'Bearer tp_forged' }).expect(401);
+      await request(prodApp).get('/api/v1/account').set(bearer).expect(401);
+      await request(prodApp).get('/api/v1/account').set({ Authorization: 'Bearer tp_forged' }).expect(401);
     });
   });
 

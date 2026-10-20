@@ -35,7 +35,7 @@ Add an endpoint (\`POST /webhook_endpoints\`) and TracePay POSTs an [Event](#mod
   Compute the HMAC over the **raw** request body, compare in constant time, and reject timestamps more than
   ${SIGNATURE_TOLERANCE_SECONDS / 60} minutes old. During a secret rotation there are two \`v1\` values; accept either.
 - Answer with any \`2xx\` within 10 seconds. Anything else (including redirects) is retried with backoff for about
-  1.5 days (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 10 h). An endpoint failing for 3 days, or answering \`410 Gone\`, is disabled.
+  27 hours (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 10 h). An endpoint failing for 3 days, or answering \`410 Gone\`, is disabled.
 - Delivery is **at least once** and not ordered: de-duplicate on the event \`id\` and fetch the object for its current state.
 - Payloads are thin (ids and a few fields), so they never carry source content or payout addresses.
 - Missed something? \`GET /events\` lists the last 30 days.
@@ -130,6 +130,18 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
       legacyHeaders: false,
       keyGenerator: (req) => (req.apiKey ? `key:${req.apiKey.id}` : `user:${req.user!.id}`),
       handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests for this API key. Slow down and retry after the Retry-After seconds.', { code: 'rate_limited' }, 60)),
+    }),
+  );
+
+  // …and per account, so many keys can't multiply one account's allowance.
+  r.use(
+    rateLimit({
+      windowMs: 60_000,
+      limit: opts.rateLimitPerMinute * 2,
+      standardHeaders: false,
+      legacyHeaders: false,
+      keyGenerator: (req) => `account:${req.user!.id}`,
+      handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests for this account. Slow down and retry after the Retry-After seconds.', { code: 'rate_limited' }, 60)),
     }),
   );
 

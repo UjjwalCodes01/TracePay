@@ -8,7 +8,7 @@ import { HttpError } from '../http/errors';
 import { quotas } from '../http/limits';
 
 const MAX_ACTIVE_RUNS = 2;
-import { AgentStateError, createRun, decideReplacement, runAgent } from '../modules/agent/agent.service';
+import { AgentStateError, createRunWithinCap, decideReplacement, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
 import { explainPreflight } from '../modules/builds/explain';
 
 const StartBody = z.object({
@@ -31,15 +31,18 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
   r.post('/agent/runs', requireRole('publisher'), quotas.agentRun(), async (req, res) => {
     const body = StartBody.parse(req.body);
     // Each run makes model calls in the background: cap how many one publisher has going.
-    const active = await db.agentRun.count({ where: { publisherId: currentUser(req).id, status: 'running' } });
-    if (active >= MAX_ACTIVE_RUNS) throw new HttpError(429, `You already have ${active} assistant runs in progress. Wait for one to finish.`);
-    const run = await createRun(db, planner(), {
-      publisherId: currentUser(req).id,
-      goal: body.goal,
-      intent: body.intent,
-      selection: body.assetVersionIds,
-      policy: { autoReplace: body.autoReplace },
-    });
+    let run;
+    try {
+      run = await createRunWithinCap(
+        db,
+        planner(),
+        { publisherId: currentUser(req).id, goal: body.goal, intent: body.intent, selection: body.assetVersionIds, policy: { autoReplace: body.autoReplace } },
+        MAX_ACTIVE_RUNS,
+      );
+    } catch (err) {
+      if (err instanceof TooManyRunsError) throw new HttpError(429, err.message.replace('agent runs', 'assistant runs'));
+      throw err;
+    }
     runInBackground(run.id);
     res.status(202).json({ runId: run.id, planner: run.model });
   });

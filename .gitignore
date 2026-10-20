@@ -37,3 +37,6 @@ keys/
 # sandbox account files (contain test passwords)
 sandbox-accounts*.csv
 .neon
+
+# test runner artifacts
+.vitest/

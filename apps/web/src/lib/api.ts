@@ -45,14 +45,19 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok && !(res.status === 422 && path.endsWith('/generate'))) {
-    const details = data?.details;
-    // Surface the first validation message in plain words.
-    const first = Array.isArray(details) && details[0]?.message ? `: ${details[0].message}` : '';
-    throw new ApiError(res.status, `${data?.error ?? `Request failed (${res.status})`}${first}`, details);
+  if (!res.ok && !(res.status === 422 && path.endsWith('/generate') && !path.startsWith('/v1/'))) {
+    // Dashboard routes answer { error: "…", details }; the platform API (/v1) answers
+    // { error: { message, code, details }, request_id }.
+    const envelope = data?.error && typeof data.error === 'object' ? data.error : null;
+    const details = envelope ? envelope.details : data?.details;
+    const message: string = envelope?.message ?? data?.error ?? `Request failed (${res.status})`;
+    // Surface the first validation message in plain words (the v1 message already includes it).
+    const first = !envelope && Array.isArray(details) && details[0]?.message ? `: ${details[0].message}` : '';
+    throw new ApiError(res.status, `${message}${first}`, details);
   }
   return data as T;
 }
 
 export const post = <T>(path: string, body: unknown = {}) => api<T>(path, { method: 'POST', body });
 export const del = <T>(path: string) => api<T>(path, { method: 'DELETE' });
+export const patch = <T>(path: string, body: unknown) => api<T>(path, { method: 'PATCH', body });

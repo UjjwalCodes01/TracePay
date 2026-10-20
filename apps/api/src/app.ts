@@ -8,7 +8,7 @@ import type { PayPalGateway } from './integrations/paypal/gateway';
 import type { SigningKeys } from './modules/audit/signing';
 import type { ReportWriter } from './modules/generation/writers';
 import type { AgentPlanner } from './modules/agent/planners';
-import { authenticate, originCheck } from './http/auth';
+import { authenticate, bearerToken, isPlatformApiPath, originCheck, WELL_FORMED_KEY } from './http/auth';
 import { errorHandler, HttpError } from './http/errors';
 import { httpLogger } from './http/logger';
 import { agentRoutes } from './routes/agent';
@@ -30,6 +30,8 @@ export interface AppDeps {
   planner: () => AgentPlanner;
   /** Outbound webhooks (endpoint management and deliveries). */
   webhooks: () => WebhookDeps;
+  /** Called for every request from a signed-in caller (wakes background work). */
+  onActivity?: () => void;
   config: {
     appBaseUrl: string;
     corsOrigins: string[];
@@ -60,8 +62,9 @@ export interface AppDeps {
   };
 }
 
-const isPlatformApi = (req: express.Request) => req.originalUrl.startsWith('/api/v1/') || req.originalUrl === '/api/v1';
-const hasBearer = (req: express.Request) => /^Bearer\s/i.test(req.header('authorization') ?? '');
+const isPlatformApi = (req: express.Request) => isPlatformApiPath(req.originalUrl);
+/** A request carrying a well-formed platform API key: limited per key (and guarded against guessing) instead of per IP. */
+const carriesApiKey = (req: express.Request) => isPlatformApiPath(req.originalUrl) && WELL_FORMED_KEY.test(bearerToken(req) ?? '');
 
 export function createApp(deps: AppDeps) {
   const app = express();
@@ -103,13 +106,20 @@ export function createApp(deps: AppDeps) {
       standardHeaders: 'draft-8',
       legacyHeaders: false,
       // API-key traffic is limited per key inside /api/v1 instead (integrations often share an IP).
-      skip: (req) => req.path === '/health' || req.path === '/ready' || hasBearer(req),
+      skip: (req) => req.path === '/health' || req.path === '/ready' || carriesApiKey(req),
       handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests. Please slow down.', { code: 'rate_limited' }, 60)),
     }),
   );
   app.use(express.json({ limit: '1mb' }));
   app.use(authenticate(deps.db, { demoMode: deps.config.demoMode }));
   app.use(originCheck([...deps.config.corsOrigins, deps.config.appBaseUrl]));
+  if (deps.onActivity) {
+    const onActivity = deps.onActivity;
+    app.use((req, _res, next) => {
+      if (req.user) onActivity();
+      next();
+    });
+  }
 
   app.use(
     '/api/v1',

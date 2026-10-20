@@ -694,7 +694,12 @@ export const WebhookEndpoint = named(
 export const WebhookEndpointList = listOf('WebhookEndpoint', WebhookEndpoint);
 export const WebhookEndpointWithSecret = named(
   'WebhookEndpointWithSecret',
-  WebhookEndpoint.extend({ secret: z.string().meta({ description: 'The signing secret (`whsec_…`). Shown only now: store it securely.' }) }),
+  WebhookEndpoint.extend({
+    secret: z
+      .string()
+      .nullable()
+      .meta({ description: 'The signing secret (`whsec_…`). Shown only in this response: store it securely. `null` when the response is an Idempotency-Key replay — secrets are never stored; rotate to get a new one.' }),
+  }),
 );
 
 export function endpointOut(e: EndpointRow): z.infer<typeof WebhookEndpoint> {

@@ -142,7 +142,17 @@ export function setOutboxListener(listener: (() => void) | null) {
  */
 export async function recordPublicEvent(
   tx: Tx,
-  input: { auditSeq: number | null; ownerId: string; type: string; data: PublicEventData | Record<string, unknown>; createdAt: Date; onlyEndpointId?: string },
+  input: {
+    auditSeq: number | null;
+    ownerId: string;
+    type: string;
+    data: PublicEventData | Record<string, unknown>;
+    createdAt: Date;
+    /** Send to this endpoint only (test pings). */
+    onlyEndpointId?: string;
+    /** Create the deliveries already leased to the caller, which sends them itself. */
+    leasedUntil?: Date;
+  },
 ): Promise<{ eventId: string; deliveries: number }> {
   const eventId = newEventId();
   await tx.outboundEvent.create({
@@ -156,9 +166,9 @@ export async function recordPublicEvent(
   });
   if (endpoints.length) {
     await tx.webhookDelivery.createMany({
-      data: endpoints.map((e) => ({ id: newDeliveryId(), eventId, endpointId: e.id, nextAttemptAt: input.createdAt })),
+      data: endpoints.map((e) => ({ id: newDeliveryId(), eventId, endpointId: e.id, nextAttemptAt: input.createdAt, lockedUntil: input.leasedUntil ?? null })),
     });
-    outboxListener?.();
+    if (!input.leasedUntil) outboxListener?.();
   }
   return { eventId, deliveries: endpoints.length };
 }

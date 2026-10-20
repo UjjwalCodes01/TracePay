@@ -9,10 +9,14 @@ import { setOutboxListener } from '../../src/modules/platform/events';
 import type { Lookup } from '../../src/modules/platform/safe-http';
 import { verifyWebhookSignature } from '../../src/modules/platform/webhook-crypto';
 import {
-  deliverDue, DISABLE_AFTER_MS, MAX_ATTEMPTS, MAX_ENDPOINTS_PER_ACCOUNT, pruneWebhookData, RETRY_DELAYS_MS, WebhookDispatcher,
+  deliverDue, DISABLE_AFTER_MS, MAX_ATTEMPTS, MAX_ENDPOINTS_PER_ACCOUNT, nextDueAt, pruneWebhookData, RETRY_DELAYS_MS, WebhookDispatcher,
 } from '../../src/modules/platform/webhooks';
+import { recordPublicEvent } from '../../src/modules/platform/events';
+import { createRunWithinCap, TooManyRunsError } from '../../src/modules/agent/agent.service';
+import type { AgentPlanner } from '../../src/modules/agent/planners';
+import { createApp } from '../../src/app';
 import { FakePayPal } from '../fake-paypal';
-import { testApp, testWebhookBox, testWebhookDeps } from '../test-app';
+import { testApp, testDeps, testWebhookBox, testWebhookDeps } from '../test-app';
 import { WebhookReceiver } from '../webhook-receiver';
 
 const intent = {
@@ -280,7 +284,11 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       expect(JSON.parse(receiver.received[0]!.body)).toMatchObject({ type: 'ping', data: { object_type: 'webhook_endpoint', object_id: ep.id } });
       receiver.status(500, 'nope');
       const failed = await request(app).post(`/api/v1/webhook_endpoints/${ep.id}/test`).set(atlas).expect(200);
-      expect(failed.body).toMatchObject({ status: 'pending', last_status_code: 500 });
+      // A ping is sent once: it reports how the endpoint answers now and doesn't affect its health.
+      expect(failed.body).toMatchObject({ status: 'failed', last_status_code: 500, attempts: 1, next_attempt_at: null });
+      receiver.status(410);
+      await request(app).post(`/api/v1/webhook_endpoints/${ep.id}/test`).set(atlas).expect(200);
+      expect(await db().webhookEndpoint.findUniqueOrThrow({ where: { id: ep.id } })).toMatchObject({ status: 'enabled', consecutiveFailures: 0 });
       await request(app).patch(`/api/v1/webhook_endpoints/${ep.id}`).set(atlas).send({ status: 'disabled' }).expect(200);
       await request(app).post(`/api/v1/webhook_endpoints/${ep.id}/test`).set(atlas).expect(409);
     });
@@ -326,17 +334,17 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       await request(app).post(`/api/v1/webhook_endpoints/${ep.id}/test`).set(atlas).expect(200);
       const all = await request(app).get(`/api/v1/webhook_endpoints/${ep.id}/deliveries`).set(atlas).expect(200);
       expect(all.body.data).toHaveLength(2);
-      const pending = await request(app).get(`/api/v1/webhook_endpoints/${ep.id}/deliveries?status=pending`).set(atlas).expect(200);
-      expect(pending.body.data).toHaveLength(1);
-      expect(pending.body.data[0].history[0]).toMatchObject({ attempt: 1, status_code: 500 });
+      const failed = await request(app).get(`/api/v1/webhook_endpoints/${ep.id}/deliveries?status=failed`).set(atlas).expect(200);
+      expect(failed.body.data).toHaveLength(1);
+      expect(failed.body.data[0].history[0]).toMatchObject({ attempt: 1, status_code: 500 });
     });
   });
 
   describe('background delivery and housekeeping', () => {
     it('the dispatcher delivers on its own once kicked', async () => {
       await createEndpoint(['report.withdrawn']);
-      const dispatcher = new WebhookDispatcher(deps, { pollMs: 50, activeWindowMs: 2_000 });
-      setOutboxListener(() => dispatcher.kick());
+      const dispatcher = new WebhookDispatcher(() => deps, { pollMs: 50, eventWindowMs: 2_000 });
+      setOutboxListener(() => dispatcher.kick('event'));
       try {
         await withdraw(); // the outbox listener kicks the dispatcher
         for (let i = 0; i < 50 && receiver.received.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
@@ -354,20 +362,160 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       await withdraw();
       const old = new Date(Date.now() - 40 * 86_400_000);
       await db().outboundEvent.updateMany({ data: { createdAt: old } });
-      await db().idempotencyKey.create({ data: { userId: 'user_atlas', key: 'ancient', requestHash: 'x', createdAt: old } });
+      await db().idempotencyKey.create({ data: { userId: 'user_atlas', key: 'ancient-done', requestHash: 'x', statusCode: 201, createdAt: old, lockedAt: old } });
+      await db().idempotencyKey.create({ data: { userId: 'user_atlas', key: 'ancient-crashed', requestHash: 'x', createdAt: old, lockedAt: old } });
+      // Old but still heartbeating: its request is running right now.
+      await db().idempotencyKey.create({ data: { userId: 'user_atlas', key: 'ancient-running', requestHash: 'x', createdAt: old } });
       const result = await pruneWebhookData(db());
-      expect(result.idempotencyKeys).toBeGreaterThanOrEqual(1);
+      expect(result.idempotencyKeys).toBe(2);
+      expect(await db().idempotencyKey.count({ where: { key: 'ancient-running' } })).toBe(1);
       // The event still waiting for its retries survives.
       expect(await db().webhookDelivery.count({ where: { endpointId: ep.id, status: 'pending' } })).toBe(1);
       expect(await db().outboundEvent.count({ where: { deliveries: { none: { status: 'pending' } } } })).toBe(0);
       await relist();
     });
 
-    it('“Reset demo” clears the demo publisher’s endpoints and events', async () => {
+    it('“Reset demo” clears the demo publisher’s endpoints and events, and revokes its keys', async () => {
       await createEndpoint();
+      const demoKey = await createApiKey(db(), 'user_atlas', 'left behind by a visitor');
       await softResetDemo(db());
       expect(await db().webhookEndpoint.count({ where: { ownerId: 'user_atlas' } })).toBe(0);
       expect(await db().outboundEvent.count({ where: { ownerId: 'user_atlas' } })).toBe(0);
+      expect((await db().apiKey.findUniqueOrThrow({ where: { id: demoKey.id } })).revokedAt).not.toBeNull();
+      await request(app).get('/api/v1/account').set({ Authorization: `Bearer ${demoKey.key}` }).expect(401);
+      // Restore a key and a report for anything that runs after this.
+      atlas = { Authorization: `Bearer ${(await createApiKey(db(), 'user_atlas', 'hooks')).key}` };
+      const build = await request(app).post('/api/v1/builds').set(atlas).send({ intent, source_version_ids: PASSING }).expect(201);
+      reportId = (await request(app).post(`/api/v1/builds/${build.body.id}/generate`).set(atlas).expect(201)).body.report.id;
+    });
+  });
+
+  describe('robustness (review regressions)', () => {
+    it('stores receiver text safely: a NUL byte in an error page is not a crash loop', async () => {
+      const ep = await createEndpoint(['report.withdrawn']);
+      receiver.status(500, 'bad\u0000gateway\u0007');
+      await withdraw();
+      expect(await deliverDue(deps)).toBe(1);
+      const [d] = await deliveries(ep.id);
+      expect(d).toMatchObject({ status: 'pending', attempts: 1 });
+      expect(d!.lastError).toContain('badgateway');
+      expect(await deliverDue(deps)).toBe(0);
+      expect(receiver.received).toHaveLength(1);
+    });
+
+    it('counts an attempt that crashes, so it is retried with backoff — never in a tight loop', async () => {
+      const ep = await createEndpoint(['report.withdrawn']);
+      await db().webhookEndpoint.update({ where: { id: ep.id }, data: { secretEnc: 'v1.AAAA.AAAA.AAAA' } }); // undecryptable
+      await withdraw();
+      expect(await deliverDue(deps)).toBe(1);
+      const [d] = await deliveries(ep.id);
+      expect(d).toMatchObject({ status: 'pending', attempts: 1, lockedUntil: null });
+      expect(d!.lastError).toMatch(/Internal error/);
+      expect(d!.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now() + 50_000);
+      expect(await deliverDue(deps)).toBe(0);
+      expect(receiver.received).toHaveLength(0);
+    });
+
+    it('counts concurrent failures exactly (atomic streak)', async () => {
+      const ep = await createEndpoint(['report.withdrawn', 'report.relisted']);
+      receiver.status(503);
+      await withdraw();
+      await relist();
+      await withdraw();
+      await deliverDue(deps);
+      expect((await db().webhookEndpoint.findUniqueOrThrow({ where: { id: ep.id } })).consecutiveFailures).toBe(3);
+    });
+
+    it('a worker that lost its lease does not overwrite the new holder’s result', async () => {
+      const ep = await createEndpoint(['report.withdrawn']);
+      let release: () => void = () => undefined;
+      const arrived = new Promise<void>((resolve) => receiver.respond((_req, res) => {
+        release = () => res.writeHead(200).end('ok');
+        resolve();
+      }));
+      await withdraw();
+      const running = deliverDue(deps);
+      await arrived;
+      const [d] = await deliveries(ep.id);
+      const takenOver = new Date(Date.now() + 5 * 60_000);
+      await db().webhookDelivery.update({ where: { id: d!.id }, data: { lockedUntil: takenOver } });
+      release();
+      await running;
+      expect(await db().webhookDelivery.findUniqueOrThrow({ where: { id: d!.id } })).toMatchObject({ status: 'pending', attempts: 0, lockedUntil: takenOver });
+    });
+
+    it('a test ping is created already claimed, so a background worker can’t steal it', async () => {
+      const ep = await createEndpoint(['ping']);
+      await db().$transaction((tx) =>
+        recordPublicEvent(tx, { auditSeq: null, ownerId: 'user_atlas', type: 'ping', data: {}, createdAt: new Date(), onlyEndpointId: ep.id, leasedUntil: new Date(Date.now() + 60_000) }),
+      );
+      expect(await deliverDue(deps)).toBe(0);
+    });
+
+    it('schedules the next pass by the earliest sendable delivery, not a leased one', async () => {
+      const ep = await createEndpoint(['report.withdrawn', 'report.relisted']);
+      await withdraw();
+      await relist();
+      const [a, b] = await deliveries(ep.id);
+      const now = new Date();
+      await db().webhookDelivery.update({ where: { id: a!.id }, data: { nextAttemptAt: new Date(now.getTime() - 1_000), lockedUntil: new Date(now.getTime() + 60_000) } });
+      await db().webhookDelivery.update({ where: { id: b!.id }, data: { nextAttemptAt: new Date(now.getTime() + 5_000), lockedUntil: null } });
+      await db().webhookDelivery.updateMany({ where: { id: { notIn: [a!.id, b!.id] }, status: 'pending' }, data: { status: 'skipped' } });
+      const next = await nextDueAt(db(), now);
+      expect(next!.getTime()).toBe(now.getTime() + 5_000);
+    });
+
+    it('handles concurrent resends and rotations without errors or dead secrets', async () => {
+      const ep = await createEndpoint(['ping', 'report.withdrawn']);
+      await withdraw();
+      const event = (await request(app).get('/api/v1/events?type=report.withdrawn&limit=1').set(atlas)).body.data[0];
+      const other = await createEndpoint(['sale.completed'], '/later');
+      const resends = await Promise.all([1, 2, 3].map(() => request(app).post(`/api/v1/events/${event.id}/resend`).set(atlas).send({ endpoint_id: other.id })));
+      expect(resends.map((r) => r.status)).toEqual([202, 202, 202]);
+      expect(await db().webhookDelivery.count({ where: { eventId: event.id, endpointId: other.id } })).toBe(1);
+
+      const [r1, r2] = await Promise.all([1, 2].map(() => request(app).post(`/api/v1/webhook_endpoints/${ep.id}/rotate_secret`).set(atlas).send({})));
+      receiver.reset();
+      await request(app).post(`/api/v1/webhook_endpoints/${ep.id}/test`).set(atlas).expect(200);
+      const hit = receiver.received[0]!;
+      // Whichever rotation landed second, both secrets handed out still sign.
+      for (const secret of [r1!.body.secret, r2!.body.secret]) {
+        expect(verifyWebhookSignature({ header: hit.headers['tracepay-signature'] as string, body: hit.body, secret })).toBe(true);
+      }
+    });
+
+    it('never stores a signing secret for idempotent replay', async () => {
+      const headers = { ...atlas, 'Idempotency-Key': `ep-${Date.now()}` };
+      const body = { url: receiver.url('/idem'), enabled_events: ['*'] };
+      const first = await request(app).post('/api/v1/webhook_endpoints').set(headers).send(body).expect(201);
+      expect(first.body.secret).toMatch(/^whsec_/);
+      const replay = await request(app).post('/api/v1/webhook_endpoints').set(headers).send(body).expect(201);
+      expect(replay.headers['idempotent-replayed']).toBe('true');
+      expect(replay.body).toMatchObject({ id: first.body.id, secret: null });
+      const stored = await db().idempotencyKey.findFirstOrThrow({ where: { key: headers['Idempotency-Key'] } });
+      expect(JSON.stringify(stored.responseBody)).not.toContain(first.body.secret);
+    });
+
+    it('caps concurrent agent runs exactly, even when started at the same moment', async () => {
+      await db().agentRun.updateMany({ where: { publisherId: 'user_atlas', status: 'running' }, data: { status: 'failed' } });
+      const planner = { name: 'stub', model: 'none' } as unknown as AgentPlanner;
+      const input = { publisherId: 'user_atlas', goal: 'Concurrency test goal.', intent: {} as never, selection: ['x'], policy: { autoReplace: false } };
+      const results = await Promise.allSettled([1, 2, 3, 4].map(() => createRunWithinCap(db(), planner, input, 2)));
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+      expect(results.filter((r) => r.status === 'rejected' && r.reason instanceof TooManyRunsError)).toHaveLength(2);
+      expect(await db().agentRun.count({ where: { publisherId: 'user_atlas', status: 'running' } })).toBe(2);
+      await db().agentRun.updateMany({ where: { publisherId: 'user_atlas', status: 'running' }, data: { status: 'failed' } });
+    });
+
+    it('only signed-in requests count as activity (scanners don’t wake the database)', async () => {
+      let kicks = 0;
+      const tracked = createApp({ ...testDeps(paypal), onActivity: () => kicks++ });
+      await request(tracked).get('/api/health');
+      await request(tracked).get('/api/artifacts');
+      await request(tracked).get('/nothing-here');
+      expect(kicks).toBe(0);
+      await request(tracked).get('/api/v1/account').set(atlas).expect(200);
+      expect(kicks).toBe(1);
     });
   });
 });

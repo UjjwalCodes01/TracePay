@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { BookOpenCheck, Bot, Database, FileStack, LayoutDashboard, Library, LogOut, Receipt, RotateCcw, ShoppingBag, UserRound, Wallet } from 'lucide-react';
+import { BookOpenCheck, Bot, Code2, Database, FileStack, LayoutDashboard, Library, LogOut, Receipt, RotateCcw, ShoppingBag, UserRound, Wallet } from 'lucide-react';
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router';
 import { post } from '../lib/api';
 import { useSession } from '../lib/session';
@@ -16,6 +16,7 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; role
   { to: '/store', label: 'Report Store', icon: ShoppingBag, roles: ['buyer'] },
   { to: '/sources', label: 'My Sources', icon: Database, roles: ['contributor'] },
   { to: '/earnings', label: 'My Earnings', icon: Wallet, roles: ['contributor'] },
+  { to: '/developers', label: 'Developers', icon: Code2, roles: ['publisher', 'admin'] },
   { to: '/profile', label: 'Profile', icon: UserRound, roles: ['publisher', 'contributor', 'buyer', 'admin'] },
 ];
 
