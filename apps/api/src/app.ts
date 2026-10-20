@@ -70,6 +70,7 @@ export interface AppDeps {
 }
 
 export const PROXY_SECRET_HEADER = 'x-tracepay-proxy-secret';
+type ProxiedRequest = express.Request & { proxyAddress?: string };
 const isPlatformApi = (req: express.Request) => isPlatformApiPath(req.originalUrl);
 /** A request carrying a well-formed platform API key: limited per key (and guarded against guessing) instead of per IP. */
 const carriesApiKey = (req: express.Request) => isPlatformApiPath(req.originalUrl) && WELL_FORMED_KEY.test(bearerToken(req) ?? '');
@@ -92,8 +93,11 @@ export function createApp(deps: AppDeps) {
     });
   }
 
-  // Requests forwarded by our own web proxy carry the shared secret; only then is the
-  // visitor address it reports believed (Vercel overwrites client-supplied values).
+  // Requests forwarded by our own web proxy (Vercel) carry the shared secret. For those,
+  // the visitor address Vercel reports is used for PER-VISITOR rate limits — best effort:
+  // measured in production, Vercel does not reliably strip client-supplied IP headers on
+  // requests it forwards, so the claimed address is never trusted for anything else, and a
+  // hard cap per proxy address (which Cloudflare sets and clients can't forge) still applies.
   // The secret header is removed before anything else (logs included) sees it.
   const proxySecret = deps.config.trustedProxySecret ? Buffer.from(deps.config.trustedProxySecret) : null;
   app.use((req, _res, next) => {
@@ -102,10 +106,12 @@ export function createApp(deps: AppDeps) {
     if (proxySecret && typeof presented === 'string') {
       const got = Buffer.from(presented);
       if (got.length === proxySecret.length && timingSafeEqual(got, proxySecret)) {
-        (req as unknown as { viaTrustedProxy?: boolean }).viaTrustedProxy = true;
         const reported = req.headers['x-vercel-forwarded-for'] ?? req.headers['x-real-ip'];
         const ip = (Array.isArray(reported) ? reported[0] : reported)?.split(',')[0]?.trim() ?? '';
-        if (isIP(ip)) Object.defineProperty(req, 'ip', { value: ip, configurable: true, enumerable: true });
+        if (isIP(ip)) {
+          (req as ProxiedRequest).proxyAddress = req.ip;
+          Object.defineProperty(req, 'ip', { value: ip, configurable: true, enumerable: true });
+        }
       }
     }
     next();
@@ -137,6 +143,20 @@ export function createApp(deps: AppDeps) {
       handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests. Please slow down.', { code: 'rate_limited' }, 60)),
     }),
   );
+  // The safety net behind per-visitor limits for proxied traffic: a cap per proxy
+  // address, whatever visitor address a request claims.
+  app.use(
+    '/api',
+    rateLimit({
+      windowMs: 60_000,
+      limit: deps.config.rateLimitPerMinute * 10,
+      standardHeaders: false,
+      legacyHeaders: false,
+      skip: (req) => !(req as ProxiedRequest).proxyAddress || req.path === '/health' || req.path === '/ready',
+      keyGenerator: (req) => `proxy:${(req as ProxiedRequest).proxyAddress}`,
+      handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests. Please slow down.', { code: 'rate_limited' }, 60)),
+    }),
+  );
   app.use(express.json({ limit: '1mb' }));
   app.use(authenticate(deps.db, { demoMode: deps.config.demoMode }));
   app.use(originCheck([...deps.config.corsOrigins, deps.config.appBaseUrl]));
@@ -152,12 +172,6 @@ export function createApp(deps: AppDeps) {
     '/api/v1',
     platformApi(deps, { serverUrl: `${deps.config.apiBaseUrl.replace(/\/$/, '')}/api/v1`, rateLimitPerMinute: deps.config.apiRateLimitPerMinute, validateResponses: deps.config.validateResponses ?? false }),
   );
-  // TEMPORARY diagnostic (to be removed): which client-IP headers arrive through our proxy.
-  app.get('/api/_diag/client-ip', (req, res) => {
-    if (!(req as unknown as { viaTrustedProxy?: boolean }).viaTrustedProxy) return res.status(404).json({ error: 'Not found.' });
-    const pick = (h: string) => req.headers[h] ?? null;
-    res.json({ ip: req.ip, xff: pick('x-forwarded-for'), xri: pick('x-real-ip'), xvff: pick('x-vercel-forwarded-for'), cf: pick('cf-connecting-ip') });
-  });
   app.use('/api', systemRoutes(deps));
   app.use('/api', authRoutes(deps));
   app.use('/api', buildRoutes(deps));

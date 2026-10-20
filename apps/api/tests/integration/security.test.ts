@@ -196,6 +196,17 @@ describe.runIf(process.env.TEST_DATABASE_URL)('security (integration)', () => {
       await request(proxied).get('/api/artifacts').set({ 'x-vercel-forwarded-for': '203.0.113.51' }).expect(429);
     });
 
+    it('caps each proxy address, so inventing visitor addresses can’t escape the limit', async () => {
+      // Per-visitor limit 1/min → proxy cap 10/min.
+      const proxied = testApp(paypal, { trustedProxySecret: secret, rateLimitPerMinute: 1 });
+      let blocked = 0;
+      for (let i = 0; i < 14; i++) {
+        const res = await request(proxied).get('/api/artifacts').set(viaProxy(`198.51.100.${100 + i}`));
+        if (res.status === 429) blocked++;
+      }
+      expect(blocked).toBe(4);
+    });
+
     it('is off when no secret is configured', async () => {
       const plain = testApp(paypal, { rateLimitPerMinute: 1 });
       await request(plain).get('/api/artifacts').set(viaProxy('198.51.100.9')).expect(200);
