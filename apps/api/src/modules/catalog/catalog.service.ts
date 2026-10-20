@@ -55,7 +55,7 @@ async function grantsFor(tx: Tx, licenseeId: string, assetIds: string[]) {
 }
 
 /** Lenient read of stored terms: a grant written under older rules must not crash the catalog. */
-const parseTerms = (t: unknown) => {
+export const parseTerms = (t: unknown) => {
   if (!t) return null;
   const r = LicenseTermsSchema.safeParse(t);
   return r.success ? r.data : null;

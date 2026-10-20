@@ -17,6 +17,9 @@ import { buildRoutes } from './routes/builds';
 import { commerceRoutes, webhookRoute } from './routes/commerce';
 import { licensingRoutes } from './routes/licensing';
 import { systemRoutes } from './routes/system';
+import { platformApi } from './platform-api';
+import { v1ErrorHandler } from './platform-api/framework';
+import type { WebhookDeps } from './modules/platform/webhooks';
 
 export interface AppDeps {
   db: Db;
@@ -25,6 +28,8 @@ export interface AppDeps {
   signingKeys: () => SigningKeys;
   writer: () => ReportWriter;
   planner: () => AgentPlanner;
+  /** Outbound webhooks (endpoint management and deliveries). */
+  webhooks: () => WebhookDeps;
   config: {
     appBaseUrl: string;
     corsOrigins: string[];
@@ -46,8 +51,17 @@ export interface AppDeps {
      * the client IP for rate limits and logs instead of counting proxy hops.
      */
     clientIpHeader?: string;
+    /** Public base URL of this API, for the OpenAPI `servers` entry. */
+    apiBaseUrl: string;
+    /** Platform API requests per minute per API key (or per signed-in user). */
+    apiRateLimitPerMinute: number;
+    /** Check every platform API response against its documented schema (tests). */
+    validateResponses?: boolean;
   };
 }
+
+const isPlatformApi = (req: express.Request) => req.originalUrl.startsWith('/api/v1/') || req.originalUrl === '/api/v1';
+const hasBearer = (req: express.Request) => /^Bearer\s/i.test(req.header('authorization') ?? '');
 
 export function createApp(deps: AppDeps) {
   const app = express();
@@ -88,14 +102,19 @@ export function createApp(deps: AppDeps) {
       limit: deps.config.rateLimitPerMinute,
       standardHeaders: 'draft-8',
       legacyHeaders: false,
-      skip: (req) => req.path === '/health' || req.path === '/ready',
-      message: { error: 'Too many requests. Please slow down.' },
+      // API-key traffic is limited per key inside /api/v1 instead (integrations often share an IP).
+      skip: (req) => req.path === '/health' || req.path === '/ready' || hasBearer(req),
+      handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests. Please slow down.', { code: 'rate_limited' }, 60)),
     }),
   );
   app.use(express.json({ limit: '1mb' }));
   app.use(authenticate(deps.db, { demoMode: deps.config.demoMode }));
   app.use(originCheck([...deps.config.corsOrigins, deps.config.appBaseUrl]));
 
+  app.use(
+    '/api/v1',
+    platformApi(deps, { serverUrl: `${deps.config.apiBaseUrl.replace(/\/$/, '')}/api/v1`, rateLimitPerMinute: deps.config.apiRateLimitPerMinute, validateResponses: deps.config.validateResponses ?? false }),
+  );
   app.use('/api', systemRoutes(deps));
   app.use('/api', authRoutes(deps));
   app.use('/api', buildRoutes(deps));
@@ -104,6 +123,9 @@ export function createApp(deps: AppDeps) {
   app.use('/api', licensingRoutes(deps));
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found.')));
-  app.use(errorHandler);
+  // Errors raised before the platform router (bad key, malformed JSON, IP limits) still get its error format.
+  app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) =>
+    isPlatformApi(req) ? v1ErrorHandler(err, req, res, next) : errorHandler(err, req, res, next),
+  );
   return app;
 }

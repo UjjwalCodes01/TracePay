@@ -106,15 +106,25 @@ export function authRoutes({ db, config }: AppDeps) {
     const keys = await db.apiKey.findMany({
       where: { userId: currentUser(req).id },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, prefix: true, createdAt: true, lastUsedAt: true, revokedAt: true },
+      select: { id: true, name: true, prefix: true, access: true, expiresAt: true, createdAt: true, lastUsedAt: true, revokedAt: true },
     });
     res.json({ keys });
   });
 
   r.post('/auth/api-keys', requireRole('publisher', 'admin'), async (req, res) => {
     if (req.authMethod === 'api_key') throw new HttpError(403, 'API keys cannot create other API keys.');
-    const { name } = z.object({ name: z.string().trim().min(1).max(80) }).parse(req.body);
-    const created = await createApiKey(db, currentUser(req).id, name);
+    const body = z
+      .object({
+        name: z.string().trim().min(1).max(80),
+        access: z.enum(['read_only', 'read_write']).default('read_write'),
+        expiresInDays: z.number().int().min(1).max(730).nullable().default(null),
+      })
+      .parse(req.body);
+    const userId = currentUser(req).id;
+    if ((await db.apiKey.count({ where: { userId, revokedAt: null } })) >= 25) {
+      throw new HttpError(409, 'You can have at most 25 active API keys. Revoke one you no longer use.', { code: 'resource_limit' });
+    }
+    const created = await createApiKey(db, userId, body.name, { access: body.access, expiresInDays: body.expiresInDays });
     // The full key is shown exactly once.
     res.status(201).json(created);
   });

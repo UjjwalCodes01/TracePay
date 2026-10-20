@@ -21,6 +21,7 @@ const TABLES = [
   'AuditEvent', 'PayoutItem', 'PayoutBatch', 'SettlementLine', 'SettlementRun', 'WebhookEvent',
   'PayPalPayment', 'Sale', 'ArtifactCitation', 'Artifact', 'SourceEvent', 'BuildSource', 'BuildJob',
   'AgentStep', 'AgentRun', 'LicenseGrant', 'SourceChunk', 'AssetVersion', 'Asset', 'ApiKey', 'Session', 'User',
+  'WebhookDelivery', 'OutboundEvent', 'WebhookEndpoint', 'IdempotencyKey',
 ];
 
 /**

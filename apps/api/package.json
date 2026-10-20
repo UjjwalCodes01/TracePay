@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "prisma generate && tsc -p tsconfig.json",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "DATABASE_URL=${LOCAL_DATABASE_URL:-postgresql://tracepay:tracepay@localhost:5433/tracepay} DATABASE_URL_UNPOOLED= prisma migrate dev",
     "db:deploy": "node scripts/migrate-deploy.mjs",
     "db:seed": "tsx --env-file-if-exists=.env --env-file-if-exists=../../.env.local src/scripts/seed.ts",
     "smoke:paypal": "tsx --env-file-if-exists=.env --env-file-if-exists=../../.env.local src/scripts/smoke-paypal.ts",

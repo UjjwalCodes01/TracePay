@@ -4,6 +4,7 @@ import { Prisma } from '../generated/prisma/client';
 import { AssetError } from '../modules/assets/asset.service';
 import { CryptoBusyError } from '../modules/auth/crypto';
 import { UnknownAssetVersionError } from '../modules/catalog/catalog.service';
+import { WebhookError } from '../modules/platform/webhooks';
 import { LicenseError } from '../modules/licenses/license.service';
 import { BuildStateError } from '../modules/generation/generation.service';
 import { PaymentError } from '../modules/payments/payments.service';
@@ -24,9 +25,15 @@ const PAYMENT_STATUS = { not_found: 404, not_for_sale: 409, state: 409, verifica
 const SETTLEMENT_STATUS = { not_found: 404, state: 409, payouts_unavailable: 503, provider: 502 } as const;
 const LICENSE_STATUS = { not_found: 404, forbidden: 404, state: 409, invalid: 400 } as const;
 const ASSET_STATUS = { not_found: 404, invalid: 400, unchanged: 409 } as const;
+const WEBHOOK_STATUS = { not_found: 404, invalid: 400, limit: 409, conflict: 409, state: 409 } as const;
 
-function toHttp(err: unknown): HttpError {
+export function toHttp(err: unknown): HttpError {
   if (err instanceof HttpError) return err;
+  // Body-parser failures carry their own status: malformed JSON is the client's error, not ours.
+  const parserType = (err as { type?: unknown } | null)?.type;
+  if (parserType === 'entity.parse.failed') return new HttpError(400, 'The request body is not valid JSON.', { code: 'invalid_json' });
+  if (parserType === 'entity.too.large') return new HttpError(413, 'The request body is too large.', { code: 'body_too_large' });
+  if (parserType === 'encoding.unsupported' || parserType === 'charset.unsupported') return new HttpError(415, 'Unsupported request encoding.', { code: 'unsupported_encoding' });
   if (err instanceof ZodError) return new HttpError(400, 'Invalid request.', err.issues);
   if (err instanceof UnknownAssetVersionError) return new HttpError(400, err.message);
   if (err instanceof BuildStateError) return new HttpError(409, err.message);
@@ -39,6 +46,7 @@ function toHttp(err: unknown): HttpError {
     return new HttpError(503, 'The server is busy. Please try again in a moment.', undefined, 2);
   }
   if (err instanceof AssetError) return new HttpError(ASSET_STATUS[err.code], err.message, { code: err.code });
+  if (err instanceof WebhookError) return new HttpError(WEBHOOK_STATUS[err.code], err.message, { code: err.code === 'limit' ? 'resource_limit' : err.code });
   return new HttpError(500, 'Internal error.');
 }
 

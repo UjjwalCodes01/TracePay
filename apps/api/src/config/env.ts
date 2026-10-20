@@ -39,6 +39,10 @@ export const serverEnv = () =>
       DATABASE_URL: nonEmpty,
       DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
       APP_BASE_URL: z.url().default('http://localhost:5173'),
+      /** Platform API (/api/v1) requests per minute per API key. */
+      API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(600),
+      /** Let webhooks reach http:// and private/loopback addresses. Local development ONLY. */
+      WEBHOOK_ALLOW_PRIVATE_TARGETS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
       API_BASE_URL: z.url().default('http://localhost:4000'),
       CORS_ORIGINS: z.string().default('http://localhost:5173'),
     }),

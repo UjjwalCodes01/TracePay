@@ -26,4 +26,8 @@ export const quotas = {
   checkout: () => perUser('checkout', 30, 10 * 60_000, 'Too many checkout attempts. Try again in a few minutes.'),
   agentRun: () => perUser('agent', 30, HOUR, 'You can start up to 30 assistant runs per hour.'),
   preflight: () => perUser('preflight', 120, HOUR, 'Too many preflight checks this hour.'),
+  /** Each makes an outbound HTTP request to a customer URL: keep TracePay from being used as a request cannon. */
+  webhookTest: () => perUser('webhook-test', 30, 10 * 60_000, 'Too many test events. Try again in a few minutes.'),
+  webhookResend: () => perUser('webhook-resend', 300, HOUR, 'Too many redeliveries this hour.'),
+  webhookManage: () => perUser('webhook-manage', 60, HOUR, 'Too many webhook endpoint changes this hour.'),
 };

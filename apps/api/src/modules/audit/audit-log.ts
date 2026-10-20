@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client';
 import type { Tx } from '../../db';
+import { publicEventFor, recordPublicEvent } from '../platform/events';
 import { chainHash, GENESIS_HASH, type StoredChainEntry, verifyChain } from './hash-chain';
 
 /** Arbitrary key for the Postgres advisory lock that serialises chain appends. */
@@ -58,6 +59,7 @@ export async function appendAudit(tx: Tx, input: AuditInput): Promise<{ seq: num
     payload: input.payload,
     createdAt: createdAt.toISOString(),
   });
+  const tenantId = input.tenantId !== undefined ? input.tenantId : await resolveTenant(tx, input.entityType, input.entityId);
   const row = await tx.auditEvent.create({
     data: {
       entityType: input.entityType,
@@ -65,13 +67,16 @@ export async function appendAudit(tx: Tx, input: AuditInput): Promise<{ seq: num
       eventType: input.eventType,
       payload: input.payload as Prisma.InputJsonValue,
       artifactId: input.artifactId ?? null,
-      tenantId: input.tenantId !== undefined ? input.tenantId : await resolveTenant(tx, input.entityType, input.entityId),
+      tenantId,
       previousHash,
       hash,
       createdAt,
     },
     select: { seq: true, hash: true },
   });
+  // The publisher's public event log and webhooks (transactional outbox: same transaction).
+  const event = tenantId ? publicEventFor(input) : null;
+  if (event && tenantId) await recordPublicEvent(tx, { auditSeq: row.seq, ownerId: tenantId, type: event.type, data: event.data, createdAt });
   return row;
 }
 

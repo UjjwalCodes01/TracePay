@@ -35,6 +35,9 @@ model User {
   sessions Session[]
   apiKeys  ApiKey[]
 
+  idempotencyKeys  IdempotencyKey[]
+  webhookEndpoints WebhookEndpoint[]
+
   assets       Asset[]
   licensesHeld LicenseGrant[] @relation("licensee")
   buildJobs    BuildJob[]
@@ -56,19 +59,48 @@ model Session {
 }
 
 /// Programmatic access for platforms integrating TracePay. Only a hash is stored.
+enum ApiKeyAccess {
+  /// GET requests only.
+  read_only
+  read_write
+}
+
 model ApiKey {
-  id         String    @id @default(cuid())
+  id         String       @id @default(cuid())
   userId     String
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   name       String
   /// First characters of the key, shown so users can tell keys apart.
   prefix     String
-  keyHash    String    @unique
-  createdAt  DateTime  @default(now())
+  keyHash    String       @unique
+  access     ApiKeyAccess @default(read_write)
+  /// Null = never expires.
+  expiresAt  DateTime?
+  createdAt  DateTime     @default(now())
   lastUsedAt DateTime?
   revokedAt  DateTime?
 
   @@index([userId])
+}
+
+/// Replay protection for POSTs to the platform API (`Idempotency-Key` header).
+/// A retried request with the same key and body gets the first response back
+/// instead of being executed twice. Rows expire after 24 hours.
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key          String
+  /// SHA-256 of method, path and canonical body: the same key with different input is refused.
+  requestHash  String
+  /// Null while the first request is still running.
+  statusCode   Int?
+  responseBody Json?
+  lockedAt     DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, key])
+  @@index([createdAt])
 }
 
 // ---------------------------------------------------------------- assets & licenses
@@ -518,4 +550,90 @@ model AuditEvent {
   @@index([artifactId])
   @@index([entityType, entityId])
   @@index([tenantId, seq])
+}
+
+// ---------------------------------------------------------------- platform API: outbound webhooks
+
+enum WebhookEndpointStatus {
+  enabled
+  /// Paused by its owner, or automatically after failing for too long.
+  disabled
+}
+
+/// A URL on the publisher's side that receives signed event notifications.
+model WebhookEndpoint {
+  id                    String                @id @default(cuid())
+  ownerId               String
+  owner                 User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  url                   String
+  description           String?
+  /// Event types to send; ["*"] = all.
+  enabledEvents         String[]
+  status                WebhookEndpointStatus @default(enabled)
+  disabledReason        String?
+  /// Signing secret, AES-256-GCM encrypted (it must be recoverable to sign; it is never shown again).
+  secretEnc             String
+  /// After a rotation the old secret keeps signing (alongside the new one) until this time.
+  previousSecretEnc     String?
+  previousSecretExpires DateTime?
+  consecutiveFailures   Int                   @default(0)
+  /// First failure of the current failing streak; null while healthy.
+  failingSince          DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@index([ownerId])
+}
+
+/// The public, versioned event log of one publisher. Written in the same transaction
+/// as the audit event it reflects, so an event exists if and only if the change committed.
+model OutboundEvent {
+  id        String   @id
+  ownerId   String
+  type      String
+  /// Thin payload: ids and a few curated fields. Full objects are fetched via the API.
+  data      Json
+  /// The audit-chain event this mirrors (null for webhook pings).
+  auditSeq  Int?     @unique
+  createdAt DateTime @default(now())
+
+  deliveries WebhookDelivery[]
+
+  @@index([ownerId, createdAt])
+  @@index([createdAt])
+}
+
+enum WebhookDeliveryStatus {
+  pending
+  succeeded
+  /// Retries exhausted, or the receiver answered 410 Gone.
+  failed
+  /// Not attempted: the endpoint was disabled or deleted first.
+  skipped
+}
+
+model WebhookDelivery {
+  id             String                @id
+  eventId        String
+  event          OutboundEvent         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  endpointId     String
+  endpoint       WebhookEndpoint       @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  status         WebhookDeliveryStatus @default(pending)
+  attempts       Int                   @default(0)
+  nextAttemptAt  DateTime?
+  /// Lease: a worker that claimed this delivery owns it until then (crash-safe).
+  lockedUntil    DateTime?
+  lastAttemptAt  DateTime?
+  lastStatusCode Int?
+  lastError      String?
+  /// Every attempt: [{ at, statusCode, error, durationMs }].
+  history        Json                  @default("[]")
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@unique([eventId, endpointId])
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
 }

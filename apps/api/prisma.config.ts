@@ -39,12 +39,36 @@ function withConnectTimeout(url: string): string {
   }
 }
 
+/**
+ * Development-only commands can rewrite or RESET the target database. They must never
+ * reach a hosted one (Neon), however the environment is set up. Hosted databases only
+ * ever get `prisma migrate deploy`.
+ */
+function refuseDevCommandsOnHostedDb(url: string): string {
+  const args = process.argv.slice(2).join(' ');
+  const devOnly = /\bmigrate (dev|reset)\b|\bdb push\b/.test(args);
+  if (!devOnly || process.env.ALLOW_HOSTED_DEV_MIGRATIONS === '1') return url;
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return url;
+  }
+  if (!['localhost', '127.0.0.1', '::1', '[::1]', 'postgres', 'db'].includes(host)) {
+    throw new Error(
+      `Refusing "prisma ${args}" against ${host}: it can reset the database. ` +
+        'Use the local database (npm run db:migrate), then apply to Neon with npm run db:deploy.',
+    );
+  }
+  return url;
+}
+
 export default defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: {
     path: 'prisma/migrations',
   },
   datasource: {
-    url: databaseUrl(),
+    url: refuseDevCommandsOnHostedDb(databaseUrl()),
   },
 });

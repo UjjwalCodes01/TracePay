@@ -49,6 +49,10 @@ export async function softResetDemo(db: Db): Promise<{ removedBuilds: number; re
       await tx.agentRun.deleteMany({ where: { publisherId: { in: publisherIds } } });
       // Licenses held by the demo publisher (nothing references them any more).
       await tx.licenseGrant.deleteMany({ where: { licenseeId: { in: publisherIds } } });
+      // Platform API state: its event log (and pending deliveries), webhook endpoints and idempotency records.
+      await tx.outboundEvent.deleteMany({ where: { ownerId: { in: publisherIds } } });
+      await tx.webhookEndpoint.deleteMany({ where: { ownerId: { in: publisherIds } } });
+      await tx.idempotencyKey.deleteMany({ where: { userId: { in: publisherIds } } });
 
       // 2. Restore the demo personas and fixtures idempotently.
       for (const u of DEMO_USERS) {

@@ -1,6 +1,8 @@
 services:
   db:
     image: postgres:17-alpine
+    # Come back after a reboot or Docker restart, so local dev and tests just work.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: tracepay
       POSTGRES_PASSWORD: tracepay

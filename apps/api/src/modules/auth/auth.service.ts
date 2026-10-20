@@ -79,19 +79,34 @@ export async function destroySession(db: Db, token: string): Promise<void> {
 
 // ---- API keys --------------------------------------------------------------------
 
-export async function createApiKey(db: Db, userId: string, name: string): Promise<{ id: string; key: string; prefix: string }> {
-  const key = `${API_KEY_PREFIX}${randomToken(24)}`;
-  const prefix = key.slice(0, 10);
-  const row = await db.apiKey.create({ data: { userId, name: name.trim().slice(0, 80), prefix, keyHash: sha256(key) } });
-  return { id: row.id, key, prefix };
+export type ApiKeyAccess = 'read_only' | 'read_write';
+export interface ApiKeyInfo {
+  id: string;
+  access: ApiKeyAccess;
 }
 
-export async function userForApiKey(db: Db, key: string): Promise<AuthUser | null> {
-  if (!key.startsWith(API_KEY_PREFIX)) return null;
+export async function createApiKey(
+  db: Db,
+  userId: string,
+  name: string,
+  opts: { access?: ApiKeyAccess; expiresInDays?: number | null } = {},
+): Promise<{ id: string; key: string; prefix: string; access: ApiKeyAccess; expiresAt: Date | null }> {
+  const key = `${API_KEY_PREFIX}${randomToken(24)}`;
+  const prefix = key.slice(0, 10);
+  const expiresAt = opts.expiresInDays ? new Date(Date.now() + opts.expiresInDays * 86_400_000) : null;
+  const row = await db.apiKey.create({
+    data: { userId, name: name.trim().slice(0, 80), prefix, keyHash: sha256(key), access: opts.access ?? 'read_write', expiresAt },
+  });
+  return { id: row.id, key, prefix, access: row.access, expiresAt: row.expiresAt };
+}
+
+/** The user behind a live API key: not revoked, not expired. */
+export async function userForApiKey(db: Db, key: string): Promise<{ user: AuthUser; apiKey: ApiKeyInfo } | null> {
+  if (!key.startsWith(API_KEY_PREFIX) || key.length > 200) return null;
   const row = await db.apiKey.findUnique({ where: { keyHash: sha256(key) }, include: { user: { select: USER_SELECT } } });
-  if (!row || row.revokedAt) return null;
+  if (!row || row.revokedAt || (row.expiresAt && row.expiresAt <= new Date())) return null;
   if (!row.lastUsedAt || Date.now() - row.lastUsedAt.getTime() > 60_000) {
     await db.apiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
   }
-  return row.user as AuthUser;
+  return { user: row.user as AuthUser, apiKey: { id: row.id, access: row.access } };
 }

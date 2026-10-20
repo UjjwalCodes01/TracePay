@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { Db } from '../db';
-import { userForApiKey, userForSession, type AuthUser, type Role } from '../modules/auth/auth.service';
+import { userForApiKey, userForSession, type ApiKeyInfo, type AuthUser, type Role } from '../modules/auth/auth.service';
 import { DEMO_USERS } from '../modules/demo/world';
 import { HttpError } from './errors';
 
@@ -13,11 +13,33 @@ declare global {
     interface Request {
       user?: AuthUser;
       authMethod?: 'session' | 'api_key' | 'demo';
+      /** Set when authenticated with an API key. */
+      apiKey?: ApiKeyInfo;
     }
   }
 }
 
 export const DEMO_USER_HEADER = 'x-demo-user';
+
+/**
+ * Brute-force guard for API keys: rejected keys are counted per client IP, and
+ * once an address has too many it gets 429 for further INVALID keys. Valid keys
+ * are never blocked, so an integration sharing an IP with a guesser keeps working.
+ * Per process (each instance counts its own).
+ */
+const BAD_KEY_LIMIT = 30;
+const BAD_KEY_WINDOW_MS = 10 * 60_000;
+const badKeys = new Map<string, { count: number; resetAt: number }>();
+function tooManyBadKeys(ip: string, now = Date.now()): boolean {
+  const entry = badKeys.get(ip);
+  if (!entry || entry.resetAt <= now) {
+    if (badKeys.size > 10_000) for (const [k, v] of badKeys) if (v.resetAt <= now) badKeys.delete(k);
+    badKeys.set(ip, { count: 1, resetAt: now + BAD_KEY_WINDOW_MS });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > BAD_KEY_LIMIT;
+}
 const DEMO_PERSONAS = new Set(DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => u.id));
 export const SESSION_COOKIE = 'tp_session';
 
@@ -41,9 +63,15 @@ export function authenticate(db: Db, opts: { demoMode: boolean }) {
   return async (req: Request, _res: Response, next: NextFunction) => {
     const auth = req.header('authorization');
     if (auth?.startsWith('Bearer ')) {
-      const user = await userForApiKey(db, auth.slice(7).trim());
-      if (!user) return next(new HttpError(401, 'Invalid or revoked API key.'));
-      req.user = user;
+      const found = await userForApiKey(db, auth.slice(7).trim());
+      if (!found) {
+        if (tooManyBadKeys(req.ip ?? 'unknown')) {
+          return next(new HttpError(429, 'Too many invalid API keys from this address. Try again later.', { code: 'rate_limited' }, Math.ceil(BAD_KEY_WINDOW_MS / 1000)));
+        }
+        return next(new HttpError(401, 'Invalid, expired or revoked API key.', { code: 'invalid_api_key' }));
+      }
+      req.user = found.user;
+      req.apiKey = found.apiKey;
       req.authMethod = 'api_key';
       return next();
     }

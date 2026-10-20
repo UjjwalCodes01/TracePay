@@ -8,6 +8,9 @@ import { pickPlanner } from './modules/agent/planners';
 import { loadSigningKeys, type SigningKeys } from './modules/audit/signing';
 import { pickWriter } from './modules/generation/writers';
 import { recoverStaleWork, STALE_WORK_MS } from './modules/maintenance/recovery';
+import { setOutboxListener } from './modules/platform/events';
+import { pruneWebhookData, WebhookDispatcher, type WebhookDeps } from './modules/platform/webhooks';
+import { SecretBox } from './modules/platform/webhook-crypto';
 
 const env = serverEnv();
 
@@ -22,6 +25,20 @@ let keys: SigningKeys | null = null;
 const paypalConfigured = Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
 const corsOrigins = env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean);
 
+// Outbound webhooks. Signing secrets are encrypted at rest with WEBHOOK_SECRET_KEY
+// (or a key derived from the audit signing key when it isn't set).
+let webhookDeps: WebhookDeps | null = null;
+const webhooks = (): WebhookDeps =>
+  (webhookDeps ??= {
+    db: db(),
+    box: SecretBox.fromEnv(process.env.WEBHOOK_SECRET_KEY, signingEnv().AUDIT_SIGNING_PRIVATE_KEY, process.env.WEBHOOK_SECRET_KEY_PREVIOUS),
+    // Private/loopback targets and plain http are for local development only.
+    policy: { allowHttp: env.WEBHOOK_ALLOW_PRIVATE_TARGETS, allowPrivate: env.WEBHOOK_ALLOW_PRIVATE_TARGETS },
+  });
+if (env.WEBHOOK_ALLOW_PRIVATE_TARGETS && env.NODE_ENV === 'production') {
+  logger.warn('WEBHOOK_ALLOW_PRIVATE_TARGETS is ON in production: webhooks may reach private networks. Turn it off.');
+}
+
 const app = createApp({
   db: db(),
   paypal: () => {
@@ -31,6 +48,7 @@ const app = createApp({
   signingKeys: () => (keys ??= loadSigningKeys(signingEnv().AUDIT_SIGNING_PRIVATE_KEY)),
   writer: () => pickWriter(),
   planner: () => pickPlanner(),
+  webhooks,
   config: {
     appBaseUrl: env.APP_BASE_URL,
     corsOrigins,
@@ -44,6 +62,8 @@ const app = createApp({
     webhookRateLimitPerMinute: env.WEBHOOK_RATE_LIMIT_PER_MINUTE,
     trustProxyHops: env.TRUST_PROXY_HOPS,
     clientIpHeader: env.CLIENT_IP_HEADER || undefined,
+    apiBaseUrl: env.API_BASE_URL,
+    apiRateLimitPerMinute: env.API_RATE_LIMIT_PER_MINUTE,
   },
 });
 
@@ -60,13 +80,20 @@ const server = app.listen(env.PORT, () => {
 // minutes. Health checks don't count as activity.
 const SWEEP_EVERY_MS = 5 * 60_000;
 let lastActivity = Date.now();
+// Webhook deliveries run in the background: woken by new events and by API activity,
+// otherwise asleep until the next scheduled retry (so an idle API lets Neon suspend).
+const dispatcher = new WebhookDispatcher(webhooks());
+setOutboxListener(() => dispatcher.kick());
 server.on('request', (req: { url?: string }) => {
-  if (!/^\/api\/(health|ready)\b/.test(req.url ?? '')) lastActivity = Date.now();
+  if (/^\/api\/(health|ready)\b/.test(req.url ?? '')) return;
+  lastActivity = Date.now();
+  dispatcher.kick();
 });
 const sweep = () =>
-  recoverStaleWork(db())
-    .then((r) => (r.agentRuns || r.builds) && logger.warn(r, 'recovered interrupted work'))
-    .catch((err) => logger.error({ err }, 'stale-work sweep failed'));
+  Promise.all([
+    recoverStaleWork(db()).then((r) => (r.agentRuns || r.builds) && logger.warn(r, 'recovered interrupted work')),
+    pruneWebhookData(db()).then((r) => (r.events || r.idempotencyKeys) && logger.info(r, 'pruned old platform API data')),
+  ]).catch((err) => logger.error({ err }, 'maintenance sweep failed'));
 void sweep();
 setInterval(() => {
   if (Date.now() - lastActivity <= STALE_WORK_MS + SWEEP_EVERY_MS) void sweep();
@@ -79,6 +106,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
+    dispatcher.stop();
     server.close(async () => {
       await db().$disconnect().catch(() => undefined);
       process.exit(0);
