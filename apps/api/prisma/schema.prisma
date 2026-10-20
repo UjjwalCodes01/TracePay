@@ -516,6 +516,8 @@ model PayoutBatch {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @default(now()) @updatedAt
 
+  /// When the current send to PayPal started (status SUBMITTING): how an interrupted send is recognised.
+  sendingSince   DateTime?
   /// Reconciliation: when TracePay next asks PayPal about this batch (null = every payout is final).
   nextPollAt     DateTime?
   pollCount      Int           @default(0)

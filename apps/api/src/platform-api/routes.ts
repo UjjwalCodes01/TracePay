@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Prisma } from '../generated/prisma/client';
 import type { AppDeps } from '../app';
 import { ownedBuild, ownedSettlement, publisherScope, requireArtifactAccess } from '../http/access';
 import { HttpError } from '../http/errors';
@@ -21,6 +22,8 @@ import {
   approveSettlement, recalculateSettlement, refreshPayouts, retryFailedPayouts, submitPayouts,
 } from '../modules/settlements/settlement.service';
 import { checkSaleRights, withdrawArtifact } from '../modules/sales/rights.service';
+import { resolveIssueById } from '../modules/reconciliation/issues';
+import { reconcileOwnerNow } from '../modules/reconciliation/sync';
 import { cursorWhere, defineRoute, encodeCursor, ListQuery, pageOrder, toPage, type AnyRoute } from './framework';
 import * as R from './resources';
 
@@ -54,6 +57,35 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
     const g = await db.licenseGrant.findFirst({ where: { id, licenseeId: userId }, include: licenseInclude });
     if (!g) throw new HttpError(404, 'License not found.');
     return R.licenseOut(g, parseTerms);
+  };
+  const issueCursor = (cursor: string | undefined): Prisma.ReconciliationIssueWhereInput => {
+    const w = cursorWhere(cursor) as { OR?: Array<{ createdAt: Date | { lt: Date }; id?: { lt: string } }> };
+    // Same cursor format; issues are ordered by openedAt.
+    return w.OR ? { OR: w.OR.map(({ createdAt, ...rest }) => ({ openedAt: createdAt, ...rest })) } : {};
+  };
+  const reconciliationSummary = async (user: AuthUser) => {
+    // The account's own items (admins included), matching the issue list and "Check now".
+    const owned = { sale: { artifact: { buildJob: { publisherId: user.id } } } };
+    const [open, payments, batches, lastPayment, lastBatch, nextPayment, nextBatch] = await Promise.all([
+      db.reconciliationIssue.groupBy({ by: ['kind'], where: { ownerId: user.id, status: 'open' }, _count: { _all: true } }),
+      db.payPalPayment.count({ where: { nextCheckAt: { not: null }, ...owned } }),
+      db.payoutBatch.count({ where: { nextPollAt: { not: null }, run: owned } }),
+      db.payPalPayment.findFirst({ where: { lastCheckedAt: { not: null }, ...owned }, orderBy: { lastCheckedAt: 'desc' }, select: { lastCheckedAt: true } }),
+      db.payoutBatch.findFirst({ where: { lastCheckedAt: { not: null }, run: owned }, orderBy: { lastCheckedAt: 'desc' }, select: { lastCheckedAt: true } }),
+      db.payPalPayment.findFirst({ where: { nextCheckAt: { not: null }, ...owned }, orderBy: { nextCheckAt: 'asc' }, select: { nextCheckAt: true } }),
+      db.payoutBatch.findFirst({ where: { nextPollAt: { not: null }, run: owned }, orderBy: { nextPollAt: 'asc' }, select: { nextPollAt: true } }),
+    ]);
+    const latest = [lastPayment?.lastCheckedAt, lastBatch?.lastCheckedAt].filter((d): d is Date => !!d).sort((a, b) => b.getTime() - a.getTime())[0];
+    const next = [nextPayment?.nextCheckAt, nextBatch?.nextPollAt].filter((d): d is Date => !!d).sort((a, b) => a.getTime() - b.getTime())[0];
+    const byKind = Object.fromEntries(open.map((o) => [o.kind, o._count._all]));
+    return {
+      object: 'reconciliation_summary' as const,
+      open_issues: Object.values(byKind).reduce((a, b) => a + b, 0),
+      open_issues_by_kind: byKind,
+      watching: { payments, payout_batches: batches },
+      last_checked_at: latest?.toISOString() ?? null,
+      next_check_at: next?.toISOString() ?? null,
+    };
   };
   const runInBackground = (runId: string) => {
     void runAgent(db, planner(), writer(), runId).catch((err) => console.error(`agent run ${runId} crashed`, err));
@@ -469,6 +501,57 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       description: 'Queues the event for one endpoint — also one created after the event happened.',
       params: Id('event'), body: z.object({ endpoint_id: z.string().min(1).max(64) }), response: R.WebhookDelivery, status: 202, errors: [409],
       handler: async ({ user, params, body }) => R.deliveryOut(await resendEvent(db, user.id, params.id, body.endpoint_id)),
+    }),
+
+    // ---- reconciliation -------------------------------------------------------------------------
+    defineRoute({
+      method: 'get', path: '/reconciliation', operationId: 'getReconciliation', tag: 'Reconciliation', summary: 'How your money matches PayPal',
+      description: 'TracePay checks every payment and payout with PayPal on a schedule — not only when PayPal’s webhooks arrive — and lists what needs you.',
+      response: R.ReconciliationSummary,
+      handler: async ({ user }) => reconciliationSummary(user),
+    }),
+    defineRoute({
+      method: 'post', path: '/reconciliation/check', operationId: 'checkReconciliationNow', tag: 'Reconciliation', summary: 'Check everything in flight with PayPal now',
+      description: 'Normally this happens on its own schedule. Rate-limited.',
+      middleware: [quotas.reconcileNow()], body: Empty.optional(), response: R.ReconciliationCheck, errors: [503],
+      handler: async ({ user }) => {
+        const result = await reconcileOwnerNow(db, paypal(), user.id);
+        return { object: 'reconciliation_check' as const, checked_payments: result.payments, checked_payout_batches: result.batches, outcomes: result.outcomes, summary: await reconciliationSummary(user) };
+      },
+    }),
+    defineRoute({
+      method: 'get', path: '/reconciliation/issues', operationId: 'listReconciliationIssues', tag: 'Reconciliation', summary: 'List things that need attention',
+      query: ListQuery.extend({ status: z.enum(['open', 'resolved']).optional(), kind: z.string().max(60).optional() }),
+      response: R.ReconciliationIssueList,
+      handler: async ({ user, query }) => {
+        const rows = await db.reconciliationIssue.findMany({
+          where: { ownerId: user.id, ...(query.status ? { status: query.status } : {}), ...(query.kind ? { kind: query.kind } : {}), ...issueCursor(query.starting_after) },
+          orderBy: [{ openedAt: 'desc' }, { id: 'desc' }], take: query.limit + 1,
+        });
+        const page = rows.slice(0, query.limit);
+        const hasMore = rows.length > query.limit;
+        const last = page[page.length - 1];
+        return { object: 'list' as const, data: page.map(R.issueOut), has_more: hasMore, next_cursor: hasMore && last ? encodeCursor({ createdAt: last.openedAt, id: last.id }) : null };
+      },
+    }),
+    defineRoute({
+      method: 'get', path: '/reconciliation/issues/:id', operationId: 'getReconciliationIssue', tag: 'Reconciliation', summary: 'Retrieve an issue',
+      params: Id('issue'), response: R.ReconciliationIssue,
+      handler: async ({ user, params }) => {
+        const issue = await db.reconciliationIssue.findFirst({ where: { id: params.id, ownerId: user.id } });
+        if (!issue) throw new HttpError(404, 'Issue not found.');
+        return R.issueOut(issue);
+      },
+    }),
+    defineRoute({
+      method: 'post', path: '/reconciliation/issues/:id/resolve', operationId: 'resolveReconciliationIssue', tag: 'Reconciliation', summary: 'Mark an issue as handled',
+      description: 'Record what you did (for example “Refunded the contributors outside TracePay”). Resolving an issue that is already resolved changes nothing.',
+      params: Id('issue'), body: z.object({ resolution: z.string().trim().min(3).max(500) }), response: R.ReconciliationIssue,
+      handler: async ({ user, params, body }) => {
+        const issue = await db.$transaction((tx) => resolveIssueById(tx, { ownerId: user.id, issueId: params.id, userId: user.id, resolution: body.resolution }));
+        if (!issue) throw new HttpError(404, 'Issue not found.');
+        return R.issueOut(issue);
+      },
     }),
 
     // ---- webhook endpoints -----------------------------------------------------------------------

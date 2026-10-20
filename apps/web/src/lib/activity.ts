@@ -60,8 +60,32 @@ export function describeEvent(eventType: string, payload: Record<string, unknown
           : { text: 'Checked with PayPal: payments are still on their way.', tone: 'waiting' };
     case 'payout.submit_failed':
       return { text: 'Sending payments didn’t go through. It’s safe to try again.', tone: 'bad' };
-    case 'payout.duplicate_rejected':
-      return { text: 'PayPal blocked a duplicate payment, so nobody was paid twice.', tone: 'waiting' };
+    case 'payout.duplicate_detected':
+      return { text: 'PayPal already had these payments, so nobody was paid twice. Waiting for PayPal to confirm.', tone: 'waiting' };
+    case 'payout.retry_created':
+      return { text: 'The contributor payments that failed are being sent again.', tone: 'waiting' };
+    case 'settlement.failed':
+      return { text: 'Contributor shares couldn’t be worked out for a sale. It needs a look.', tone: 'bad' };
+    case 'settlement.recalculated':
+      return { text: 'Contributor shares were worked out again.', tone: 'neutral' };
+    case 'artifact.withdrawn':
+      return { text: 'A report was taken off sale.', tone: 'bad' };
+    case 'artifact.relisted':
+      return { text: 'A report was put back on sale.', tone: 'good' };
+    case 'build.rights_changed':
+      return { text: 'A report wasn’t written: a source’s license changed after it was checked.', tone: 'bad' };
+    case 'sale.blocked_before_capture':
+      return { text: 'A payment was stopped before charging the buyer: a license no longer allows the sale.', tone: 'bad' };
+    case 'sale.partially_refunded':
+      return { text: 'Part of a purchase was refunded.', tone: 'bad' };
+    case 'sale.checkout_expired':
+      return { text: 'A buyer didn’t finish paying. The checkout expired and nobody was charged.', tone: 'neutral' };
+    case 'sale.capture_declined':
+      return { text: 'A PayPal payment that was being processed was declined. Nobody was charged.', tone: 'bad' };
+    case 'reconciliation.issue_opened':
+      return { text: `Checked with PayPal: ${String(payload.title ?? 'something needs your attention')}.`, tone: 'bad' };
+    case 'reconciliation.issue_resolved':
+      return { text: payload.resolvedBy === 'auto' ? 'A problem cleared up by itself.' : 'You marked a problem as handled.', tone: 'good' };
     case 'license.requested':
       return { text: 'You asked a contributor for a license.', tone: 'neutral' };
     case 'license.offered':

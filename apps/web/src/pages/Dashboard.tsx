@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { AlertCircle, ArrowRight, CheckCircle2, Circle, Clock, FileText, HandCoins, PartyPopper, ShieldCheck, ShoppingCart, Users, Wallet } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
+import { NeedsAttention } from '../components/NeedsAttention';
 import { ErrorNote, Hash, Spinner } from '../components/ui';
 import { describeEvent, type ActivityTone } from '../lib/activity';
 import { api } from '../lib/api';
@@ -17,7 +18,13 @@ interface NextStep {
   cta?: { to: string; label: string };
 }
 
-function nextStep(d: Dashboard): NextStep {
+function nextStep(d: Dashboard, openIssues: number): NextStep {
+  if (openIssues > 0 && d.exceptions === 0)
+    return {
+      tone: 'attention',
+      title: openIssues === 1 ? 'One thing needs your attention' : `${openIssues} things need your attention`,
+      text: 'TracePay checked your payments with PayPal and found something a person should look at. It’s explained just below.',
+    };
   if (d.exceptions > 0)
     return { tone: 'attention', title: 'Something needs your attention', text: 'A refund or a failed payment was reported by PayPal. Take a look so contributors are treated fairly.', cta: { to: '/settlements', label: 'Review it' } };
   if (d.licenseOffers > 0)
@@ -56,11 +63,14 @@ export function DashboardPage() {
   const [technical, setTechnical] = useState(false);
   const q = useQuery({ queryKey: ['dashboard'], queryFn: () => api<Dashboard>('/dashboard'), refetchInterval: 5000 });
   const chain = useQuery({ queryKey: ['chain'], queryFn: () => api<{ ok: boolean; length?: number }>('/audit/verify-chain'), enabled: technical });
+  const isPublisher = user?.role === 'publisher' || user?.role === 'admin';
+  // Shared with the "Needs attention" panel (same query key: fetched once).
+  const recon = useQuery({ queryKey: ['reconciliation'], queryFn: () => api<{ open_issues: number }>('/v1/reconciliation'), refetchInterval: 30_000, enabled: isPublisher });
 
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
   const d = q.data!;
-  const next = nextStep(d);
+  const next = nextStep(d, recon.data?.open_issues ?? 0);
   const style = NEXT_STYLE[next.tone];
 
   const journey = [
@@ -96,6 +106,9 @@ export function DashboardPage() {
           </Link>
         )}
       </section>
+
+      {/* Reconciliation with PayPal: anything that needs a person */}
+      {isPublisher && <NeedsAttention />}
 
       {/* 2. Where you are */}
       <section>

@@ -6,6 +6,8 @@ import { PayPalApiError } from '../../integrations/paypal/client';
 import type { PayPalGateway } from '../../integrations/paypal/gateway';
 import type { Capture, Order } from '../../integrations/paypal/types';
 import { appendAudit } from '../audit/audit-log';
+import { openIssue, saleOwner } from '../reconciliation/issues';
+import { after, nextRefundCheck, notifyScheduled, ORDER_CHECK_DELAYS_MS, PENDING_CAPTURE_DELAYS_MS } from '../reconciliation/schedule';
 import { todayUtc } from '../builds/preflight.service';
 import { checkSaleRights, withdrawArtifact } from '../sales/rights.service';
 import { SettlementError } from '../settlements/engine';
@@ -63,6 +65,16 @@ export async function startCheckout(
       // Only take it off sale for lasting problems (revoked / expired / no longer permitted).
       if (rights.permanent) await withdrawArtifact(tx, artifact.id, rights.reasons, 'system');
       return { rights, sale: null };
+    }
+    // Older open checkouts of this buyer for this report are over: the buyer started again.
+    // (Reconciliation must never capture one of them as well — that would charge twice.)
+    if (args.buyerId) {
+      const stale = await tx.sale.findMany({ where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment' }, select: { id: true } });
+      for (const old of stale) {
+        await tx.sale.update({ where: { id: old.id }, data: { status: 'payment_failed' } });
+        await tx.payPalPayment.updateMany({ where: { saleId: old.id }, data: { nextCheckAt: null } });
+        await appendAudit(tx, { entityType: 'sale', entityId: old.id, artifactId: artifact.id, eventType: 'sale.checkout_expired', payload: { reason: 'The buyer started a new checkout.' } });
+      }
     }
     const s = await tx.sale.create({
       data: {
@@ -127,7 +139,10 @@ export async function startCheckout(
     throw new PaymentError(`PayPal order creation failed: ${(err as Error).message}`, 'provider');
   }
 
-  await db.payPalPayment.create({ data: { saleId: sale.id, orderId: order.id, orderStatus: order.status } });
+  // Reconciliation checks on it if the buyer never comes back (approved and closed the tab, or abandoned it).
+  const firstCheck = after(ORDER_CHECK_DELAYS_MS[0]!);
+  await db.payPalPayment.create({ data: { saleId: sale.id, orderId: order.id, orderStatus: order.status, nextCheckAt: firstCheck } });
+  notifyScheduled(firstCheck);
   const approveUrl = order.links.find((l) => l.rel === 'payer-action' || l.rel === 'approve')?.href ?? null;
   return { saleId: sale.id, orderId: order.id, approveUrl, amountCents: sale.amountCents };
 }
@@ -157,6 +172,22 @@ export async function captureSale(db: Db, paypal: PayPalGateway, saleId: string)
     return outcome(payment.sale.status, payment, run?.id ?? null, true);
   }
 
+  // Before taking money: the report must still be on sale, and the buyer must not
+  // already own it (e.g. bought through another checkout). Otherwise: no charge.
+  const artifact = await db.artifact.findUniqueOrThrow({ where: { id: payment.sale.artifactId }, select: { status: true } });
+  const ownedElsewhere = payment.sale.buyerId
+    ? await db.sale.count({ where: { artifactId: payment.sale.artifactId, buyerId: payment.sale.buyerId, status: 'captured', id: { not: saleId } } })
+    : 0;
+  if (artifact.status !== 'listed' || ownedElsewhere) {
+    const reason = ownedElsewhere ? 'The buyer already owns this report.' : 'The report was taken off sale.';
+    await db.$transaction(async (tx) => {
+      const moved = await tx.sale.updateMany({ where: { id: saleId, status: 'pending_payment' }, data: { status: 'payment_failed' } });
+      await tx.payPalPayment.update({ where: { saleId }, data: { nextCheckAt: null } });
+      if (moved.count) await appendAudit(tx, { entityType: 'sale', entityId: saleId, artifactId: payment.sale.artifactId, eventType: 'sale.blocked_before_capture', payload: { reasons: [reason] } });
+    });
+    throw new PaymentError(ownedElsewhere ? 'You already own this report, so this payment was not taken.' : 'This report is no longer for sale, so your payment was not taken.', 'not_for_sale');
+  }
+
   // Last check before taking money: if a license was revoked or expired while the
   // buyer was in the PayPal window, don't capture at all — the buyer is never charged.
   if (payment.sale.termsSnapshot) {
@@ -165,6 +196,7 @@ export async function captureSale(db: Db, paypal: PayPalGateway, saleId: string)
       await db.$transaction(async (tx) => {
         if (rights.permanent) await withdrawArtifact(tx, payment.sale.artifactId, rights.reasons, 'system');
         await tx.sale.update({ where: { id: saleId }, data: { status: 'payment_failed' } });
+        await tx.payPalPayment.update({ where: { saleId }, data: { nextCheckAt: null } });
         await appendAudit(tx, { entityType: 'sale', entityId: saleId, artifactId: payment.sale.artifactId, eventType: 'sale.blocked_before_capture', payload: { reasons: rights.reasons } });
       });
       throw new PaymentError('This report can no longer be sold, so your payment was not taken.', 'not_for_sale');
@@ -201,7 +233,7 @@ export async function applyCapture(
   saleId: string,
   order: Pick<Order, 'id' | 'status' | 'payer'> | null,
   capture: Capture,
-  via: 'api' | 'webhook',
+  via: 'api' | 'webhook' | 'reconciliation',
 ): Promise<CaptureOutcome> {
   return db.$transaction(async (tx) => {
     // Row lock: concurrent capture response + webhook serialise here.
@@ -212,6 +244,32 @@ export async function applyCapture(
     // Only a sale still waiting for payment can move. A captured, refunded or
     // reversed sale never goes back — e.g. a COMPLETED webhook redelivered after
     // the refund must not resurrect it.
+    // PayPal took money for a sale TracePay had already closed (a checkout that looked
+    // expired, then completed after all). Never drop it: record it, flag it, watch it.
+    if (sale.status === 'payment_failed' && (capture.status === 'COMPLETED' || capture.status === 'PENDING') && payment.captureId === null) {
+      const p = await tx.payPalPayment.update({
+        where: { saleId },
+        data: {
+          captureId: capture.id,
+          captureStatus: capture.status,
+          capturedCents: decimalToCents(capture.amount.value),
+          rawCapture: json(capture),
+          nextCheckAt: nextRefundCheck(new Date()),
+          checkCount: 0,
+        },
+      });
+      await tx.sale.update({ where: { id: saleId }, data: { status: 'exception' } });
+      await appendAudit(tx, {
+        entityType: 'sale',
+        entityId: saleId,
+        artifactId: sale.artifactId,
+        eventType: 'sale.capture_exception',
+        payload: { via, captureId: capture.id, captureStatus: capture.status, problems: ['captured after the checkout was closed'] },
+      });
+      const owner = await saleOwner(tx, saleId);
+      if (owner) await openIssue(tx, { ownerId: owner.ownerId, kind: 'capture_after_close', subjectType: 'sale', subjectId: saleId, artifactId: owner.artifactId, data: { captureId: capture.id } });
+      return outcome('exception', p, null, false);
+    }
     if (sale.status !== 'pending_payment') {
       const run = await tx.settlementRun.findUnique({ where: { saleId }, select: { id: true } });
       return outcome(sale.status, payment, run?.id ?? null, true);
@@ -238,6 +296,11 @@ export async function applyCapture(
         paypalFeeCents: feeCents,
         payerEmail: order?.payer?.email_address ?? payment.payerEmail,
         rawCapture: json(capture),
+        // Reconciliation from here: watch a completed sale for refunds made in PayPal,
+        // follow a pending capture until it settles, leave an exception to a person.
+        nextCheckAt:
+          status === 'captured' ? nextRefundCheck(new Date()) : status === 'pending_payment' ? after(PENDING_CAPTURE_DELAYS_MS[0]!) : null,
+        checkCount: 0,
       },
     });
     await tx.sale.update({ where: { id: saleId }, data: { status } });
@@ -259,6 +322,19 @@ export async function applyCapture(
     });
 
     let runId: string | null = null;
+    if (status === 'exception') {
+      const owner = await saleOwner(tx, saleId);
+      if (owner) {
+        await openIssue(tx, {
+          ownerId: owner.ownerId,
+          kind: refundedAlready ? (capture.status === 'PARTIALLY_REFUNDED' ? 'sale_partially_refunded' : 'sale_refunded') : 'capture_mismatch',
+          subjectType: 'sale',
+          subjectId: saleId,
+          artifactId: owner.artifactId,
+          data: { problems, captureId: capture.id },
+        });
+      }
+    }
     if (status === 'captured') {
       // The money is already captured at PayPal: recording it must never depend on the
       // settlement succeeding. A calculation problem becomes a settlement exception instead.
@@ -309,7 +385,7 @@ export class RetryLaterError extends Error {}
  */
 export async function markSaleReversed(
   tx: Tx,
-  input: { captureId: string; saleIdHint: string | null; eventType: string; refundedCents: number | null },
+  input: { captureId: string; saleIdHint: string | null; eventType: string; refundedCents: number | null; partial?: boolean },
 ): Promise<string | null> {
   let payment = await tx.payPalPayment.findUnique({ where: { captureId: input.captureId }, include: { sale: true } });
   if (!payment && input.saleIdHint) payment = await tx.payPalPayment.findUnique({ where: { saleId: input.saleIdHint }, include: { sale: true } });
@@ -326,8 +402,19 @@ export async function markSaleReversed(
   if (run) await tx.$queryRaw`SELECT id FROM "SettlementRun" WHERE id = ${run.id} FOR UPDATE`;
 
   const isRefund = input.eventType.endsWith('REFUNDED');
-  const partial = isRefund && input.refundedCents !== null && payment.capturedCents !== null && input.refundedCents < payment.capturedCents;
-  await tx.sale.update({ where: { id: payment.saleId }, data: { status: isRefund && !partial ? 'refunded' : 'exception' } });
+  const partial =
+    isRefund && (input.partial ?? (input.refundedCents !== null && payment.capturedCents !== null && input.refundedCents < payment.capturedCents));
+  const target = isRefund && !partial ? 'refunded' : 'exception';
+  const kind = isRefund ? (partial ? 'sale_partially_refunded' : 'sale_refunded') : 'sale_reversed';
+  // Already recorded (a webhook and reconciliation can both notice the same refund): nothing new to say.
+  if (payment.sale.status === target && (await tx.reconciliationIssue.count({ where: { subjectId: payment.saleId, kind } }))) return payment.saleId;
+  await tx.sale.update({ where: { id: payment.saleId }, data: { status: target } });
+  // A full refund or reversal ends the watch (a person decides now). After a partial
+  // refund keep watching: the rest may be refunded too.
+  await tx.payPalPayment.update({
+    where: { saleId: payment.saleId },
+    data: { nextCheckAt: target === 'exception' && isRefund ? nextRefundCheck(payment.createdAt, new Date()) : null },
+  });
   if (run && run.status !== 'exception') {
     await tx.settlementRun.update({ where: { id: run.id }, data: { status: 'exception' } });
   }
@@ -345,5 +432,34 @@ export async function markSaleReversed(
       policy: 'Settlement flagged as exception. Contributor payouts already sent are reconciled under the license agreement.',
     },
   });
+  const owner = await saleOwner(tx, payment.saleId);
+  if (owner) {
+    await openIssue(tx, {
+      ownerId: owner.ownerId,
+      kind,
+      subjectType: 'sale',
+      subjectId: payment.saleId,
+      artifactId: owner.artifactId,
+      data: { captureId: input.captureId, refundedCents: input.refundedCents, settlementId: run?.id ?? null, via: input.eventType },
+    });
+  }
   return payment.saleId;
+}
+
+/**
+ * A capture PayPal held as pending and then declined (reported by reconciliation or
+ * by PayPal's DENIED webhook): no money moved, so the sale simply didn't happen.
+ * Returns false when the sale wasn't waiting for that capture.
+ */
+export async function declineCapture(db: Db, saleId: string, capture: { id: string; status: string }): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Sale" WHERE id = ${saleId} FOR UPDATE`;
+    const moved = await tx.sale.updateMany({ where: { id: saleId, status: 'pending_payment' }, data: { status: 'payment_failed' } });
+    if (!moved.count) return false;
+    await tx.payPalPayment.update({ where: { saleId }, data: { nextCheckAt: null, captureStatus: capture.status } });
+    const owner = await saleOwner(tx, saleId);
+    await appendAudit(tx, { entityType: 'sale', entityId: saleId, artifactId: owner?.artifactId ?? null, eventType: 'sale.capture_declined', payload: { captureId: capture.id, status: capture.status } });
+    if (owner) await openIssue(tx, { ownerId: owner.ownerId, kind: 'capture_declined', subjectType: 'sale', subjectId: saleId, artifactId: owner.artifactId, data: { captureId: capture.id } });
+    return true;
+  });
 }

@@ -68,6 +68,7 @@ const TAGS = [
   { name: 'Sources & licenses', description: 'Licensable sources, and the two-party license lifecycle (request → offer → accept).' },
   { name: 'Builds & reports', description: 'License preflight, citation-checked generation, reports, receipts and provenance.' },
   { name: 'Sales & settlements', description: 'PayPal sales of your reports, revenue splits and PayPal payouts.' },
+  { name: 'Reconciliation', description: 'TracePay checks payments and payouts with PayPal on a schedule and lists what needs you.' },
   { name: 'Publisher Agent', description: 'The bounded agent that plans a report, fixes license problems and asks before risky steps.' },
   { name: 'Events & webhooks', description: 'The event log and signed webhook deliveries.' },
 ];

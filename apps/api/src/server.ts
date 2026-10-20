@@ -8,6 +8,8 @@ import { pickPlanner } from './modules/agent/planners';
 import { loadSigningKeys, type SigningKeys } from './modules/audit/signing';
 import { pickWriter } from './modules/generation/writers';
 import { recoverStaleWork, STALE_WORK_MS } from './modules/maintenance/recovery';
+import { ReconciliationWorker } from './modules/reconciliation/sync';
+import { setReconcileListener } from './modules/reconciliation/schedule';
 import { setOutboxListener } from './modules/platform/events';
 import { pruneWebhookData, WebhookDispatcher, type WebhookDeps } from './modules/platform/webhooks';
 import { SecretBox } from './modules/platform/webhook-crypto';
@@ -44,9 +46,14 @@ if (env.WEBHOOK_ALLOW_PRIVATE_TARGETS && env.NODE_ENV === 'production') {
 // webhook retries going while the API is in use.
 let lastActivity = Date.now();
 let dispatcherRef: { kick: (r: 'activity') => void } | null = null;
+// Reconciliation with PayPal (Phase D): checks payouts and payments on a schedule,
+// whether or not PayPal's webhooks arrive.
+const reconciler = new ReconciliationWorker(() => (paypalConfigured ? { db: db(), paypal: (paypal ??= PayPalClient.fromEnv()) } : null));
+setReconcileListener((at) => reconciler.scheduledFor(at));
 const onActivity = () => {
   lastActivity = Date.now();
   dispatcherRef?.kick('activity');
+  reconciler.kick();
 };
 
 const app = createApp({
@@ -99,6 +106,7 @@ const dispatcher = new WebhookDispatcher(webhooks);
 dispatcherRef = dispatcher;
 setOutboxListener(() => dispatcher.kick('event'));
 dispatcher.kick('activity');
+reconciler.kick();
 const sweep = () =>
   Promise.all([
     recoverStaleWork(db()).then((r) => (r.agentRuns || r.builds) && logger.warn(r, 'recovered interrupted work')),
@@ -126,7 +134,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     logger.info({ signal }, 'shutting down');
     server.close(async () => {
       // Let in-flight webhook sends finish and be recorded (bounded by the hard exit below).
-      await dispatcher.stop().catch(() => undefined);
+      await Promise.all([dispatcher.stop().catch(() => undefined), reconciler.stop().catch(() => undefined)]);
       await db().$disconnect().catch(() => undefined);
       process.exit(0);
     });

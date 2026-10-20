@@ -421,6 +421,9 @@ export const Sale = named(
       .object({ order_id: z.string(), capture_id: z.string().nullable(), capture_status: z.string().nullable(), captured_cents: z.number().int().nullable() })
       .nullable(),
     settlement_id: z.string().nullable(),
+    reconciliation: z
+      .object({ last_checked_at: ts.nullable(), next_check_at: ts.nullable() })
+      .meta({ description: 'When TracePay last asked PayPal about this payment, and when it will next (null = nothing left to check).' }),
     created: ts,
   }),
   'A purchase of one of your reports, paid with PayPal.',
@@ -430,7 +433,7 @@ export const SaleList = listOf('Sale', Sale);
 export const saleSelect = {
   id: true, status: true, amountCents: true, currency: true, createdAt: true,
   artifact: { select: { id: true, title: true } },
-  payment: { select: { orderId: true, captureId: true, captureStatus: true, capturedCents: true } },
+  payment: { select: { orderId: true, captureId: true, captureStatus: true, capturedCents: true, lastCheckedAt: true, nextCheckAt: true } },
   settlement: { select: { id: true } },
 } as const;
 
@@ -441,7 +444,7 @@ export function saleOut(s: {
   currency: string;
   createdAt: Date;
   artifact: { id: string; title: string };
-  payment: { orderId: string; captureId: string | null; captureStatus: string | null; capturedCents: number | null } | null;
+  payment: { orderId: string; captureId: string | null; captureStatus: string | null; capturedCents: number | null; lastCheckedAt: Date | null; nextCheckAt: Date | null } | null;
   settlement: { id: string } | null;
 }): z.infer<typeof Sale> {
   return {
@@ -455,6 +458,7 @@ export function saleOut(s: {
       ? { order_id: s.payment.orderId, capture_id: s.payment.captureId, capture_status: s.payment.captureStatus, captured_cents: s.payment.capturedCents }
       : null,
     settlement_id: s.settlement?.id ?? null,
+    reconciliation: { last_checked_at: iso(s.payment?.lastCheckedAt), next_check_at: iso(s.payment?.nextCheckAt) },
     created: s.createdAt.toISOString(),
   };
 }
@@ -491,7 +495,16 @@ export const Settlement = named(
       }),
     ),
     payout_batches: z.array(
-      z.object({ id, attempt: z.number().int(), sender_batch_id: z.string(), paypal_batch_id: z.string().nullable(), status: z.string(), last_checked_at: ts.nullable(), created: ts }),
+      z.object({
+        id,
+        attempt: z.number().int(),
+        sender_batch_id: z.string(),
+        paypal_batch_id: z.string().nullable(),
+        status: z.string(),
+        last_checked_at: ts.nullable(),
+        next_check_at: ts.nullable().meta({ description: 'When TracePay will next ask PayPal about this batch (null = every payout is final).' }),
+        created: ts,
+      }),
     ),
     created: ts,
   }),
@@ -531,7 +544,7 @@ export function settlementOut(
       note: string | null;
       payoutItem: { status: string; paypalItemId: string | null; transactionId: string | null; errorName: string | null } | null;
     }[];
-    batches: { id: string; attempt: number; senderBatchId: string; paypalBatchId: string | null; status: string; lastCheckedAt: Date | null; createdAt: Date }[];
+    batches: { id: string; attempt: number; senderBatchId: string; paypalBatchId: string | null; status: string; lastCheckedAt: Date | null; nextPollAt: Date | null; createdAt: Date }[];
   },
   names: Map<string, string>,
 ): z.infer<typeof Settlement> {
@@ -569,6 +582,7 @@ export function settlementOut(
       paypal_batch_id: b.paypalBatchId,
       status: b.status,
       last_checked_at: iso(b.lastCheckedAt),
+      next_check_at: iso(b.nextPollAt),
       created: b.createdAt.toISOString(),
     })),
     created: r.createdAt.toISOString(),
@@ -773,3 +787,80 @@ export function deliveryOut(d: DeliveryRow): z.infer<typeof WebhookDelivery> {
 }
 
 export const Deleted = named('Deleted', z.object({ id, object: z.string(), deleted: z.literal(true) }));
+
+// ---- reconciliation -------------------------------------------------------------------------
+
+export const ReconciliationIssue = named(
+  'ReconciliationIssue',
+  z.object({
+    id,
+    object: z.literal('reconciliation_issue'),
+    kind: z.string().meta({ description: 'e.g. `sale_refunded`, `payout_failed`, `payout_unclaimed`, `payout_unconfirmed`, `capture_mismatch`.' }),
+    title: z.string(),
+    detail: z.string().meta({ description: 'What happened and what to do, in plain language.' }),
+    subject: z.object({ type: z.enum(['sale', 'settlement', 'payout_batch']), id: z.string() }),
+    status: z.enum(['open', 'resolved']),
+    data: z.record(z.string(), z.unknown()),
+    opened: ts,
+    resolved_at: ts.nullable(),
+    resolved_by: z.enum(['auto', 'user']).nullable().meta({ description: '`auto`: the cause cleared by itself (e.g. a retried payout succeeded).' }),
+    resolution: z.string().nullable(),
+  }),
+  'Something about money that needs a person — found by reconciliation with PayPal or by its webhooks.',
+);
+export const ReconciliationIssueList = listOf('ReconciliationIssue', ReconciliationIssue);
+
+export function issueOut(i: {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string;
+  subjectType: string;
+  subjectId: string;
+  status: string;
+  data: unknown;
+  openedAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: string | null;
+  resolution: string | null;
+}): z.infer<typeof ReconciliationIssue> {
+  return {
+    id: i.id,
+    object: 'reconciliation_issue',
+    kind: i.kind,
+    title: i.title,
+    detail: i.detail,
+    subject: { type: i.subjectType as 'sale' | 'settlement' | 'payout_batch', id: i.subjectId },
+    status: i.status as 'open' | 'resolved',
+    data: (i.data ?? {}) as Record<string, unknown>,
+    opened: i.openedAt.toISOString(),
+    resolved_at: iso(i.resolvedAt),
+    resolved_by: i.resolvedBy === null ? null : i.resolvedBy === 'auto' ? 'auto' : 'user',
+    resolution: i.resolution,
+  };
+}
+
+export const ReconciliationSummary = named(
+  'ReconciliationSummary',
+  z.object({
+    object: z.literal('reconciliation_summary'),
+    open_issues: z.number().int(),
+    open_issues_by_kind: z.record(z.string(), z.number().int()),
+    watching: z.object({ payments: z.number().int(), payout_batches: z.number().int() }).meta({ description: 'Items TracePay is still checking with PayPal.' }),
+    last_checked_at: ts.nullable(),
+    next_check_at: ts.nullable(),
+  }),
+  'How your money matches PayPal: what is still being checked and what needs you.',
+);
+
+export const ReconciliationCheck = named(
+  'ReconciliationCheck',
+  z.object({
+    object: z.literal('reconciliation_check'),
+    checked_payments: z.number().int(),
+    checked_payout_batches: z.number().int(),
+    outcomes: z.array(z.string()),
+    summary: ReconciliationSummary,
+  }),
+  'The result of checking everything still in flight with PayPal right now.',
+);

@@ -12,7 +12,7 @@ import type { Tx } from '../../db';
  * addresses or raw PayPal payloads. Receivers fetch full objects through the API.
  */
 
-export type ObjectType = 'build' | 'report' | 'sale' | 'settlement' | 'payout_batch' | 'license' | 'agent_run' | 'webhook_endpoint';
+export type ObjectType = 'build' | 'report' | 'sale' | 'settlement' | 'payout_batch' | 'license' | 'agent_run' | 'webhook_endpoint' | 'reconciliation_issue';
 
 interface EventSpec {
   type: string;
@@ -64,6 +64,22 @@ const CATALOG: Record<string, EventSpec> = {
   'license.request_declined': { type: 'license.request_declined', object: 'license', fields: ['reason'], description: 'The contributor declined your request.' },
   'license.revoked': { type: 'license.revoked', object: 'license', fields: ['reason', 'reportsWithdrawn'], description: 'The contributor revoked a license. Reports using it are taken off sale; past settlements are unaffected.' },
 
+  'sale.checkout_expired': { type: 'sale.expired', object: 'sale', fields: ['reason'], description: 'A checkout was never completed and has expired. The buyer wasn’t charged.' },
+  'sale.capture_declined': { type: 'sale.declined', object: 'sale', fields: ['captureId'], description: 'A pending payment was declined by PayPal. The buyer wasn’t charged.' },
+
+  'reconciliation.issue_opened': {
+    type: 'reconciliation.issue_opened',
+    object: 'reconciliation_issue',
+    fields: ['kind', 'subjectType', 'subjectId', 'title'],
+    description: 'TracePay found something about money that needs a person (a refund made in PayPal, an undeliverable payout…).',
+  },
+  'reconciliation.issue_resolved': {
+    type: 'reconciliation.issue_resolved',
+    object: 'reconciliation_issue',
+    fields: ['kind', 'resolvedBy', 'resolution'],
+    description: 'A “needs attention” issue was resolved — automatically once its cause cleared, or by you.',
+  },
+
   'agent.started': { type: 'agent_run.started', object: 'agent_run', description: 'A Publisher Agent run started.' },
   'agent.awaiting_approval': { type: 'agent_run.awaiting_approval', object: 'agent_run', description: 'The agent paused for your approval.' },
   'agent.replacement_approved': { type: 'agent_run.approval_given', object: 'agent_run', description: 'You approved the agent’s proposal.' },
@@ -83,6 +99,7 @@ const AUDIT_ENTITY_TO_OBJECT: Record<string, ObjectType> = {
   payout_batch: 'payout_batch',
   license: 'license',
   agent_run: 'agent_run',
+  reconciliation_issue: 'reconciliation_issue',
 };
 
 /** Every public event type with its description, for docs and endpoint validation. */

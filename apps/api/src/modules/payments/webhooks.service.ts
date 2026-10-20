@@ -3,8 +3,8 @@ import type { Db } from '../../db';
 import type { PayPalGateway } from '../../integrations/paypal/gateway';
 import type { Capture, WebhookEvent, WebhookVerificationHeaders } from '../../integrations/paypal/types';
 import { decimalToCents } from '@tracepay/shared';
-import { applyCapture, markSaleReversed } from './payments.service';
-import { refreshPayouts } from '../settlements/settlement.service';
+import { applyCapture, markSaleReversed, declineCapture } from './payments.service';
+import { refreshBatch } from '../settlements/settlement.service';
 
 export type WebhookResult =
   | { status: 'rejected'; reason: string }
@@ -83,9 +83,24 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
       const result = await applyCapture(db, saleId, null, capture, 'webhook');
       return result.alreadyCaptured ? `noop: sale ${saleId} already captured` : `sale ${saleId} → ${result.saleStatus}`;
     }
-    case 'PAYMENT.CAPTURE.REFUNDED':
-    case 'PAYMENT.CAPTURE.REVERSED':
     case 'PAYMENT.CAPTURE.DENIED': {
+      // A denied capture of a payment still pending (or already closed) is a decline: the
+      // buyer was never charged — not a reversal of money we held.
+      const capture = event.resource as Capture;
+      const paid = await db.payPalPayment.findUnique({ where: { captureId: capture.id }, include: { sale: true } });
+      const saleId = paid?.saleId ?? (await saleIdForCapture(db, capture));
+      if (!saleId) return 'ignored: capture not linked to a TracePay sale';
+      const sale = await db.sale.findUniqueOrThrow({ where: { id: saleId }, select: { status: true } });
+      if (sale.status === 'pending_payment') {
+        await declineCapture(db, saleId, capture);
+        return `sale ${saleId} declined`;
+      }
+      if (sale.status === 'payment_failed') return `noop: sale ${saleId} already closed`;
+      const flagged = await db.$transaction((tx) => markSaleReversed(tx, { captureId: capture.id, saleIdHint: capture.custom_id ?? null, eventType: event.event_type, refundedCents: null }));
+      return flagged ? `sale ${flagged} flagged (${event.event_type})` : 'ignored: not a TracePay sale';
+    }
+    case 'PAYMENT.CAPTURE.REFUNDED':
+    case 'PAYMENT.CAPTURE.REVERSED': {
       const resource = event.resource as Capture & { links?: Array<{ rel: string; href: string }> };
       const isRefund = event.event_type === 'PAYMENT.CAPTURE.REFUNDED';
       // A refund resource's id is the refund id; the capture id is in its "up" link.
@@ -120,8 +135,8 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
           await db.payoutBatch.update({ where: { id: batch.id }, data: { paypalBatchId, status: 'PENDING' } });
           await db.payoutItem.updateMany({ where: { batchId: batch.id, status: 'SUBMITTING' }, data: { status: 'PENDING' } });
         }
-        // Never trust the webhook payload for status — re-read it from PayPal.
-        const res = await refreshPayouts(db, paypal, batch.runId);
+        // Never trust the webhook payload for status — re-read THIS batch (any attempt) from PayPal.
+        const res = await refreshBatch(db, paypal, batch.id);
         return `payout batch ${paypalBatchId ?? senderBatchId} refreshed → ${res.runStatus}`;
       }
       return `ignored: ${event.event_type}`;

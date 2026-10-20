@@ -50,5 +50,7 @@ export const quotas = {
   /** Each makes an outbound HTTP request to a customer URL: keep TracePay from being used as a request cannon. */
   webhookTest: once('webhookTest', 'webhook-test', () => perUser('webhook-test', 30, 10 * 60_000, 'Too many test events. Try again in a few minutes.')),
   webhookResend: once('webhookResend', 'webhook-resend', () => perUser('webhook-resend', 300, HOUR, 'Too many redeliveries this hour.')),
+  /** Each checks everything in flight with PayPal: a handful of calls. */
+  reconcileNow: once('reconcileNow', 'reconcile', () => perUser('reconcile', 10, 10 * 60_000, 'You can check with PayPal up to 10 times every 10 minutes.')),
   webhookManage: once('webhookManage', 'webhook-manage', () => perUser('webhook-manage', 60, HOUR, 'Too many webhook endpoint changes this hour.')),
 };
