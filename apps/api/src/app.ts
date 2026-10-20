@@ -102,6 +102,7 @@ export function createApp(deps: AppDeps) {
     if (proxySecret && typeof presented === 'string') {
       const got = Buffer.from(presented);
       if (got.length === proxySecret.length && timingSafeEqual(got, proxySecret)) {
+        (req as unknown as { viaTrustedProxy?: boolean }).viaTrustedProxy = true;
         const reported = req.headers['x-vercel-forwarded-for'] ?? req.headers['x-real-ip'];
         const ip = (Array.isArray(reported) ? reported[0] : reported)?.split(',')[0]?.trim() ?? '';
         if (isIP(ip)) Object.defineProperty(req, 'ip', { value: ip, configurable: true, enumerable: true });
@@ -151,6 +152,12 @@ export function createApp(deps: AppDeps) {
     '/api/v1',
     platformApi(deps, { serverUrl: `${deps.config.apiBaseUrl.replace(/\/$/, '')}/api/v1`, rateLimitPerMinute: deps.config.apiRateLimitPerMinute, validateResponses: deps.config.validateResponses ?? false }),
   );
+  // TEMPORARY diagnostic (to be removed): which client-IP headers arrive through our proxy.
+  app.get('/api/_diag/client-ip', (req, res) => {
+    if (!(req as unknown as { viaTrustedProxy?: boolean }).viaTrustedProxy) return res.status(404).json({ error: 'Not found.' });
+    const pick = (h: string) => req.headers[h] ?? null;
+    res.json({ ip: req.ip, xff: pick('x-forwarded-for'), xri: pick('x-real-ip'), xvff: pick('x-vercel-forwarded-for'), cf: pick('cf-connecting-ip') });
+  });
   app.use('/api', systemRoutes(deps));
   app.use('/api', authRoutes(deps));
   app.use('/api', buildRoutes(deps));
