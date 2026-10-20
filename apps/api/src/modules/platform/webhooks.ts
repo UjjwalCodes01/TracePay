@@ -179,11 +179,17 @@ const PER_ENDPOINT_PER_PASS = 2;
  */
 async function claimDue(db: Db, now: Date, limit: number): Promise<Claim[]> {
   const lease = new Date(now.getTime() + LEASE_MS);
+  // The availability conditions are repeated on the row-locking SELECT (and the UPDATE):
+  // Postgres re-checks only the locking query's own WHERE against the latest row
+  // version, so a row another worker just leased must fail it there — the inner
+  // (non-locking) ranking subquery may have seen it before that lease committed.
   const rows = await db.$queryRaw<{ id: string }[]>`
     UPDATE "WebhookDelivery" SET "lockedUntil" = ${lease}, "updatedAt" = ${now}
-    WHERE id IN (
+    WHERE status = 'pending' AND ("lockedUntil" IS NULL OR "lockedUntil" < ${now})
+      AND id IN (
       SELECT id FROM "WebhookDelivery"
-      WHERE id IN (
+      WHERE status = 'pending' AND "nextAttemptAt" <= ${now} AND ("lockedUntil" IS NULL OR "lockedUntil" < ${now})
+        AND id IN (
         SELECT id FROM (
           SELECT id, "nextAttemptAt", row_number() OVER (PARTITION BY "endpointId" ORDER BY "nextAttemptAt", id) AS rn
           FROM "WebhookDelivery"

@@ -250,19 +250,24 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       await relist();
     });
 
-    it('never sends the same delivery twice, even with concurrent workers', async () => {
-      const ep = await createEndpoint(['report.withdrawn', 'report.relisted']);
-      receiver.respond((_req, res) => setTimeout(() => res.writeHead(200).end('ok'), 100));
-      await withdraw();
-      await relist();
-      await withdraw();
-      await relist();
-      await Promise.all([deliverDue(deps), deliverDue(deps), deliverDue(deps)]);
-      const ds = await deliveries(ep.id);
-      expect(ds).toHaveLength(4);
-      expect(ds.every((d) => d.status === 'succeeded' && d.attempts === 1)).toBe(true);
-      expect(receiver.received).toHaveLength(4);
-      expect(new Set(receiver.received.map((r) => r.headers['tracepay-delivery-id'])).size).toBe(4);
+    it('never sends the same delivery twice, even with many concurrent workers', async () => {
+      // A race: repeat it, with more workers than deliveries, so a lucky interleaving can't hide it.
+      for (let round = 0; round < 5; round++) {
+        receiver.reset();
+        await db().webhookEndpoint.deleteMany({ where: { ownerId: 'user_atlas' } });
+        const ep = await createEndpoint(['report.withdrawn', 'report.relisted'], `/race-${round}`);
+        receiver.respond((_req, res) => setTimeout(() => res.writeHead(200).end('ok'), 30));
+        await withdraw();
+        await relist();
+        await withdraw();
+        await relist();
+        await Promise.all(Array.from({ length: 8 }, () => deliverDue(deps, { batchSize: 1 })));
+        const ds = await deliveries(ep.id);
+        expect(ds).toHaveLength(4);
+        expect(ds.every((d) => d.status === 'succeeded' && d.attempts === 1), `round ${round}`).toBe(true);
+        expect(receiver.received, `round ${round}`).toHaveLength(4);
+        expect(new Set(receiver.received.map((r) => r.headers['tracepay-delivery-id'])).size).toBe(4);
+      }
     });
 
     it('honours leases: a claimed delivery is left alone until its lease expires', async () => {

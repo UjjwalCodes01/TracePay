@@ -499,8 +499,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('reconciliation with PayPal (integ
         paypal.approve(c.orderId);
         return c;
       }));
-      const results = await Promise.all([1, 2, 3].map(() => reconcileDue(db(), paypal, { now: later(16 * MIN) })));
+      const results = await Promise.all(Array.from({ length: 8 }, () => reconcileDue(db(), paypal, { now: later(16 * MIN) })));
       expect(results.reduce((n, r) => n + r.payments, 0)).toBe(3);
+      expect(paypal.calls.captureOrder).toBe(3);
       for (const c of sales) expect(await db().settlementRun.count({ where: { saleId: c.saleId } })).toBe(1);
     });
 
