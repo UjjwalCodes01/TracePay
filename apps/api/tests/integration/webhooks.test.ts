@@ -500,11 +500,14 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       await db().agentRun.updateMany({ where: { publisherId: 'user_atlas', status: 'running' }, data: { status: 'failed' } });
       const planner = { name: 'stub', model: 'none' } as unknown as AgentPlanner;
       const input = { publisherId: 'user_atlas', goal: 'Concurrency test goal.', intent: {} as never, selection: ['x'], policy: { autoReplace: false } };
-      const results = await Promise.allSettled([1, 2, 3, 4].map(() => createRunWithinCap(db(), planner, input, 2)));
-      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
-      expect(results.filter((r) => r.status === 'rejected' && r.reason instanceof TooManyRunsError)).toHaveLength(2);
-      expect(await db().agentRun.count({ where: { publisherId: 'user_atlas', status: 'running' } })).toBe(2);
-      await db().agentRun.updateMany({ where: { publisherId: 'user_atlas', status: 'running' }, data: { status: 'failed' } });
+      // A race: repeat it so a lucky interleaving can't hide a bug.
+      for (let round = 0; round < 5; round++) {
+        const results = await Promise.allSettled([1, 2, 3, 4].map(() => createRunWithinCap(db(), planner, input, 2)));
+        expect(results.filter((r) => r.status === 'fulfilled'), `round ${round}`).toHaveLength(2);
+        expect(results.filter((r) => r.status === 'rejected' && r.reason instanceof TooManyRunsError)).toHaveLength(2);
+        expect(await db().agentRun.count({ where: { publisherId: 'user_atlas', status: 'running' } })).toBe(2);
+        await db().agentRun.updateMany({ where: { publisherId: 'user_atlas', status: 'running' }, data: { status: 'failed' } });
+      }
     });
 
     it('only signed-in requests count as activity (scanners don’t wake the database)', async () => {

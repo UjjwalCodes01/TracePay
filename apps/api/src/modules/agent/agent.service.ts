@@ -1,6 +1,6 @@
 import type { BuildIntent } from '@tracepay/shared';
 import { Prisma } from '../../generated/prisma/client';
-import type { Db } from '../../db';
+import type { Db, Tx } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import type { ReportWriter } from '../generation/writers';
 import type { AgentMessage, AgentPlanner } from './planners';
@@ -35,34 +35,26 @@ export interface StartRunInput {
 export class TooManyRunsError extends Error {}
 
 /**
- * Starts a run unless the publisher already has `max` running. Race-safe without
- * locks: after creating the run, only runs created BEFORE it count, so of several
- * simultaneous starts exactly the ones within the cap survive; the rest are
- * recorded as not started.
+ * Starts a run unless the publisher already has `max` running. Counting and
+ * inserting happen in ONE transaction under a per-publisher advisory lock, so
+ * simultaneous starts are serialised: each sees the runs committed before it.
+ * (Counting "runs created earlier" after the fact is not enough — a run with an
+ * earlier timestamp may not be committed yet.)
  */
 export async function createRunWithinCap(db: Db, planner: AgentPlanner, input: StartRunInput, max: number) {
-  const active = await db.agentRun.count({ where: { publisherId: input.publisherId, status: 'running' } });
-  if (active >= max) throw new TooManyRunsError(`You already have ${active} agent runs in progress. Wait for one to finish.`);
-  const run = await createRun(db, planner, input);
-  const earlier = await db.agentRun.count({
-    where: {
-      publisherId: input.publisherId,
-      status: 'running',
-      id: { not: run.id },
-      OR: [{ createdAt: { lt: run.createdAt } }, { createdAt: run.createdAt, id: { lt: run.id } }],
-    },
+  return db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent-runs:${input.publisherId}`}))`;
+    const active = await tx.agentRun.count({ where: { publisherId: input.publisherId, status: 'running' } });
+    if (active >= max) throw new TooManyRunsError(`You already have ${active} agent runs in progress. Wait for one to finish.`);
+    return insertRun(tx, planner, input);
   });
-  if (earlier >= max) {
-    await db.$transaction(async (tx) => {
-      await tx.agentRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), summary: 'Not started: too many runs were already in progress.' } });
-      await appendAudit(tx, { entityType: 'agent_run', entityId: run.id, eventType: 'agent.failed', payload: { error: 'too many active runs' } });
-    });
-    throw new TooManyRunsError(`You already have ${earlier} agent runs in progress. Wait for one to finish.`);
-  }
-  return run;
 }
 
 export async function createRun(db: Db, planner: AgentPlanner, input: StartRunInput) {
+  return db.$transaction((tx) => insertRun(tx, planner, input));
+}
+
+async function insertRun(tx: Tx, planner: AgentPlanner, input: StartRunInput) {
   const opening: AgentMessage = {
     role: 'user',
     text:
@@ -70,22 +62,20 @@ export async function createRun(db: Db, planner: AgentPlanner, input: StartRunIn
       `Publisher's selected source versions: SELECTION=${input.selection.join(',')}\n` +
       `Replacement policy: ${input.policy.autoReplace ? 'you may substitute compatible sources automatically' : 'every substitution needs the publisher’s approval'}.`,
   };
-  return db.$transaction(async (tx) => {
-    const run = await tx.agentRun.create({
-      data: {
-        publisherId: input.publisherId,
-        goal: input.goal,
-        policy: json(input.policy),
-        intent: json(input.intent),
-        selection: json(input.selection),
-        transcript: json([opening]),
-        model: `${planner.name}:${planner.model}`,
-      },
-    });
-    await tx.agentStep.create({ data: { runId: run.id, ordinal: 0, kind: 'plan', output: json({ text: input.goal, policy: input.policy }) } });
-    await appendAudit(tx, { entityType: 'agent_run', entityId: run.id, eventType: 'agent.started', payload: { goal: input.goal, selection: input.selection, policy: input.policy, planner: run.model } });
-    return run;
+  const run = await tx.agentRun.create({
+    data: {
+      publisherId: input.publisherId,
+      goal: input.goal,
+      policy: json(input.policy),
+      intent: json(input.intent),
+      selection: json(input.selection),
+      transcript: json([opening]),
+      model: `${planner.name}:${planner.model}`,
+    },
   });
+  await tx.agentStep.create({ data: { runId: run.id, ordinal: 0, kind: 'plan', output: json({ text: input.goal, policy: input.policy }) } });
+  await appendAudit(tx, { entityType: 'agent_run', entityId: run.id, eventType: 'agent.started', payload: { goal: input.goal, selection: input.selection, policy: input.policy, planner: run.model } });
+  return run;
 }
 
 /**
