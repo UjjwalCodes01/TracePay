@@ -56,6 +56,10 @@ export class FakePayPal implements PayPalGateway {
     }
     const pu = o.req.purchase_units[0]!;
     o.status = 'COMPLETED';
+    if (this.nextCaptureOverrides) {
+      overrides = { ...this.nextCaptureOverrides, ...overrides };
+      this.nextCaptureOverrides = null;
+    }
     o.capture = {
       id: `CAPTURE-${orderId}`,
       status: 'COMPLETED',
@@ -66,6 +70,30 @@ export class FakePayPal implements PayPalGateway {
     };
     return this.view(orderId);
   }
+
+  async getCapture(captureId: string): Promise<Capture> {
+    const o = [...this.orders.values()].find((x) => x.capture?.id === captureId);
+    if (!o?.capture) throw new PayPalApiError(404, 'captures.get', { name: 'RESOURCE_NOT_FOUND' }, 'dbg');
+    return { ...o.capture };
+  }
+
+  /** A refund issued in the PayPal dashboard, outside TracePay (no webhook is sent here). */
+  refundOutside(orderId: string, partial = false) {
+    this.orders.get(orderId)!.capture!.status = partial ? 'PARTIALLY_REFUNDED' : 'REFUNDED';
+  }
+
+  /** A pending capture (e.g. an eCheck) settling later, either way. */
+  settlePendingCapture(orderId: string, status: 'COMPLETED' | 'DECLINED') {
+    this.orders.get(orderId)!.capture!.status = status;
+  }
+
+  /** PayPal forgets orders that were never completed (they expire). */
+  expireOrder(orderId: string) {
+    this.orders.delete(orderId);
+  }
+
+  /** Captures the next order with these overrides (e.g. a PENDING status). */
+  nextCaptureOverrides: Partial<Capture> | null = null;
 
   async createPayoutBatch(args: { senderBatchId: string; emailSubject: string; emailMessage: string; items: PayoutItemRequest[] }) {
     this.calls.createPayoutBatch++;

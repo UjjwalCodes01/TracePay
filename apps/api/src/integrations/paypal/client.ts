@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { paypalEnv } from '../../config/env';
 import type {
+  Capture,
   CaptureResponse,
   CreateOrderRequest,
   Order,
@@ -105,6 +106,11 @@ export class PayPalClient {
       'PayPal-Request-Id': requestId,
       Prefer: 'return=representation',
     });
+  }
+
+  /** The current state of a capture — how reconciliation notices refunds made outside TracePay. */
+  getCapture(captureId: string): Promise<Capture> {
+    return this.call('captures.get', 'GET', `/v2/payments/captures/${encodeURIComponent(captureId)}`);
   }
 
   // ---- payouts -----------------------------------------------------------------

@@ -71,6 +71,8 @@ services:
         sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false # base64 of the service-account key file
+      - key: TRUSTED_PROXY_SECRET
+        sync: false # same value as the Vercel env TRACEPAY_PROXY_SECRET
       - key: WEBHOOK_SECRET_KEY
         sync: false # 32 random bytes, base64: encrypts webhook signing secrets at rest
       - key: API_RATE_LIMIT_PER_MINUTE

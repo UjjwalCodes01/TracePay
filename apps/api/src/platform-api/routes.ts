@@ -8,7 +8,7 @@ import { AgentStateError, createRunWithinCap, decideReplacement, runAgent, TooMa
 import { appendAudit } from '../modules/audit/audit-log';
 import { buildReceipt } from '../modules/audit/receipt.service';
 import { preflightAndRecord } from '../modules/builds/preflight.service';
-import { listCatalog, parseTerms } from '../modules/catalog/catalog.service';
+import { catalogEntry, pageCatalog, parseTerms } from '../modules/catalog/catalog.service';
 import { generateArtifact } from '../modules/generation/generation.service';
 import { acceptOffer, declineOffer, requestLicense } from '../modules/licenses/license.service';
 import { EVENT_TYPE_NAMES, EVENT_TYPES } from '../modules/platform/events';
@@ -21,13 +21,12 @@ import {
   approveSettlement, recalculateSettlement, refreshPayouts, retryFailedPayouts, submitPayouts,
 } from '../modules/settlements/settlement.service';
 import { checkSaleRights, withdrawArtifact } from '../modules/sales/rights.service';
-import { cursorWhere, defineRoute, ListQuery, pageOrder, toPage, type AnyRoute } from './framework';
+import { cursorWhere, defineRoute, encodeCursor, ListQuery, pageOrder, toPage, type AnyRoute } from './framework';
 import * as R from './resources';
 
 const Id = (what: string) => z.object({ id: z.string().min(1).max(64).meta({ description: `The ${what} id.` }) });
 const Empty = z.object({}).strict();
 const MAX_ACTIVE_AGENT_RUNS = 2;
-const CATALOG_LIMIT = 500;
 
 export interface PlatformDeps extends AppDeps {
   webhooks: () => WebhookDeps;
@@ -76,19 +75,21 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
     defineRoute({
       method: 'get', path: '/sources', operationId: 'listSources', tag: 'Sources & licenses',
       summary: 'List licensable sources with your license status',
-      description: 'Every source you hold a license for, plus the current marketplace (up to 500). Use `version.id` in `source_version_ids` when creating a build.',
+      description: 'Every source you hold (or held) a license for, plus all live public listings — newest first. Use `version.id` in `source_version_ids` when creating a build.',
+      query: ListQuery,
       response: R.SourceList,
-      handler: async ({ user }) => {
-        const entries = await listCatalog(db, user.id);
-        // The catalog is capped (CATALOG_LIMIT); say so rather than pretend it's complete.
-        return { object: 'list' as const, data: entries.map(R.sourceOut), has_more: entries.length >= CATALOG_LIMIT, next_cursor: null };
+      handler: async ({ user, query }) => {
+        const page = await pageCatalog(db, user.id, { limit: query.limit, where: cursorWhere(query.starting_after) });
+        const last = page.rows[page.rows.length - 1];
+        // Entries without a version yet are omitted, but the cursor follows the underlying rows.
+        return { object: 'list' as const, data: page.entries.map(R.sourceOut), has_more: page.hasMore, next_cursor: page.hasMore && last ? encodeCursor(last) : null };
       },
     }),
     defineRoute({
       method: 'get', path: '/sources/:id', operationId: 'getSource', tag: 'Sources & licenses', summary: 'Retrieve a source',
       params: Id('source'), response: R.Source,
       handler: async ({ user, params }) => {
-        const entry = (await listCatalog(db, user.id)).find((e) => e.assetId === params.id);
+        const entry = await catalogEntry(db, user.id, params.id);
         if (!entry) throw new HttpError(404, 'Source not found.');
         return R.sourceOut(entry);
       },
@@ -373,7 +374,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
         source_version_ids: z.array(z.string().min(1).max(64)).min(1).max(20),
         auto_replace: z.boolean().default(false).meta({ description: 'Let the agent swap a blocked source for a licensed one without asking.' }),
       }),
-      response: R.AgentRun, status: 202, errors: [429],
+      response: R.AgentRun, status: 202, errors: [409],
       handler: async ({ user, body }) => {
         let run;
         try {
@@ -384,7 +385,8 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
             MAX_ACTIVE_AGENT_RUNS,
           );
         } catch (err) {
-          if (err instanceof TooManyRunsError) throw new HttpError(429, err.message, { code: 'too_many_active_runs' });
+          // A state conflict, not a rate limit: retrying immediately won't help.
+          if (err instanceof TooManyRunsError) throw new HttpError(409, err.message, { code: 'too_many_active_runs' });
           throw err;
         }
         runInBackground(run.id);

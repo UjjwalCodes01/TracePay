@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
+import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { Db } from './db';
 import type { PayPalGateway } from './integrations/paypal/gateway';
@@ -53,6 +54,12 @@ export interface AppDeps {
      * the client IP for rate limits and logs instead of counting proxy hops.
      */
     clientIpHeader?: string;
+    /**
+     * Shared secret the web app's proxy (Vercel) attaches to the /api requests it
+     * forwards. When it matches, the visitor IP Vercel reports is trusted, so people
+     * using the website get per-visitor rate limits instead of per-Vercel-address ones.
+     */
+    trustedProxySecret?: string;
     /** Public base URL of this API, for the OpenAPI `servers` entry. */
     apiBaseUrl: string;
     /** Platform API requests per minute per API key (or per signed-in user). */
@@ -62,6 +69,7 @@ export interface AppDeps {
   };
 }
 
+export const PROXY_SECRET_HEADER = 'x-tracepay-proxy-secret';
 const isPlatformApi = (req: express.Request) => isPlatformApiPath(req.originalUrl);
 /** A request carrying a well-formed platform API key: limited per key (and guarded against guessing) instead of per IP. */
 const carriesApiKey = (req: express.Request) => isPlatformApiPath(req.originalUrl) && WELL_FORMED_KEY.test(bearerToken(req) ?? '');
@@ -83,6 +91,24 @@ export function createApp(deps: AppDeps) {
       next();
     });
   }
+
+  // Requests forwarded by our own web proxy carry the shared secret; only then is the
+  // visitor address it reports believed (Vercel overwrites client-supplied values).
+  // The secret header is removed before anything else (logs included) sees it.
+  const proxySecret = deps.config.trustedProxySecret ? Buffer.from(deps.config.trustedProxySecret) : null;
+  app.use((req, _res, next) => {
+    const presented = req.headers[PROXY_SECRET_HEADER];
+    delete req.headers[PROXY_SECRET_HEADER];
+    if (proxySecret && typeof presented === 'string') {
+      const got = Buffer.from(presented);
+      if (got.length === proxySecret.length && timingSafeEqual(got, proxySecret)) {
+        const reported = req.headers['x-vercel-forwarded-for'] ?? req.headers['x-real-ip'];
+        const ip = (Array.isArray(reported) ? reported[0] : reported)?.split(',')[0]?.trim() ?? '';
+        if (isIP(ip)) Object.defineProperty(req, 'ip', { value: ip, configurable: true, enumerable: true });
+      }
+    }
+    next();
+  });
 
   app.use(httpLogger);
   // A JSON API: no HTML is served, so lock everything down.

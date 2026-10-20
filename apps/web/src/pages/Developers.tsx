@@ -51,6 +51,15 @@ interface Delivery {
 type List<T> = { data: T[] };
 
 export function DevelopersPage() {
+  const { user } = useSession();
+  if (user && user.role !== 'publisher' && user.role !== 'admin') {
+    return (
+      <>
+        <PageHeader title="Developers" />
+        <Empty>API keys and webhooks are for publisher accounts, which build and sell reports. Your account doesn’t need them.</Empty>
+      </>
+    );
+  }
   return (
     <>
       <PageHeader
@@ -126,7 +135,7 @@ function ApiKeysCard() {
   });
   const revoke = useMutation({
     mutationFn: (id: string) => del(`/auth/api-keys/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
   });
 
   const submit = (e: FormEvent) => {
@@ -372,7 +381,8 @@ function EndpointRow({ endpoint: e, onSecret, onChange }: { endpoint: Endpoint; 
   const test = useMutation({ mutationFn: () => post<Delivery>(`/v1/webhook_endpoints/${e.id}/test`), onSuccess: (d) => (setLastTest(d), after()) });
   const toggle = useMutation({ mutationFn: () => patch(`/v1/webhook_endpoints/${e.id}`, { status: e.status === 'enabled' ? 'disabled' : 'enabled' }), onSuccess: after });
   const rotate = useMutation({ mutationFn: () => post<{ secret: string }>(`/v1/webhook_endpoints/${e.id}/rotate_secret`, { previous_secret_valid_hours: 24 }), onSuccess: (r) => (onSecret(r.secret), after()) });
-  const remove = useMutation({ mutationFn: () => del(`/v1/webhook_endpoints/${e.id}`), onSuccess: onChange });
+  // Refresh either way: if another tab already deleted it, the list must catch up.
+  const remove = useMutation({ mutationFn: () => del(`/v1/webhook_endpoints/${e.id}`), onSettled: onChange });
   const retry = useMutation({ mutationFn: (id: string) => post(`/v1/webhook_deliveries/${id}/retry`), onSuccess: after });
 
   return (

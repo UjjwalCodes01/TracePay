@@ -122,7 +122,8 @@ export function authRoutes({ db, config }: AppDeps) {
     // Anyone exploring the demo acts as the same shared persona: their keys are short-lived.
     if (req.authMethod === 'demo') body.expiresInDays = Math.min(body.expiresInDays ?? 1, 1);
     const userId = currentUser(req).id;
-    if ((await db.apiKey.count({ where: { userId, revokedAt: null } })) >= 25) {
+    // Expired keys don't count: they no longer work.
+    if ((await db.apiKey.count({ where: { userId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } })) >= 25) {
       throw new HttpError(409, 'You can have at most 25 active API keys. Revoke one you no longer use.', { code: 'resource_limit' });
     }
     const created = await createApiKey(db, userId, body.name, { access: body.access, expiresInDays: body.expiresInDays });

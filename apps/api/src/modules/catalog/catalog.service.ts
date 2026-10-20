@@ -61,20 +61,20 @@ export const parseTerms = (t: unknown) => {
   return r.success ? r.data : null;
 };
 
-export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogEntry[]> {
-  // Bounded: the catalog shows sources this publisher holds or has pending licenses for,
-  // plus the newest public listings.
-  const assets = await tx.asset.findMany({
-    where: { OR: [{ licenses: { some: { licenseeId: publisherId } } }, { archivedAt: null }] },
-    orderBy: { createdAt: 'asc' },
-    take: 500,
-    include: {
-      owner: { select: { id: true, name: true } },
-      versions: { orderBy: { version: 'desc' }, take: 1, include: { _count: { select: { chunks: true } } } },
-    },
-  });
-  const { governing, pending } = await grantsFor(tx, publisherId, assets.map((a) => a.id));
+const assetInclude = {
+  owner: { select: { id: true, name: true } },
+  versions: { orderBy: { version: 'desc' as const }, take: 1, include: { _count: { select: { chunks: true } } } },
+};
 
+/** Sources a publisher can see: everything it holds (or held) a license for, plus every live public listing. */
+const visibleTo = (publisherId: string) => ({ OR: [{ licenses: { some: { licenseeId: publisherId } } }, { archivedAt: null }] });
+
+async function toEntries(
+  tx: Tx,
+  publisherId: string,
+  assets: Array<{ id: string; title: string; kind: string; description: string; owner: { id: string; name: string }; versions: Array<{ id: string; version: number; sha256: string; _count: { chunks: number } }> }>,
+): Promise<CatalogEntry[]> {
+  const { governing, pending } = await grantsFor(tx, publisherId, assets.map((a) => a.id));
   return assets.flatMap((a) => {
     const v = a.versions[0];
     if (!v) return [];
@@ -99,6 +99,43 @@ export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogE
       },
     ];
   });
+}
+
+/**
+ * The working catalog (dashboard, Publisher Agent): EVERY source this publisher
+ * holds or held a license for — never cut off — plus the newest public listings.
+ */
+export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogEntry[]> {
+  const [licensed, newest] = await Promise.all([
+    tx.asset.findMany({ where: { licenses: { some: { licenseeId: publisherId } } }, orderBy: { createdAt: 'asc' }, take: 2_000, include: assetInclude }),
+    tx.asset.findMany({ where: { archivedAt: null }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 500, include: assetInclude }),
+  ]);
+  const byId = new Map([...licensed, ...newest].map((a) => [a.id, a]));
+  const assets = [...byId.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+  return toEntries(tx, publisherId, assets);
+}
+
+/** One page of the catalog, newest first, for the platform API. */
+export async function pageCatalog(
+  tx: Tx,
+  publisherId: string,
+  page: { limit: number; where?: object },
+): Promise<{ entries: CatalogEntry[]; rows: Array<{ id: string; createdAt: Date }>; hasMore: boolean }> {
+  const rows = await tx.asset.findMany({
+    where: { AND: [visibleTo(publisherId), page.where ?? {}] },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: page.limit + 1,
+    include: assetInclude,
+  });
+  const hasMore = rows.length > page.limit;
+  const pageRows = rows.slice(0, page.limit);
+  return { entries: await toEntries(tx, publisherId, pageRows), rows: pageRows, hasMore };
+}
+
+/** One source, if this publisher may see it. */
+export async function catalogEntry(tx: Tx, publisherId: string, assetId: string): Promise<CatalogEntry | null> {
+  const asset = await tx.asset.findFirst({ where: { AND: [{ id: assetId }, visibleTo(publisherId)] }, include: assetInclude });
+  return asset ? ((await toEntries(tx, publisherId, [asset]))[0] ?? null) : null;
 }
 
 export class UnknownAssetVersionError extends Error {

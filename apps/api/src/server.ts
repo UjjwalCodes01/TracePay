@@ -73,6 +73,7 @@ const app = createApp({
     webhookRateLimitPerMinute: env.WEBHOOK_RATE_LIMIT_PER_MINUTE,
     trustProxyHops: env.TRUST_PROXY_HOPS,
     clientIpHeader: env.CLIENT_IP_HEADER || undefined,
+    trustedProxySecret: env.TRUSTED_PROXY_SECRET || undefined,
     apiBaseUrl: env.API_BASE_URL,
     apiRateLimitPerMinute: env.API_RATE_LIMIT_PER_MINUTE,
   },
@@ -114,14 +115,6 @@ if (!env.DEMO_MODE) {
 }
 setInterval(() => {
   if (Date.now() - lastActivity <= STALE_WORK_MS + SWEEP_EVERY_MS) void sweep();
-
-// Keys minted by anonymous demo visitors must not outlive demo mode.
-if (!env.DEMO_MODE) {
-  void db()
-    .apiKey.updateMany({ where: { userId: { in: DEMO_USERS.map((u) => u.id) }, revokedAt: null }, data: { revokedAt: new Date() } })
-    .then((r) => r.count && logger.warn({ revoked: r.count }, 'revoked API keys of demo personas (DEMO_MODE is off)'))
-    .catch((err) => logger.error({ err }, 'could not revoke demo API keys'));
-}
 }, SWEEP_EVERY_MS).unref();
 
 // Graceful shutdown: stop accepting connections, let in-flight requests finish, close the pool.
@@ -131,8 +124,9 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
-    dispatcher.stop();
     server.close(async () => {
+      // Let in-flight webhook sends finish and be recorded (bounded by the hard exit below).
+      await dispatcher.stop().catch(() => undefined);
       await db().$disconnect().catch(() => undefined);
       process.exit(0);
     });

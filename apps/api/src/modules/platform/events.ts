@@ -22,6 +22,8 @@ interface EventSpec {
   description: string;
 }
 
+const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
 /** Audit event type → public event. Audit events not listed here stay internal. */
 const CATALOG: Record<string, EventSpec> = {
   'build.preflight_passed': { type: 'build.preflight_passed', object: 'build', fields: ['snapshotHash'], description: 'A license preflight passed: the build may be generated.' },
@@ -89,12 +91,22 @@ export const EVENT_TYPES: { type: string; description: string }[] = [
   PING_EVENT,
 ].sort((a, b) => a.type.localeCompare(b.type));
 
+/** What each event's `data` carries (snake_case field names), for the API reference. */
+export const EVENT_DATA_SHAPES: Record<string, { objectType: string; fields: string[] }> = (() => {
+  const shapes: Record<string, { objectType: string; fields: Set<string> }> = {};
+  for (const spec of Object.values(CATALOG)) {
+    const shape = (shapes[spec.type] ??= { objectType: spec.object, fields: new Set() });
+    for (const f of spec.fields ?? []) shape.fields.add(snake(f));
+  }
+  shapes[PING_EVENT.type] = { objectType: 'webhook_endpoint', fields: new Set(['message']) };
+  return Object.fromEntries(Object.entries(shapes).map(([type, s]) => [type, { objectType: s.objectType, fields: [...s.fields] }]));
+})();
+
 export const EVENT_TYPE_NAMES = new Set(EVENT_TYPES.map((e) => e.type));
 
 export const newEventId = () => `evt_${randomBytes(16).toString('hex')}`;
 export const newDeliveryId = () => `whd_${randomBytes(16).toString('hex')}`;
 
-const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 function toSnake(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(toSnake);
   if (value && typeof value === 'object' && !(value instanceof Date)) {

@@ -44,7 +44,8 @@ export class TooManyRunsError extends Error {}
 export async function createRunWithinCap(db: Db, planner: AgentPlanner, input: StartRunInput, max: number) {
   return db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent-runs:${input.publisherId}`}))`;
-    const active = await tx.agentRun.count({ where: { publisherId: input.publisherId, status: 'running' } });
+    // A run paused for approval resumes (and calls the model again) without a new start: it counts.
+    const active = await tx.agentRun.count({ where: { publisherId: input.publisherId, status: { in: ['running', 'awaiting_approval'] } } });
     if (active >= max) throw new TooManyRunsError(`You already have ${active} agent runs in progress. Wait for one to finish.`);
     return insertRun(tx, planner, input);
   });

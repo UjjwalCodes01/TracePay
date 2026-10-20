@@ -35,6 +35,8 @@ export const serverEnv = () =>
        * Defaults to it when running on Render (which sets RENDER=true).
        */
       CLIENT_IP_HEADER: z.string().trim().default(process.env.RENDER === 'true' ? 'cf-connecting-ip' : ''),
+      /** Shared with the web app's proxy (Vercel env TRACEPAY_PROXY_SECRET): trust the visitor IP it forwards. 32+ characters. */
+      TRUSTED_PROXY_SECRET: z.string().trim().refine((v) => v === '' || v.length >= 32, 'Use at least 32 characters.').default(''),
       /** Runtime connection. On Neon, use the pooled ("-pooler") connection string. */
       DATABASE_URL: nonEmpty,
       DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),

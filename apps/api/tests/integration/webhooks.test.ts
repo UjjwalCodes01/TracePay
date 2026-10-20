@@ -17,6 +17,7 @@ import type { AgentPlanner } from '../../src/modules/agent/planners';
 import { createApp } from '../../src/app';
 import { FakePayPal } from '../fake-paypal';
 import { testApp, testDeps, testWebhookBox, testWebhookDeps } from '../test-app';
+import { resetQuotas } from '../../src/http/limits';
 import { WebhookReceiver } from '../webhook-receiver';
 
 const intent = {
@@ -57,6 +58,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
   afterAll(() => receiver.stop());
   beforeEach(async () => {
     receiver.reset();
+    await resetQuotas('user_atlas');
     await db().webhookEndpoint.deleteMany({ where: { ownerId: 'user_atlas' } });
     // Every test starts from a listed report (a failed test must not cascade).
     await db().artifact.update({ where: { id: reportId }, data: { status: 'listed' } });
@@ -494,6 +496,71 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       expect(replay.body).toMatchObject({ id: first.body.id, secret: null });
       const stored = await db().idempotencyKey.findFirstOrThrow({ where: { key: headers['Idempotency-Key'] } });
       expect(JSON.stringify(stored.responseBody)).not.toContain(first.body.secret);
+    });
+
+    it('counts runs paused for approval toward the cap', async () => {
+      await db().agentRun.updateMany({ where: { publisherId: 'user_atlas', status: { in: ['running', 'awaiting_approval'] } }, data: { status: 'failed' } });
+      const planner = { name: 'stub', model: 'none' } as unknown as AgentPlanner;
+      const input = { publisherId: 'user_atlas', goal: 'Paused run goal.', intent: {} as never, selection: ['x'], policy: { autoReplace: false } };
+      const a = await createRunWithinCap(db(), planner, input, 2);
+      const b = await createRunWithinCap(db(), planner, input, 2);
+      await db().agentRun.updateMany({ where: { id: { in: [a.id, b.id] } }, data: { status: 'awaiting_approval' } });
+      await expect(createRunWithinCap(db(), planner, input, 2)).rejects.toBeInstanceOf(TooManyRunsError);
+      const res = await request(app).post('/api/v1/agent_runs').set(atlas).send({ goal: 'Create a commercial report from approved sources.', intent, source_version_ids: PASSING }).expect(409);
+      expect(res.body.error.code).toBe('too_many_active_runs');
+      await db().agentRun.updateMany({ where: { id: { in: [a.id, b.id] } }, data: { status: 'failed' } });
+    });
+
+    it('is fair: one endpoint can’t take a whole delivery pass', async () => {
+      const slow = await createEndpoint(['report.withdrawn', 'report.relisted'], '/slow');
+      const other = await createEndpoint(['report.withdrawn'], '/other-one');
+      for (let i = 0; i < 3; i++) {
+        await withdraw();
+        await relist();
+      }
+      // slow: 6 pending, other: 3 pending. One pass of 4: at most 2 per endpoint.
+      expect(await deliverDue(deps, { batchSize: 4, maxBatches: 1 })).toBe(4);
+      const sent = (id: string) => db().webhookDelivery.count({ where: { endpointId: id, status: 'succeeded' } });
+      expect(await sent(slow.id)).toBe(2);
+      expect(await sent(other.id)).toBe(2);
+    });
+
+    it('keeps counting attempts up across manual retries, and won’t re-send a delivered one by mistake', async () => {
+      const ep = await createEndpoint(['report.withdrawn']);
+      receiver.status(500);
+      await withdraw();
+      await deliverDue(deps);
+      const [d] = await deliveries(ep.id);
+      await db().webhookDelivery.update({ where: { id: d!.id }, data: { status: 'failed', nextAttemptAt: null } });
+      receiver.status(200);
+      await request(app).post(`/api/v1/webhook_deliveries/${d!.id}/retry`).set(atlas).expect(202);
+      await deliverDue(deps);
+      expect(receiver.received.map((r) => r.headers['tracepay-delivery-attempt'])).toEqual(['1', '2']);
+      expect(await db().webhookDelivery.findUniqueOrThrow({ where: { id: d!.id } })).toMatchObject({ status: 'succeeded', attempts: 2, scheduleBase: 1 });
+      expect((await request(app).post(`/api/v1/webhook_deliveries/${d!.id}/retry`).set(atlas).expect(409)).body.error.message).toMatch(/resend/);
+    });
+
+    it('lets in-flight deliveries finish on shutdown and claims nothing new', async () => {
+      await createEndpoint(['report.withdrawn']);
+      let release: () => void = () => undefined;
+      const arrived = new Promise<void>((resolve) => receiver.respond((_req, res) => {
+        release = () => res.writeHead(200).end('ok');
+        resolve();
+      }));
+      const dispatcher = new WebhookDispatcher(() => deps, { pollMs: 50, eventWindowMs: 5_000 });
+      setOutboxListener(() => dispatcher.kick('event'));
+      try {
+        await withdraw();
+        await arrived;
+        const stopping = dispatcher.stop();
+        await relist(); // a new event while stopping: not claimed by this worker
+        release();
+        await stopping;
+        const recorded = await db().webhookDelivery.findMany({ where: { event: { type: 'report.withdrawn' }, endpoint: { ownerId: 'user_atlas' } }, orderBy: { createdAt: 'desc' }, take: 1 });
+        expect(recorded[0]!.status).toBe('succeeded');
+      } finally {
+        setOutboxListener(null);
+      }
     });
 
     it('caps concurrent agent runs exactly, even when started at the same moment', async () => {

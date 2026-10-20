@@ -178,6 +178,31 @@ describe.runIf(process.env.TEST_DATABASE_URL)('security (integration)', () => {
     });
   });
 
+  describe('visitors behind the web app’s proxy', () => {
+    const secret = 'p'.repeat(40);
+    const viaProxy = (ip: string, presented = secret) => ({ 'x-tracepay-proxy-secret': presented, 'x-vercel-forwarded-for': ip });
+
+    it('rate-limits per visitor when the proxy proves itself, and ignores the claim otherwise', async () => {
+      const proxied = testApp(paypal, { trustedProxySecret: secret, rateLimitPerMinute: 2 });
+      await request(proxied).get('/api/artifacts').set(viaProxy('198.51.100.7')).expect(200);
+      await request(proxied).get('/api/artifacts').set(viaProxy('198.51.100.7')).expect(200);
+      await request(proxied).get('/api/artifacts').set(viaProxy('198.51.100.7')).expect(429);
+      // Another visitor coming through the same proxy has their own allowance.
+      await request(proxied).get('/api/artifacts').set(viaProxy('198.51.100.8')).expect(200);
+      // Without the secret (or with a wrong one) the claimed address is ignored: the
+      // request counts against the connection's own address instead.
+      await request(proxied).get('/api/artifacts').set({ 'x-vercel-forwarded-for': '203.0.113.50' }).expect(200);
+      await request(proxied).get('/api/artifacts').set(viaProxy('203.0.113.50', 'q'.repeat(40))).expect(200);
+      await request(proxied).get('/api/artifacts').set({ 'x-vercel-forwarded-for': '203.0.113.51' }).expect(429);
+    });
+
+    it('is off when no secret is configured', async () => {
+      const plain = testApp(paypal, { rateLimitPerMinute: 1 });
+      await request(plain).get('/api/artifacts').set(viaProxy('198.51.100.9')).expect(200);
+      await request(plain).get('/api/artifacts').set(viaProxy('198.51.100.10')).expect(429);
+    });
+  });
+
   describe('request hardening', () => {
     it('blocks cross-site state changes on cookie sessions (CSRF)', async () => {
       await request(app).post('/api/builds/preflight').set(atlas).set('Origin', 'https://evil.example').send({ intent, assetVersionIds: SOURCES }).expect(403);

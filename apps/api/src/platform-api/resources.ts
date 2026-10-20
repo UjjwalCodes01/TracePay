@@ -586,7 +586,14 @@ export const AgentRun = named(
     status: z.enum(['running', 'awaiting_approval', 'completed', 'failed']),
     planner: z.string().nullable(),
     auto_replace: z.boolean(),
-    pending_approval: z.unknown().nullable().meta({ description: 'What the agent proposes and waits for you to approve or decline.' }),
+    pending_approval: z
+      .object({
+        blocked_source_version_id: z.string(),
+        replacement_source_version_id: z.string(),
+        reason: z.string(),
+      })
+      .nullable()
+      .meta({ description: 'What the agent proposes and waits for you to approve or decline: swapping a blocked source for a licensed one.' }),
     summary: z.string().nullable(),
     builds: z.array(z.object({ id, status: z.string(), report_id: z.string().nullable() })),
     created: ts,
@@ -600,6 +607,13 @@ export const agentRunSelect = {
   id: true, goal: true, status: true, model: true, policy: true, pending: true, summary: true, createdAt: true, finishedAt: true,
   builds: { orderBy: { createdAt: 'asc' as const }, select: { id: true, status: true, artifact: { select: { id: true } } } },
 } as const;
+
+/** Only the proposal itself — never the agent's internal bookkeeping (call ids, partial tool results). */
+function pendingOut(pending: unknown): z.infer<typeof AgentRun>['pending_approval'] {
+  const p = pending as { blockedAssetVersionId?: unknown; replacementAssetVersionId?: unknown; reason?: unknown } | null;
+  if (!p || typeof p.blockedAssetVersionId !== 'string' || typeof p.replacementAssetVersionId !== 'string') return null;
+  return { blocked_source_version_id: p.blockedAssetVersionId, replacement_source_version_id: p.replacementAssetVersionId, reason: typeof p.reason === 'string' ? p.reason : '' };
+}
 
 export function agentRunOut(r: {
   id: string;
@@ -620,7 +634,7 @@ export function agentRunOut(r: {
     status: r.status as z.infer<typeof AgentRun>['status'],
     planner: r.model,
     auto_replace: Boolean((r.policy as { autoReplace?: boolean } | null)?.autoReplace),
-    pending_approval: r.pending ?? null,
+    pending_approval: pendingOut(r.pending),
     summary: r.summary,
     builds: r.builds.map((b) => ({ id: b.id, status: b.status, report_id: b.artifact?.id ?? null })),
     created: r.createdAt.toISOString(),

@@ -23,7 +23,7 @@ for (const [addr, prefix] of [
   ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
 ] as const) BLOCKED.addSubnet(addr, prefix, 'ipv4');
 for (const [addr, prefix] of [
-  ['::', 128], ['::1', 128], ['64:ff9b::', 96], ['64:ff9b:1::', 48], ['100::', 64], ['2001::', 23], ['2001:db8::', 32],
+  ['::', 96], ['::1', 128], ['64:ff9b::', 96], ['64:ff9b:1::', 48], ['100::', 64], ['2001::', 23], ['2001:db8::', 32],
   ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8],
 ] as const) BLOCKED.addSubnet(addr, prefix, 'ipv6');
 
@@ -59,10 +59,17 @@ export function checkWebhookUrl(raw: string, policy: UrlPolicy): { ok: true; url
   if (url.protocol !== 'https:' && !(policy.allowHttp && url.protocol === 'http:')) return { ok: false, reason: 'The URL must start with https://.' };
   if (url.username || url.password) return { ok: false, reason: 'The URL must not contain a username or password.' };
   if (url.hash) return { ok: false, reason: 'The URL must not contain a #fragment.' };
+  // Webhooks speak HTTPS: no reaching mail, SSH, databases… on someone else's host.
+  if (!policy.allowPrivate && url.port) {
+    const port = Number(url.port);
+    if (port < 1024 && port !== 443 && !(policy.allowHttp && port === 80)) return { ok: false, reason: `Port ${port} isn't allowed. Use 443 or a port from 1024 up.` };
+  }
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (!policy.allowPrivate) {
     if (net.isIP(host) && !isPublicAddress(host)) return { ok: false, reason: 'The URL points at a private or reserved network address.' };
     if (/^(localhost|.*\.localhost|.*\.local|.*\.internal)$/i.test(host)) return { ok: false, reason: 'The URL points at a local or internal host name.' };
+    // A public endpoint has a domain name (or a public IP): single-label names are internal services.
+    if (!net.isIP(host) && !host.replace(/\.$/, '').includes('.')) return { ok: false, reason: 'Use the endpoint’s full public domain name.' };
   }
   return { ok: true, url };
 }
@@ -75,6 +82,9 @@ export type Lookup = typeof dns.lookup;
  * whose DNS never answers must not stall password hashing and other pool work.
  */
 const resolver = new dns.promises.Resolver({ timeout: 2_500, tries: 2 });
+// Public resolvers, not the host's: customer URLs must never resolve this platform's
+// internal service names (which would also let errors reveal what exists inside).
+resolver.setServers(['1.1.1.1', '8.8.8.8', '2606:4700:4700::1111']);
 const caresLookup = ((hostname: string, _options: unknown, callback: (err: NodeJS.ErrnoException | null, addresses?: dns.LookupAddress[]) => void) => {
   void Promise.allSettled([resolver.resolve4(hostname), resolver.resolve6(hostname)]).then(([v4, v6]) => {
     const list: dns.LookupAddress[] = [
@@ -160,7 +170,27 @@ export async function safePost(
     const deadline = setTimeout(() => {
       req.destroy(Object.assign(new Error(`Timed out after ${opts.timeoutMs} ms`), { code: 'ETIMEDOUT' }));
     }, opts.timeoutMs);
-    req.on('error', (err: NodeJS.ErrnoException) => finish({ statusCode: null, body: '', error: err.code === 'EBLOCKED' || err.code === 'ETIMEDOUT' ? err.message : `${err.code ?? 'ERROR'}: ${err.message}` }));
+    req.on('error', (err: NodeJS.ErrnoException) => finish({ statusCode: null, body: '', error: describeError(err) }));
     req.end(body);
   });
+}
+
+/** What a customer sees about a failed connection: the cause, never addresses we resolved. */
+function describeError(err: NodeJS.ErrnoException): string {
+  if (err.code === 'EBLOCKED' || err.code === 'ETIMEDOUT') return err.message.replace(/\S+ resolves/, 'The host name resolves');
+  const known: Record<string, string> = {
+    ENOTFOUND: 'The host name could not be found (DNS).',
+    EAI_AGAIN: 'The host name could not be resolved right now (DNS).',
+    ECONNREFUSED: 'The endpoint refused the connection.',
+    ECONNRESET: 'The endpoint closed the connection.',
+    EHOSTUNREACH: 'The endpoint is unreachable.',
+    ENETUNREACH: 'The endpoint is unreachable.',
+    EPROTO: 'TLS handshake failed.',
+    CERT_HAS_EXPIRED: 'The endpoint’s TLS certificate has expired.',
+    DEPTH_ZERO_SELF_SIGNED_CERT: 'The endpoint uses a self-signed TLS certificate.',
+    SELF_SIGNED_CERT_IN_CHAIN: 'The endpoint’s TLS certificate chain is not trusted.',
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: 'The endpoint’s TLS certificate could not be verified.',
+    ERR_TLS_CERT_ALTNAME_INVALID: 'The endpoint’s TLS certificate does not match its host name.',
+  };
+  return known[err.code ?? ''] ?? `Could not connect to the endpoint${err.code ? ` (${err.code})` : ''}.`;
 }

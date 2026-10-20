@@ -45,6 +45,17 @@ const ERROR_TYPES: Record<number, string> = {
   422: 'invalid_request_error',
   429: 'rate_limit_error',
 };
+/** Internal service codes → the public error codes (documented in the API description). */
+const CODE_ALIASES: Record<string, string> = {
+  not_found: 'resource_missing',
+  invalid: 'parameter_invalid',
+  state: 'invalid_state',
+  limit: 'resource_limit',
+  unchanged: 'invalid_state',
+  provider: 'paypal_unavailable',
+  verification: 'payment_verification_failed',
+};
+
 const DEFAULT_CODES: Record<number, string> = {
   400: 'parameter_invalid', 401: 'unauthenticated', 403: 'forbidden', 404: 'resource_missing', 409: 'conflict', 422: 'unprocessable', 429: 'rate_limited',
 };
@@ -79,7 +90,10 @@ export function v1ErrorBody(err: unknown, requestId: string | null): { status: n
   const http = toHttp(err);
   const status = http.status;
   const details = http.details as { code?: unknown } | unknown[] | undefined;
-  const code = details && !Array.isArray(details) && typeof details.code === 'string' ? details.code : (DEFAULT_CODES[status] ?? 'api_error');
+  const raw = details && !Array.isArray(details) && typeof details.code === 'string' ? details.code : null;
+  // Services use short internal codes; the API speaks one documented vocabulary.
+  // (A service that hides someone else's record answers 404 "forbidden": that is "missing" to the caller.)
+  const code = raw ? (raw === 'forbidden' && status === 404 ? 'resource_missing' : (CODE_ALIASES[raw] ?? raw)) : (DEFAULT_CODES[status] ?? 'api_error');
   const extra = details && !Array.isArray(details) ? Object.fromEntries(Object.entries(details).filter(([k]) => k !== 'code')) : details;
   return {
     status,
@@ -99,7 +113,8 @@ export function v1ErrorBody(err: unknown, requestId: string | null): { status: n
 export function v1ErrorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   const { status, body, retryAfter } = v1ErrorBody(err, (req.id as string | undefined) ?? null);
   if (status >= 500) (req.log ?? console).error({ err }, 'platform api error');
-  if (retryAfter) res.setHeader('Retry-After', String(retryAfter));
+  // A rate limiter already set the exact Retry-After; only fill it in when it didn't.
+  if (retryAfter && !res.getHeader('Retry-After')) res.setHeader('Retry-After', String(retryAfter));
   res.status(status).json(body);
 }
 
@@ -146,6 +161,7 @@ export const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 /** A first attempt that hasn't finished after this long (it heartbeats every 30 s) is assumed dead. */
 const IN_PROGRESS_STALE_MS = 15 * 60_000;
 const HEARTBEAT_MS = 30_000;
+const KEY_TTL_MS = 24 * 3_600_000;
 
 function requestHash(req: Request): string {
   return createHash('sha256').update(`${req.method} ${req.baseUrl}${req.path}\n${canonicalJson(req.body ?? null)}`).digest('hex');
@@ -190,8 +206,13 @@ async function withIdempotency(
     rowId = (await db.idempotencyKey.create({ data: { userId, key, requestHash: hash, lockedAt: token }, select: { id: true } })).id;
   } catch (err) {
     if ((err as { code?: string }).code !== 'P2002') throw err;
-    const existing = await db.idempotencyKey.findUnique({ where: { userId_key: { userId, key } } });
-    if (!existing) return withIdempotency(db, req, res, secretFields, run); // expired between the two queries
+    let existing = await db.idempotencyKey.findUnique({ where: { userId_key: { userId, key } } });
+    // Keys live 24 hours, whether or not the cleanup sweep has run yet.
+    if (existing && existing.statusCode !== null && Date.now() - existing.createdAt.getTime() > KEY_TTL_MS) {
+      await db.idempotencyKey.deleteMany({ where: { id: existing.id, statusCode: { not: null } } });
+      existing = null;
+    }
+    if (!existing) return withIdempotency(db, req, res, secretFields, run); // expired (or just removed)
     if (existing.requestHash !== hash) {
       throw new HttpError(422, 'This Idempotency-Key was already used with a different request. Use a new key for a new request.', { code: 'idempotency_key_reused' });
     }
@@ -209,18 +230,23 @@ async function withIdempotency(
   }
 
   // Heartbeat: keep the claim fresh while the handler runs.
+  // Heartbeat: keep the claim fresh while the handler runs. Updates are chained, so
+  // the final write below always runs after the last one and uses its token.
   let held = true;
+  let beat: Promise<void> = Promise.resolve();
   const heartbeat = setInterval(() => {
-    const next = new Date();
-    void db.idempotencyKey
-      .updateMany({ where: { id: rowId, statusCode: null, lockedAt: token }, data: { lockedAt: next } })
-      .then((r) => {
-        if (r.count === 1) token = next;
-        else held = false;
-      })
-      .catch(() => undefined);
+    beat = beat.then(async () => {
+      const next = new Date();
+      const r = await db.idempotencyKey.updateMany({ where: { id: rowId, statusCode: null, lockedAt: token }, data: { lockedAt: next } }).catch(() => null);
+      if (r?.count === 1) token = next;
+      else if (r) held = false;
+    });
   }, HEARTBEAT_MS);
   heartbeat.unref();
+  const settle = async () => {
+    clearInterval(heartbeat);
+    await beat;
+  };
 
   let outcome: { status: number; body: unknown };
   try {
@@ -228,24 +254,29 @@ async function withIdempotency(
   } catch (err) {
     const { status, body } = v1ErrorBody(err, (req.id as string | undefined) ?? null);
     if (status >= 500 || status === 429) {
-      clearInterval(heartbeat);
+      await settle();
       // Not a final answer: release the key so the same request can be retried.
       await db.idempotencyKey.deleteMany({ where: { id: rowId, statusCode: null, lockedAt: token } }).catch(() => undefined);
       throw err;
     }
     outcome = { status, body };
-  } finally {
-    clearInterval(heartbeat);
   }
+  await settle();
   // Store the final answer — only while we still hold the key. A failure to store
   // must not turn a completed action into an error for the caller.
   if (held) {
-    await db.idempotencyKey
+    const stored = await db.idempotencyKey
       .updateMany({
         where: { id: rowId, statusCode: null, lockedAt: token },
         data: { statusCode: outcome.status, responseBody: storable(outcome.body, secretFields) as Prisma.InputJsonValue },
       })
-      .catch((err) => req.log?.error({ err }, 'could not store idempotent response'));
+      .catch((err) => {
+        req.log?.error({ err }, 'could not store idempotent response');
+        return null;
+      });
+    if (stored && stored.count === 0) req.log?.warn({ rowId }, 'idempotency key changed hands before the response was stored');
+  } else {
+    req.log?.warn({ rowId }, 'idempotency key was taken over while the request ran');
   }
   return outcome;
 }
@@ -417,7 +448,10 @@ export function buildOpenApi(opts: { serverUrl: string; title: string; version: 
   return {
     openapi: '3.1.0',
     info: { title: opts.title, version: opts.version, description: opts.description, license: { name: 'MIT', identifier: 'MIT' } },
-    servers: [{ url: opts.serverUrl, description: 'PayPal sandbox environment' }],
+    servers: [
+      { url: opts.serverUrl, description: 'API (PayPal sandbox environment)' },
+      { url: '/api/v1', description: 'The same API through the web app you are viewing these docs on' },
+    ],
     security: [{ apiKey: [] }],
     tags: opts.tags,
     paths,

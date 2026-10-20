@@ -426,6 +426,15 @@ model PayPalPayment {
   rawCapture     Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  /// Reconciliation: when TracePay next asks PayPal about this payment (null = nothing left to check).
+  nextCheckAt    DateTime?
+  checkCount     Int       @default(0)
+  lastCheckedAt  DateTime?
+  /// Lease held by the worker checking it right now.
+  checkLockedUntil DateTime?
+
+  @@index([nextCheckAt])
 }
 
 /// Every PayPal webhook we receive, keyed by PayPal's event id for idempotency.
@@ -507,9 +516,16 @@ model PayoutBatch {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @default(now()) @updatedAt
 
+  /// Reconciliation: when TracePay next asks PayPal about this batch (null = every payout is final).
+  nextPollAt     DateTime?
+  pollCount      Int           @default(0)
+  /// Lease held by the worker polling it right now.
+  pollLockedUntil DateTime?
+
   items PayoutItem[]
 
   @@unique([runId, attempt])
+  @@index([nextPollAt])
 }
 
 model PayoutItem {
@@ -621,7 +637,10 @@ model WebhookDelivery {
   endpointId     String
   endpoint       WebhookEndpoint       @relation(fields: [endpointId], references: [id], onDelete: Cascade)
   status         WebhookDeliveryStatus @default(pending)
+  /// Total attempts ever made (only goes up).
   attempts       Int                   @default(0)
+  /// `attempts` when the current retry cycle began (a manual retry starts a fresh cycle).
+  scheduleBase   Int                   @default(0)
   nextAttemptAt  DateTime?
   /// Lease: a worker that claimed this delivery owns it until then (crash-safe).
   lockedUntil    DateTime?
@@ -636,4 +655,38 @@ model WebhookDelivery {
   @@unique([eventId, endpointId])
   @@index([status, nextAttemptAt])
   @@index([endpointId, createdAt])
+}
+
+// ---------------------------------------------------------------- reconciliation
+
+enum ReconciliationIssueStatus {
+  open
+  resolved
+}
+
+/// Something about money that needs a person: a refund made outside TracePay, a
+/// payout PayPal couldn't deliver, a batch PayPal never confirmed… Opened by the
+/// reconciliation worker (or by webhooks), resolved automatically when the cause
+/// clears, or by the publisher with a note.
+model ReconciliationIssue {
+  id           String                    @id @default(cuid())
+  /// The publisher who must act.
+  ownerId      String
+  /// Stable machine code, e.g. "sale_refunded", "payout_failed".
+  kind         String
+  subjectType  String
+  subjectId    String
+  /// Plain-language summary and what to do.
+  title        String
+  detail       String
+  data         Json                      @default("{}")
+  status       ReconciliationIssueStatus @default(open)
+  openedAt     DateTime                  @default(now())
+  resolvedAt   DateTime?
+  /// "auto" when the cause cleared by itself; otherwise the user who resolved it.
+  resolvedBy   String?
+  resolution   String?
+
+  @@index([ownerId, status, openedAt])
+  @@index([kind, subjectId, status])
 }

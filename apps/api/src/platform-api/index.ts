@@ -1,7 +1,8 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { HttpError } from '../http/errors';
-import { EVENT_TYPES } from '../modules/platform/events';
+import { secondsUntilReset } from '../http/limits';
+import { EVENT_DATA_SHAPES, EVENT_TYPES } from '../modules/platform/events';
 import { SIGNATURE_HEADER, SIGNATURE_TOLERANCE_SECONDS } from '../modules/platform/webhook-crypto';
 import { buildOpenApi, mount, routes, v1ErrorHandler } from './framework';
 import { platformRoutes, type PlatformDeps } from './routes';
@@ -23,7 +24,11 @@ Read-only keys can make GET requests only. Keys can expire and be revoked at any
 ## Conventions
 - JSON in and out, \`snake_case\` fields, timestamps in ISO-8601, money as integer **cents**.
 - Lists return \`{ object: "list", data, has_more, next_cursor }\`; pass \`next_cursor\` as \`starting_after\` for the next page.
-- Errors return \`{ error: { type, code, message, param? }, request_id }\` with a matching HTTP status.
+- Errors return \`{ error: { type, code, message, param? }, request_id }\` with a matching HTTP status. Common codes:
+  \`parameter_invalid\`, \`invalid_json\`, \`invalid_cursor\`, \`unauthenticated\`, \`invalid_api_key\`, \`read_only_key\`, \`forbidden\`,
+  \`publisher_account_required\`, \`resource_missing\`, \`route_not_found\`, \`conflict\`, \`invalid_state\`, \`resource_limit\`,
+  \`too_many_active_runs\`, \`rights_not_satisfied\`, \`generation_failed\`, \`idempotency_key_reused\`, \`idempotency_in_progress\`,
+  \`rate_limited\`, \`quota_exceeded\`, \`paypal_unavailable\`, \`payouts_unavailable\`.
 - **Idempotency:** send an \`Idempotency-Key\` header with any POST to make it safe to retry. The same key and body
   return the first response (header \`Idempotent-Replayed: true\`); the same key with a different body is refused (\`422\`).
 - **Rate limits:** per API key; \`429\` responses carry \`Retry-After\`. Standard \`RateLimit\` headers show what is left.
@@ -90,7 +95,9 @@ export function openApiDocument(serverUrl: string) {
         {
           post: {
             summary: e.type,
-            description: e.description,
+            description: `${e.description}\n\n\`data\`: \`object_type\` = \`${EVENT_DATA_SHAPES[e.type]?.objectType}\`, \`object_id\`${
+              EVENT_DATA_SHAPES[e.type]?.objectType === 'report' || e.type === 'ping' ? '' : ', `report_id` (when the object belongs to a report)'
+            }${(EVENT_DATA_SHAPES[e.type]?.fields ?? []).map((f) => `, \`${f}\``).join('')}.`,
             parameters: [{ name: SIGNATURE_HEADER, in: 'header', required: true, schema: { type: 'string' }, description: 'Signature to verify with your endpoint secret.' }],
             requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/Event' } } } },
             responses: { '200': { description: 'Any 2xx acknowledges the event.' } },
@@ -129,7 +136,7 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
       standardHeaders: 'draft-8',
       legacyHeaders: false,
       keyGenerator: (req) => (req.apiKey ? `key:${req.apiKey.id}` : `user:${req.user!.id}`),
-      handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests for this API key. Slow down and retry after the Retry-After seconds.', { code: 'rate_limited' }, 60)),
+      handler: (req, _res, next) => next(new HttpError(429, 'Too many requests for this API key. Slow down and retry after the Retry-After seconds.', { code: 'rate_limited' }, secondsUntilReset(req, 60_000))),
     }),
   );
 
@@ -141,7 +148,7 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
       standardHeaders: false,
       legacyHeaders: false,
       keyGenerator: (req) => `account:${req.user!.id}`,
-      handler: (_req, _res, next) => next(new HttpError(429, 'Too many requests for this account. Slow down and retry after the Retry-After seconds.', { code: 'rate_limited' }, 60)),
+      handler: (req, _res, next) => next(new HttpError(429, 'Too many requests for this account. Slow down and retry after the Retry-After seconds.', { code: 'rate_limited' }, secondsUntilReset(req, 60_000))),
     }),
   );
 

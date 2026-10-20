@@ -4,6 +4,8 @@ import { Link } from 'react-router';
 
 // Pinned: the interactive reference renders the live OpenAPI document of this deployment.
 const SCALAR_SRC = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.4/dist/browser/standalone.js';
+// Subresource Integrity: if the CDN copy ever changed, the browser refuses to run it on our origin.
+const SCALAR_SRI = 'sha384-omTRdD9MbjA1vm12DqRUVvqJlr3VzSixvAdF1Jruu9AJOiJKyTKraIB6DyX+m10M';
 const SPEC_URL = '/api/v1/openapi.json';
 
 declare global {
@@ -18,6 +20,9 @@ function loadScalar(): Promise<void> {
   loading ??= new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = SCALAR_SRC;
+    s.integrity = SCALAR_SRI;
+    s.crossOrigin = 'anonymous';
+    s.referrerPolicy = 'no-referrer';
     s.async = true;
     s.onload = () => resolve();
     s.onerror = () => {

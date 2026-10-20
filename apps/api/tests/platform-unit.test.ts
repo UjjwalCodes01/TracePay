@@ -92,7 +92,7 @@ describe('SSRF policy', () => {
     for (const ip of ['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111', '::ffff:8.8.8.8']) expect(isPublicAddress(ip), ip).toBe(true);
     for (const ip of [
       '127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1',
-      '255.255.255.255', '::1', '::', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '64:ff9b::a00:1', '2002:a00:1::', 'not-an-ip',
+      '255.255.255.255', '::1', '::', '::7f00:1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '64:ff9b::a00:1', '2002:a00:1::', 'not-an-ip',
     ]) {
       expect(isPublicAddress(ip), ip).toBe(false);
     }
@@ -110,6 +110,8 @@ describe('SSRF policy', () => {
       ['https://169.254.169.254/latest/meta-data', /private/],
       ['https://localhost/x', /local/],
       ['https://api.internal/x', /local/],
+      ['https://tracepay-db:5432/x', /full public domain/],
+      ['https://redis/x', /full public domain/],
       ['not a url', /valid URL/],
     ];
     for (const [url, reason] of bad) {
@@ -118,6 +120,13 @@ describe('SSRF policy', () => {
       if (!r.ok) expect(r.reason).toMatch(reason);
     }
     expect(checkWebhookUrl('http://127.0.0.1:9/x', local).ok).toBe(true);
+    // Only HTTPS-ish ports: no talking to mail, SSH or databases on someone else's host.
+    for (const ok of ['https://hooks.example.com:443/x', 'https://hooks.example.com:8443/x', 'https://hooks.example.com:3000/x']) expect(checkWebhookUrl(ok, strict).ok, ok).toBe(true);
+    for (const bad of ['https://hooks.example.com:25/x', 'https://hooks.example.com:22/x', 'https://hooks.example.com:80/x', 'https://hooks.example.com:0/x']) {
+      const r = checkWebhookUrl(bad, strict);
+      expect(r.ok, bad).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/Port/);
+    }
   });
 });
 
@@ -171,7 +180,8 @@ describe('safePost', () => {
   it('reports connection failures as errors, not crashes', async () => {
     const r = await post('http://127.0.0.1:1/x');
     expect(r.statusCode).toBeNull();
-    expect(r.error).toMatch(/ECONNREFUSED/);
+    expect(r.error).toMatch(/refused the connection/);
+    expect(r.error).not.toMatch(/127\.0\.0\.1/);
   });
 });
 

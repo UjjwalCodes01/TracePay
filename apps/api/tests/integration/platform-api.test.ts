@@ -255,6 +255,19 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       expect(new Set(seen).size).toBe(total);
     });
 
+    it('pages through sources and finds any visible source directly', async () => {
+      const all: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const res: request.Response = await request(app).get(`/api/v1/sources?limit=2${cursor ? `&starting_after=${cursor}` : ''}`).set(atlas).expect(200);
+        all.push(...res.body.data.map((x: { id: string }) => x.id));
+        cursor = res.body.next_cursor;
+      } while (cursor);
+      expect(new Set(all).size).toBe(all.length);
+      expect(all.length).toBeGreaterThanOrEqual(5);
+      for (const id of all) await request(app).get(`/api/v1/sources/${id}`).set(atlas).expect(200);
+    });
+
     it('validates limit and cursor', async () => {
       for (const q of ['limit=0', 'limit=101', 'limit=abc']) expect((await request(app).get(`/api/v1/builds?${q}`).set(atlas)).status, q).toBe(400);
       const bad = await request(app).get('/api/v1/builds?starting_after=garbage').set(atlas).expect(400);
@@ -297,6 +310,14 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       await request(app).post('/api/v1/builds').set({ ...atlas, 'Idempotency-Key': 'gen-running' }).send(body).expect(201);
     });
 
+    it('forgets keys after 24 hours even before the cleanup sweep runs', async () => {
+      const first = await request(app).post('/api/v1/builds').set({ ...atlas, 'Idempotency-Key': 'old-key' }).send(body).expect(201);
+      await db().idempotencyKey.update({ where: { userId_key: { userId: 'user_atlas', key: 'old-key' } }, data: { createdAt: new Date(Date.now() - 25 * 3_600_000) } });
+      const again = await request(app).post('/api/v1/builds').set({ ...atlas, 'Idempotency-Key': 'old-key' }).send(body).expect(201);
+      expect(again.headers['idempotent-replayed']).toBeUndefined();
+      expect(again.body.id).not.toBe(first.body.id);
+    });
+
     it('scopes keys per account and validates them', async () => {
       await request(app).post('/api/v1/builds').set({ ...bearer(otherKey), 'Idempotency-Key': 'build-1' }).send({ intent, source_version_ids: PASSING }).expect(201);
       await request(app).post('/api/v1/builds').set({ ...atlas, 'Idempotency-Key': 'x'.repeat(256) }).send(body).expect(400);
@@ -316,6 +337,12 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       await request(app).post('/api/builds/preflight').set({ 'X-Demo-User': 'user_atlas', Origin: TEST_ORIGIN, 'Content-Type': 'application/json' }).send('{oops').expect(400);
     });
 
+    it('uses one vocabulary of error codes', async () => {
+      expect((await request(app).get('/api/v1/webhook_endpoints/nope').set(atlas).expect(404)).body.error.code).toBe('resource_missing');
+      expect((await request(app).get('/api/v1/licenses/nope').set(atlas).expect(404)).body.error.code).toBe('resource_missing');
+      expect((await request(app).post('/api/v1/webhook_endpoints').set(atlas).send({ url: 'ftp://x.example', enabled_events: ['*'] }).expect(400)).body.error.code).toBe('parameter_invalid');
+    });
+
     it('404s unknown routes in the same shape', async () => {
       expect((await request(app).get('/api/v1/nope').set(atlas).expect(404)).body.error.code).toBe('route_not_found');
     });
@@ -326,7 +353,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       const limited = testApp(paypal, { apiRateLimitPerMinute: 3 });
       for (let i = 0; i < 3; i++) await request(limited).get('/api/v1/account').set(atlas).expect(200);
       const res = await request(limited).get('/api/v1/account').set(atlas).expect(429);
-      expect(res.headers['retry-after']).toBeDefined();
+      // The real time until the window resets, not a fixed guess.
+      expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+      expect(Number(res.headers['retry-after'])).toBeLessThanOrEqual(60);
       expect(res.body.error.type).toBe('rate_limit_error');
       await request(limited).get('/api/v1/account').set(bearer(otherKey)).expect(200);
     });
@@ -362,6 +391,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('platform API /api/v1 (integration
       for (const ref of refs) expect(spec.components.schemas[ref], ref).toBeDefined();
       expect(JSON.stringify(spec)).not.toContain('$defs');
       expect(Object.keys(spec.webhooks)).toContain('sale.completed');
+      // Each event documents what its data carries.
+      expect(spec.webhooks['sale.completed'].post.description).toMatch(/`order_id`, `capture_id`, `captured_cents`/);
+      expect(spec.servers.map((s: { url: string }) => s.url)).toEqual(['http://localhost:4000/api/v1', '/api/v1']);
       expect(spec).toEqual(openApiDocument('http://localhost:4000/api/v1'));
       // Optional bodies are documented as optional; required ones as required.
       expect(spec.paths['/reports/{id}/withdraw'].post.requestBody.required).toBe(false);

@@ -170,15 +170,30 @@ interface Claim {
   lease: Date;
 }
 
-/** Claims due deliveries with a lease. SKIP LOCKED: concurrent workers never claim the same one. */
+/** At most this many deliveries per endpoint in one pass: a slow or dead endpoint can't hold up everyone else's. */
+const PER_ENDPOINT_PER_PASS = 2;
+
+/**
+ * Claims due deliveries with a lease. SKIP LOCKED: concurrent workers never claim
+ * the same one. Fair: per endpoint, only its oldest few are taken in a pass.
+ */
 async function claimDue(db: Db, now: Date, limit: number): Promise<Claim[]> {
   const lease = new Date(now.getTime() + LEASE_MS);
   const rows = await db.$queryRaw<{ id: string }[]>`
     UPDATE "WebhookDelivery" SET "lockedUntil" = ${lease}, "updatedAt" = ${now}
-    WHERE id IN (SELECT id FROM "WebhookDelivery"
-                 WHERE status = 'pending' AND "nextAttemptAt" <= ${now} AND ("lockedUntil" IS NULL OR "lockedUntil" < ${now})
-                 ORDER BY "nextAttemptAt" ASC LIMIT ${limit}
-                 FOR UPDATE SKIP LOCKED)
+    WHERE id IN (
+      SELECT id FROM "WebhookDelivery"
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT id, "nextAttemptAt", row_number() OVER (PARTITION BY "endpointId" ORDER BY "nextAttemptAt", id) AS rn
+          FROM "WebhookDelivery"
+          WHERE status = 'pending' AND "nextAttemptAt" <= ${now} AND ("lockedUntil" IS NULL OR "lockedUntil" < ${now})
+        ) ranked
+        WHERE rn <= ${PER_ENDPOINT_PER_PASS}
+        ORDER BY "nextAttemptAt" ASC
+        LIMIT ${limit}
+      )
+      FOR UPDATE SKIP LOCKED)
     RETURNING id`;
   return rows.map((r) => ({ id: r.id, lease }));
 }
@@ -225,6 +240,7 @@ async function attempt(deps: WebhookDeps, claim: Claim, now: Date): Promise<void
   const body = JSON.stringify(eventEnvelope(delivery.event));
   const timestamp = Math.floor(now.getTime() / 1000);
   const attemptNo = delivery.attempts + 1;
+  const cycleAttempt = attemptNo - delivery.scheduleBase;
   const isPing = delivery.event.type === PING_EVENT.type;
 
   const result = await safePost(
@@ -248,7 +264,7 @@ async function attempt(deps: WebhookDeps, claim: Claim, now: Date): Promise<void
     : (result.error ?? (result.statusCode !== null && result.statusCode >= 300 && result.statusCode < 400 ? `HTTP ${result.statusCode}: redirects are not followed` : `HTTP ${result.statusCode}`));
   const error = reason === null ? null : clean(reason, 500);
   const responseSnippet = clean(result.body, 300);
-  const delay = ok || gone || isPing ? null : retryDelay(attemptNo);
+  const delay = ok || gone || isPing ? null : retryDelay(cycleAttempt);
   const status = ok ? 'succeeded' : delay === null ? 'failed' : 'pending';
   const history: HistoryEntry[] = [
     ...(((delivery.history as unknown as HistoryEntry[]) ?? []) as HistoryEntry[]),
@@ -304,10 +320,10 @@ async function attempt(deps: WebhookDeps, claim: Claim, now: Date): Promise<void
  * attempt — so it can never be re-sent in a tight loop.
  */
 async function recordCrash(db: Db, claim: Claim, now: Date, err: unknown): Promise<void> {
-  const row = await db.webhookDelivery.findUnique({ where: { id: claim.id }, select: { attempts: true, event: { select: { type: true } } } });
+  const row = await db.webhookDelivery.findUnique({ where: { id: claim.id }, select: { attempts: true, scheduleBase: true, event: { select: { type: true } } } });
   if (!row) return;
   const attemptNo = row.attempts + 1;
-  const delay = row.event.type === PING_EVENT.type ? null : retryDelay(attemptNo);
+  const delay = row.event.type === PING_EVENT.type ? null : retryDelay(attemptNo - row.scheduleBase);
   await db.webhookDelivery.updateMany({
     where: { id: claim.id, status: 'pending', lockedUntil: claim.lease },
     data: {
@@ -331,16 +347,20 @@ async function attemptSafely(deps: WebhookDeps, claim: Claim, now: Date) {
 }
 
 /** Delivers everything due, in batches. Returns how many deliveries were attempted. */
-export async function deliverDue(deps: WebhookDeps, opts: { now?: () => Date; batchSize?: number; maxBatches?: number } = {}): Promise<number> {
+export async function deliverDue(
+  deps: WebhookDeps,
+  opts: { now?: () => Date; batchSize?: number; maxBatches?: number; shouldContinue?: () => boolean } = {},
+): Promise<number> {
   const now = opts.now ?? (() => new Date());
-  const batchSize = opts.batchSize ?? 10;
+  const batchSize = opts.batchSize ?? 20;
   let total = 0;
   for (let batch = 0; batch < (opts.maxBatches ?? 20); batch++) {
+    // Shutting down: don't claim more work than can be finished.
+    if (opts.shouldContinue && !opts.shouldContinue()) break;
     const claims = await claimDue(deps.db, now(), batchSize);
     if (claims.length === 0) break;
     total += claims.length;
     await Promise.all(claims.map((c) => attemptSafely(deps, c, now())));
-    if (claims.length < batchSize) break;
   }
   return total;
 }
@@ -382,13 +402,23 @@ export async function sendTestEvent(deps: WebhookDeps, ownerId: string, endpoint
   return deps.db.webhookDelivery.findUniqueOrThrow({ where: { id: delivery.id }, select: deliverySelect });
 }
 
-/** Queues a delivery again with a fresh retry schedule (keeps its history). */
-export async function retryDelivery(db: Db, ownerId: string, deliveryId: string): Promise<DeliveryRow> {
-  const delivery = await db.webhookDelivery.findFirst({ where: { id: deliveryId, endpoint: { ownerId } }, select: { status: true, endpoint: { select: { status: true } } } });
+/**
+ * Queues a delivery again with a fresh retry schedule. Attempt numbers keep
+ * counting up (the history stays intact); only the backoff restarts.
+ * `allowDelivered`: re-send even one the endpoint already accepted (event resend).
+ */
+export async function retryDelivery(db: Db, ownerId: string, deliveryId: string, opts: { allowDelivered?: boolean } = {}): Promise<DeliveryRow> {
+  const delivery = await db.webhookDelivery.findFirst({ where: { id: deliveryId, endpoint: { ownerId } }, select: { status: true, attempts: true, endpoint: { select: { status: true } } } });
   if (!delivery) throw new WebhookError('Delivery not found.', 'not_found');
   if (delivery.status === 'pending') throw new WebhookError('This delivery is already queued.', 'state');
+  if (delivery.status === 'succeeded' && !opts.allowDelivered) {
+    throw new WebhookError('This delivery already succeeded. To send the event again, use POST /events/{id}/resend.', 'state');
+  }
   if (delivery.endpoint.status !== 'enabled') throw new WebhookError('Enable the endpoint before retrying its deliveries.', 'state');
-  await db.webhookDelivery.updateMany({ where: { id: deliveryId, status: { not: 'pending' } }, data: { status: 'pending', attempts: 0, nextAttemptAt: new Date(), lockedUntil: null } });
+  await db.webhookDelivery.updateMany({
+    where: { id: deliveryId, status: { not: 'pending' } },
+    data: { status: 'pending', scheduleBase: delivery.attempts, nextAttemptAt: new Date(), lockedUntil: null },
+  });
   return db.webhookDelivery.findUniqueOrThrow({ where: { id: deliveryId }, select: deliverySelect });
 }
 
@@ -403,7 +433,7 @@ export async function resendEvent(db: Db, ownerId: string, eventId: string, endp
   if (endpoint.status !== 'enabled') throw new WebhookError('Enable the endpoint before sending events to it.', 'state');
 
   const requeue = async (id: string) =>
-    retryDelivery(db, ownerId, id).catch(async (err) => {
+    retryDelivery(db, ownerId, id, { allowDelivered: true }).catch(async (err) => {
       // Already queued: that is the outcome the caller wants.
       if (err instanceof WebhookError && err.code === 'state') return db.webhookDelivery.findUniqueOrThrow({ where: { id }, select: deliverySelect });
       throw err;
@@ -464,10 +494,14 @@ export class WebhookDispatcher {
     this.schedule(reason === 'event' ? 300 : 1_000);
   }
 
-  stop(): void {
+  private current: Promise<void> | null = null;
+
+  /** Stops scheduling and claiming; resolves once in-flight deliveries are recorded. */
+  async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    await this.current;
   }
 
   private schedule(delayMs: number) {
@@ -482,14 +516,21 @@ export class WebhookDispatcher {
     this.timer.unref();
   }
 
-  private async tick() {
+  private tick(): Promise<void> {
+    this.current = this.pass().finally(() => {
+      this.current = null;
+    });
+    return this.current;
+  }
+
+  private async pass() {
     this.timer = null;
     this.dueAt = Infinity;
-    if (this.running) return this.schedule(1_000);
+    if (this.running || this.stopped) return this.schedule(1_000);
     this.running = true;
     try {
       const deps = this.deps();
-      await deliverDue(deps);
+      await deliverDue(deps, { shouldContinue: () => !this.stopped });
       this.failures = 0;
       if (Date.now() < this.eventWindowUntil) {
         this.schedule(this.opts.pollMs ?? 3_000);
