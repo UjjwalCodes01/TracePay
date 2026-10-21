@@ -63,17 +63,35 @@ export const paypalEnv = () =>
     'PayPal',
   );
 
-export const vertexEnv = () =>
-  parse(
-    z.object({
-      GOOGLE_CLOUD_PROJECT: nonEmpty,
-      GOOGLE_CLOUD_LOCATION: nonEmpty.default('us-central1'),
-      VERTEX_MODEL: nonEmpty,
-      /** Service-account JSON (raw or base64) for hosts without gcloud ADC, e.g. Render. */
-      GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
-    }),
-    'Vertex AI',
-  );
+/**
+ * The AI model TracePay uses (Gemini), from either of two places:
+ *  - Vertex AI (Google Cloud): GOOGLE_CLOUD_PROJECT + VERTEX_MODEL, with gcloud ADC
+ *    locally or GOOGLE_SERVICE_ACCOUNT_JSON on a server;
+ *  - the Gemini API (Google AI Studio): GEMINI_API_KEY, optionally GEMINI_MODEL.
+ * Vertex wins when both are set. Null when neither is: the labelled non-AI fallbacks run.
+ */
+export type AiConfig =
+  | { provider: 'vertex'; project: string; location: string; model: string; serviceAccountJson?: string }
+  | { provider: 'gemini-api'; apiKey: string; model: string };
+
+export function aiConfig(): AiConfig | null {
+  const e = process.env;
+  if (e.GOOGLE_CLOUD_PROJECT?.trim() && e.VERTEX_MODEL?.trim()) {
+    return {
+      provider: 'vertex',
+      project: e.GOOGLE_CLOUD_PROJECT.trim(),
+      location: e.GOOGLE_CLOUD_LOCATION?.trim() || 'us-central1',
+      model: e.VERTEX_MODEL.trim(),
+      serviceAccountJson: e.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() || undefined,
+    };
+  }
+  if (e.GEMINI_API_KEY?.trim()) {
+    return { provider: 'gemini-api', apiKey: e.GEMINI_API_KEY.trim(), model: e.GEMINI_MODEL?.trim() || 'gemini-flash-latest' };
+  }
+  return null;
+}
+
+export const aiReady = (): boolean => aiConfig() !== null;
 
 export const signingEnv = () =>
   parse(z.object({ AUDIT_SIGNING_PRIVATE_KEY: nonEmpty }), 'audit signing');

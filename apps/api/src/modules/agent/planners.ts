@@ -1,4 +1,5 @@
 import type { Content, Part } from '@google/genai';
+import { aiReady } from '../../config/env';
 import { vertex } from '../../integrations/ai/vertex';
 import { TOOL_DECLARATIONS } from './tools';
 
@@ -161,6 +162,5 @@ export class RuleBasedPlanner implements AgentPlanner {
 
 export function pickPlanner(mode = process.env.GENERATION_MODE ?? 'auto'): AgentPlanner {
   if (mode === 'fixture') return new RuleBasedPlanner();
-  const vertexReady = Boolean(process.env.GOOGLE_CLOUD_PROJECT && process.env.VERTEX_MODEL);
-  return mode === 'vertex' || vertexReady ? new GeminiPlanner() : new RuleBasedPlanner();
+  return mode === 'vertex' || aiReady() ? new GeminiPlanner() : new RuleBasedPlanner();
 }

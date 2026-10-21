@@ -1,5 +1,5 @@
 import { createApp } from './app';
-import { paypalEnv, serverEnv, signingEnv } from './config/env';
+import { aiReady, paypalEnv, serverEnv, signingEnv } from './config/env';
 import { db } from './db';
 import { HttpError } from './http/errors';
 import { logger } from './http/logger';
@@ -72,7 +72,7 @@ const app = createApp({
     corsOrigins,
     paypalClientId: paypalConfigured ? paypalEnv().PAYPAL_CLIENT_ID : null,
     paypalWebhookId: process.env.PAYPAL_WEBHOOK_ID || undefined,
-    vertexReady: Boolean(process.env.GOOGLE_CLOUD_PROJECT && process.env.VERTEX_MODEL),
+    vertexReady: aiReady(),
     demoMode: env.DEMO_MODE,
     cookieSecure: env.NODE_ENV === 'production',
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,

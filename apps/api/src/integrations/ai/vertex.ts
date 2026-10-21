@@ -1,27 +1,34 @@
 import { GoogleGenAI } from '@google/genai';
 import type { z } from 'zod';
 import { toJSONSchema } from 'zod';
-import { vertexEnv } from '../../config/env';
+import { aiConfig } from '../../config/env';
 
-let client: { ai: GoogleGenAI; model: string } | null = null;
+let client: { ai: GoogleGenAI; model: string; provider: string } | null = null;
 
 /**
- * Vertex AI (Gemini) client. Locally it uses gcloud Application Default
- * Credentials; on Render it uses GOOGLE_SERVICE_ACCOUNT_JSON (raw or base64).
+ * The Gemini client: through Vertex AI (gcloud Application Default Credentials
+ * locally, GOOGLE_SERVICE_ACCOUNT_JSON on a server) or through the Gemini API with
+ * an API key from Google AI Studio. See aiConfig().
  */
-export function vertex(): { ai: GoogleGenAI; model: string } {
+export function vertex(): { ai: GoogleGenAI; model: string; provider: string } {
   if (client) return client;
-  const env = vertexEnv();
-  const credentials = env.GOOGLE_SERVICE_ACCOUNT_JSON ? parseServiceAccount(env.GOOGLE_SERVICE_ACCOUNT_JSON) : undefined;
-  client = {
-    ai: new GoogleGenAI({
-      vertexai: true,
-      project: env.GOOGLE_CLOUD_PROJECT,
-      location: env.GOOGLE_CLOUD_LOCATION,
-      ...(credentials ? { googleAuthOptions: { credentials, scopes: ['https://www.googleapis.com/auth/cloud-platform'] } } : {}),
-    }),
-    model: env.VERTEX_MODEL,
-  };
+  const cfg = aiConfig();
+  if (!cfg) throw new Error('No AI model is configured (set GEMINI_API_KEY, or GOOGLE_CLOUD_PROJECT and VERTEX_MODEL).');
+  if (cfg.provider === 'vertex') {
+    const credentials = cfg.serviceAccountJson ? parseServiceAccount(cfg.serviceAccountJson) : undefined;
+    client = {
+      ai: new GoogleGenAI({
+        vertexai: true,
+        project: cfg.project,
+        location: cfg.location,
+        ...(credentials ? { googleAuthOptions: { credentials, scopes: ['https://www.googleapis.com/auth/cloud-platform'] } } : {}),
+      }),
+      model: cfg.model,
+      provider: 'Vertex AI',
+    };
+  } else {
+    client = { ai: new GoogleGenAI({ apiKey: cfg.apiKey }), model: cfg.model, provider: 'Gemini API' };
+  }
   return client;
 }
 
@@ -52,7 +59,7 @@ export async function generateStructured<S extends z.ZodType>(args: {
     },
   });
   const text = response.text;
-  if (!text) throw new Error('Vertex AI returned an empty response.');
+  if (!text) throw new Error('The AI model returned an empty response.');
   const data = args.schema.parse(JSON.parse(text));
   return {
     data,

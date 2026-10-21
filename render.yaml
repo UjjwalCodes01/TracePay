@@ -63,6 +63,8 @@ services:
         sync: false
       - key: PAYPAL_WEBHOOK_ID
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false # from aistudio.google.com/apikey; or use the Vertex AI keys below
       - key: GOOGLE_CLOUD_PROJECT
         sync: false
       - key: GOOGLE_CLOUD_LOCATION

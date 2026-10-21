@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { BuildIntent } from '@tracepay/shared';
+import { aiReady } from '../../config/env';
 import { generateStructured } from '../../integrations/ai/vertex';
 import type { CitationError, DraftSection } from './citations';
 import type { RetrievedPassage } from './retrieval';
@@ -123,6 +124,5 @@ export type GenerationMode = 'vertex' | 'fixture' | 'auto';
 export function pickWriter(mode: GenerationMode = (process.env.GENERATION_MODE as GenerationMode) ?? 'auto'): ReportWriter {
   if (mode === 'fixture') return new FixtureReportWriter();
   if (mode === 'vertex') return new VertexReportWriter();
-  const vertexReady = Boolean(process.env.GOOGLE_CLOUD_PROJECT && process.env.VERTEX_MODEL);
-  return vertexReady ? new VertexReportWriter() : new FixtureReportWriter();
+  return aiReady() ? new VertexReportWriter() : new FixtureReportWriter();
 }

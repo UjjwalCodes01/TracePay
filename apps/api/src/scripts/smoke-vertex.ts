@@ -1,9 +1,9 @@
 /**
- * Day-1 Vertex AI proof: one structured-output call.
+ * Gemini proof (Gemini API key or Vertex AI): one structured-output call.
  *   npm run smoke:vertex -w @tracepay/api
  */
 import { z } from 'zod';
-import { generateStructured } from '../integrations/ai/vertex';
+import { generateStructured, vertex } from '../integrations/ai/vertex';
 
 const Schema = z.object({
   summary: z.string(),
@@ -19,7 +19,7 @@ async function main() {
       'but the build is a report for sale. Summarise the build status and explain the failed rule.',
     schema: Schema,
   });
-  console.log(`✓ Vertex AI responded (${model}, ${Date.now() - started} ms, ${usage.inputTokens ?? '?'} in / ${usage.outputTokens ?? '?'} out tokens)`);
+  console.log(`✓ ${vertex().provider} responded (${model}, ${Date.now() - started} ms, ${usage.inputTokens ?? '?'} in / ${usage.outputTokens ?? '?'} out tokens)`);
   console.log(JSON.stringify(data, null, 2));
 }
 

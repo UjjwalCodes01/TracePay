@@ -101,7 +101,7 @@ Webhooks can be missed — a sleeping server, a PayPal outage, a misconfigured e
 
 Checks are claimed with leases (`SKIP LOCKED`), so several servers share the work without doing anything twice; PayPal errors back off instead of retrying in a loop; and the worker sleeps until the next scheduled check, so an idle deployment lets Neon suspend. Issues are available in the dashboard, at `GET /api/v1/reconciliation/issues`, and as `reconciliation.issue_opened` / `issue_resolved` webhooks.
 
-## How AI is used (Vertex AI · Gemini)
+## How AI is used (Gemini)
 
 | Role | What the model does | What it is **not** allowed to do |
 |---|---|---|
@@ -110,7 +110,7 @@ Checks are claimed with leases (`SKIP LOCKED`), so several servers share the wor
 | **License drafter** (structured output) | Reads a contributor's license document and drafts normalized terms with a verbatim quote per field | Bind anyone — both parties confirm; quotes not found in the document are flagged |
 | **Explainer** | Turns failed rules into plain language for the publisher | Change the verdict — the compiler's decision is returned, never the model's |
 
-When Vertex AI isn't configured, TracePay falls back to a **rule-based planner** and an **extractive fixture writer**. Both are clearly labeled in the UI and in the receipt (`fromFixture: true`) and are never presented as model output.
+When no Gemini model is configured (neither `GEMINI_API_KEY` nor Vertex AI), TracePay falls back to a **rule-based planner** and an **extractive fixture writer**. Both are clearly labeled in the UI and in the receipt (`fromFixture: true`) and are never presented as model output.
 
 ---
 
@@ -133,7 +133,7 @@ flowchart LR
     Audit[Hash-chained audit log<br/>Ed25519 receipts]
   end
   DB[(PostgreSQL · Neon)]
-  Vertex[[Vertex AI · Gemini]]
+  Vertex[[Gemini · API key or Vertex AI]]
   PayPal[[PayPal sandbox<br/>Orders v2 · Payouts · Webhooks]]
 
   Web --> API
@@ -157,7 +157,7 @@ flowchart LR
 | PayPal sandbox Orders, capture, Payouts, webhooks | All sources, contributors and numbers are fictional |
 | License compiler, settlement engine, audit chain, signatures | The seeded demo roles, reachable with one click when `DEMO_MODE=true` |
 | Accounts: sign-up / sign-in, scrypt passwords, httpOnly sessions, API keys | |
-| Vertex AI Gemini agent + writer (when configured) | Fixture writer / rule-based planner when Vertex is not configured — always labeled |
+| Vertex AI Gemini agent + writer (when configured) | Fixture writer / rule-based planner when Gemini is not configured — always labeled |
 | PostgreSQL persistence | "Reset demo" restores TracePay fixtures; it does **not** reverse PayPal sandbox history |
 
 TracePay enforces recorded, approved license terms. It does not establish legal ownership of source material, is not legal advice, and is not an escrow service — the publisher receives the payment and then pays contributors.
@@ -166,7 +166,7 @@ TracePay enforces recorded, approved license terms. It does not establish legal 
 
 ## Run it locally
 
-**Prerequisites:** Node 20.19+ (24 recommended), Docker, a PayPal Developer account. Vertex AI is optional.
+**Prerequisites:** Node 20.19+ (24 recommended), Docker, a PayPal Developer account. Gemini (an API key or Vertex AI) is optional.
 
 ```bash
 git clone https://github.com/UjjwalCodes01/TracePay.git && cd TracePay
@@ -192,7 +192,8 @@ npm run dev:web                                # http://localhost:5173
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | yes | **Sandbox** REST app. Enable *Payouts* in the app's features |
 | `DEMO_PAYEE_EMAILS` | for payouts | Three sandbox **personal** account emails (Northwind, Okafor, Lumen) |
 | `PAYPAL_WEBHOOK_ID` | for webhooks | Register `https://<api>/api/webhooks/paypal` in the dashboard |
-| `GOOGLE_CLOUD_PROJECT`, `VERTEX_MODEL` | for live AI | Plus `gcloud auth application-default login` locally, or `GOOGLE_SERVICE_ACCOUNT_JSON` on a server |
+| `GEMINI_API_KEY` | for live AI | A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey); `GEMINI_MODEL` optional (default `gemini-flash-latest`) |
+| `GOOGLE_CLOUD_PROJECT`, `VERTEX_MODEL` | or, for live AI | Vertex AI instead of an API key: plus `gcloud auth application-default login` locally, or `GOOGLE_SERVICE_ACCOUNT_JSON` on a server |
 | `AUDIT_SIGNING_PRIVATE_KEY` | yes | Ed25519 key from `npm run keys:generate` |
 | `DEMO_MODE` | no (default `false`) | `true` enables the one-click demo roles and "Reset demo". **Keep `false` for real users** |
 | `CORS_ORIGINS` | in production | The web app's origin(s); also used for the CSRF origin check |
@@ -225,7 +226,7 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
 | **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
-| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 251 tests against real Postgres, Render Blueprint, Vercel config |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 255 tests against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 
@@ -261,7 +262,7 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 ## Tests
 
 ```bash
-npm run test:integration -w @tracepay/api   # 251 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api   # 255 tests; creates/migrates a tracepay_test database
 ```
 
 | Suite | Covers |
@@ -298,7 +299,7 @@ render.yaml   Render Blueprint (API; database on Neon); apps/web/vercel.json for
 ## Tools used
 
 - **PayPal Developer Platform (sandbox):** Orders v2, JS SDK Smart Buttons, Payouts, Webhooks.
-- **Google Vertex AI (Gemini):** function-calling agent, structured-output report writer, failure explanations — via `@google/genai`.
+- **Google Gemini (Gemini API or Vertex AI):** function-calling agent, structured-output report writer, failure explanations — via `@google/genai`.
 - **AG Grid Community:** registry and settlement ledger. **React Flow:** provenance graph.
 - **Render** (API), **Neon** (serverless Postgres) and **Vercel** (web).
 - Node.js, TypeScript, Express 5, Prisma 7, PostgreSQL 17, React 19, Tailwind CSS 4, Vitest.
