@@ -7,7 +7,10 @@ import pg from 'pg';
  */
 export default async function setup() {
   const url = process.env.TEST_DATABASE_URL;
-  if (!url) return;
+  if (!url) {
+    console.warn('\n  TEST_DATABASE_URL is not set: only unit tests run. For everything: npm run test:integration -w @tracepay/api\n');
+    return;
+  }
 
   const target = new URL(url);
   const dbName = target.pathname.slice(1);

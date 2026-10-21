@@ -121,6 +121,12 @@ export function createApp(deps: AppDeps) {
   // A JSON API: no HTML is served, so lock everything down.
   app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } } }));
   app.use(cors({ origin: deps.config.corsOrigins, credentials: true }));
+  // Responses are per-user (and pass through Vercel's proxy): never cache them anywhere.
+  // Public documents (the OpenAPI spec) opt back in explicitly.
+  app.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    next();
+  });
 
   // Webhook signature verification needs the exact raw bytes, so this route is
   // mounted before the JSON body parser and outside the general rate limit.

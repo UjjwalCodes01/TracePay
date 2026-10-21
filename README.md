@@ -166,7 +166,7 @@ TracePay enforces recorded, approved license terms. It does not establish legal 
 
 ## Run it locally
 
-**Prerequisites:** Node 20.19+ (24 recommended), Docker, a PayPal Developer account. Gemini (an API key or Vertex AI) is optional.
+**Prerequisites:** Node 22.12+ (24 recommended, see `.node-version`), Docker, a PayPal Developer account. Gemini (an API key or Vertex AI) is optional.
 
 ```bash
 git clone https://github.com/UjjwalCodes01/TracePay.git && cd TracePay
