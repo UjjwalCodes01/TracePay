@@ -429,7 +429,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       method: 'get', path: '/agent_runs', operationId: 'listAgentRuns', tag: 'Publisher Agent', summary: 'List agent runs',
       query: ListQuery, response: R.AgentRunList,
       handler: async ({ user, query }) => {
-        const rows = await db.agentRun.findMany({ where: { ...publisherScope(user), ...cursorWhere(query.starting_after) }, orderBy: pageOrder, take: query.limit + 1, select: R.agentRunSelect });
+        const rows = await db.agentRun.findMany({ where: { kind: 'publisher', ...publisherScope(user), ...cursorWhere(query.starting_after) }, orderBy: pageOrder, take: query.limit + 1, select: R.agentRunSelect });
         return toPage(rows, query.limit, R.agentRunOut);
       },
     }),
@@ -437,7 +437,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       method: 'get', path: '/agent_runs/:id', operationId: 'getAgentRun', tag: 'Publisher Agent', summary: 'Retrieve an agent run',
       params: Id('agent run'), response: R.AgentRun,
       handler: async ({ user, params }) => {
-        const run = await db.agentRun.findFirst({ where: { id: params.id, ...publisherScope(user) }, select: R.agentRunSelect });
+        const run = await db.agentRun.findFirst({ where: { id: params.id, kind: 'publisher', ...publisherScope(user) }, select: R.agentRunSelect });
         if (!run) throw new HttpError(404, 'Agent run not found.');
         return R.agentRunOut(run);
       },
@@ -446,7 +446,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
       method: 'post', path: '/agent_runs/:id/decision', operationId: 'decideAgentRun', roles: ['publisher'], tag: 'Publisher Agent', summary: 'Approve or decline what the agent proposes',
       params: Id('agent run'), body: z.object({ approved: z.boolean() }), response: R.AgentRun, status: 202, errors: [409],
       handler: async ({ user, params, body }) => {
-        const owned = await db.agentRun.findFirst({ where: { id: params.id, ...publisherScope(user) }, select: { id: true } });
+        const owned = await db.agentRun.findFirst({ where: { id: params.id, kind: 'publisher', ...publisherScope(user) }, select: { id: true } });
         if (!owned) throw new HttpError(404, 'Agent run not found.');
         try {
           await decideReplacement(db, params.id, user.id, body.approved);

@@ -74,6 +74,10 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
       await tx.buildJob.deleteMany({ where: { id: { in: buildIds } } });
       await tx.agentStep.deleteMany({ where: { run: { publisherId: { in: publisherIds } } } });
       await tx.agentRun.deleteMany({ where: { publisherId: { in: publisherIds } } });
+      // The demo buyer's Shopping Assistant runs.
+      const buyerIds = DEMO_USERS.filter((u) => u.role === 'buyer').map((u) => u.id);
+      await tx.agentStep.deleteMany({ where: { run: { publisherId: { in: buyerIds } } } });
+      await tx.agentRun.deleteMany({ where: { publisherId: { in: buyerIds } } });
       // Licenses held by the demo publisher (nothing references them any more).
       await tx.licenseGrant.deleteMany({ where: { licenseeId: { in: publisherIds } } });
       // Platform API state: its event log (and pending deliveries), webhook endpoints and idempotency records.

@@ -1,6 +1,6 @@
 import { PayPalButtons, PayPalScriptProvider } from '@paypal/react-paypal-js';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock, GitBranch, Lock, ScrollText, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Clock, GitBranch, Lock, ScrollText, ShieldCheck, Sparkles } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ReportBody } from '../components/ReportBody';
@@ -19,7 +19,17 @@ export function StorePage() {
 
   return (
     <>
-      <PageHeader title="Report Store" subtitle="Research reports built only from licensed sources. Part of every purchase is paid to the people whose work it uses." />
+      <PageHeader
+        title="Report Store"
+        subtitle="Research reports built only from licensed sources. Part of every purchase is paid to the people whose work it uses."
+        action={
+          user?.role === 'buyer' ? (
+            <Link to="/assistant" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-medium hover:bg-slate-50">
+              <Sparkles className="size-4" /> Ask the Shopping Assistant
+            </Link>
+          ) : undefined
+        }
+      />
       {items.length === 0 ? (
         <Empty>No reports are listed yet. Switch to the Publisher role and create one.</Empty>
       ) : (

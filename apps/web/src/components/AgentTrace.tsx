@@ -93,11 +93,16 @@ export function AgentTrace({
   titles,
   onDecide,
   deciding,
+  onStop,
+  stopping,
 }: {
   run: AgentRun;
   titles: Record<string, string>;
   onDecide: (approved: boolean) => void;
   deciding: boolean;
+  /** Stops a run that is working or waiting for a decision. */
+  onStop?: () => void;
+  stopping?: boolean;
 }) {
   const steps = run.steps.filter((s) => s.kind !== 'approval_request');
   const artifactId = run.builds.find((b) => b.artifact)?.artifact?.id;
@@ -111,7 +116,14 @@ export function AgentTrace({
           <Bot className="size-4" /> Publisher Agent
           <Badge tone={run.model.startsWith('gemini') ? 'ai' : 'warn'}>{planner}</Badge>
         </div>
-        <StatusBadge status={run.status} />
+        <div className="flex items-center gap-2">
+          {onStop && (run.status === 'running' || run.status === 'awaiting_approval') && (
+            <Button size="sm" variant="ghost" loading={stopping} onClick={onStop}>
+              Stop
+            </Button>
+          )}
+          <StatusBadge status={run.status} />
+        </div>
       </div>
 
       <ol className="relative space-y-2 border-l border-line pl-5">

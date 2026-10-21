@@ -99,7 +99,7 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
       db.settlementRun.count({ where: { ...myRun, status: 'calculated' } }),
       db.settlementRun.count({ where: { ...myRun, status: 'approved' } }),
       db.settlementRun.count({ where: { ...myRun, status: 'payout_submitted' } }),
-      db.agentRun.count({ where: { ...mine, status: 'awaiting_approval' } }),
+      db.agentRun.count({ where: { ...mine, kind: 'publisher', status: 'awaiting_approval' } }),
       db.artifact.findFirst({ where: { buildJob: mine }, orderBy: { createdAt: 'desc' }, select: { id: true, title: true } }),
     ]);
     const licenseOffers = await db.licenseGrant.count({ where: { status: 'offered', ...(user.role === 'admin' ? {} : { licenseeId: user.id }) } });

@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { BuildIntentSchema, type PreflightReport } from '@tracepay/shared';
 import type { AppDeps } from '../app';
@@ -7,9 +7,17 @@ import { ownedBuild, publisherScope } from '../http/access';
 import { HttpError } from '../http/errors';
 import { quotas } from '../http/limits';
 
-const MAX_ACTIVE_RUNS = 2;
-import { AgentStateError, cancelRun, createRunWithinCap, decideReplacement, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
+import { AgentStateError, cancelRun, createRunWithinCap, createShopperRunWithinCap, decidePurchase, decideReplacement, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
 import { explainPreflight } from '../modules/builds/explain';
+
+const MAX_ACTIVE_RUNS = 2;
+
+const ShopperBody = z.object({
+  goal: z.string().trim().min(10).max(1000),
+  /** $1 – $1,000 (sandbox). */
+  budgetCents: z.number().int().min(100).max(100_000),
+  maxPurchases: z.number().int().min(1).max(3).default(1),
+});
 
 const StartBody = z.object({
   goal: z.string().min(10).max(2000),
@@ -48,13 +56,13 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
   });
 
   r.get('/agent/runs', requireRole('publisher', 'admin'), async (req, res) => {
-    const runs = await db.agentRun.findMany({ where: publisherScope(currentUser(req)), orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, goal: true, status: true, model: true, createdAt: true, summary: true } });
+    const runs = await db.agentRun.findMany({ where: { kind: 'publisher', ...publisherScope(currentUser(req)) }, orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, goal: true, status: true, model: true, createdAt: true, summary: true } });
     res.json({ runs });
   });
 
   r.get('/agent/runs/:id', requireRole('publisher', 'admin'), async (req, res) => {
     const run = await db.agentRun.findFirst({
-      where: { id: param(req, 'id'), ...publisherScope(currentUser(req)) },
+      where: { id: param(req, 'id'), kind: 'publisher', ...publisherScope(currentUser(req)) },
       select: {
         id: true, goal: true, status: true, model: true, policy: true, intent: true, selection: true, pending: true, summary: true, createdAt: true, finishedAt: true,
         steps: { orderBy: { ordinal: 'asc' } },
@@ -78,7 +86,7 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
     res.status(202).json({ runId, approved });
   });
 
-  r.post('/agent/runs/:id/cancel', requireRole('publisher'), async (req, res) => {
+  const cancel = async (req: Request, res: Response) => {
     const runId = param(req, 'id');
     try {
       await cancelRun(db, runId, currentUser(req).id);
@@ -87,7 +95,61 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
       throw err;
     }
     res.json({ runId, status: 'failed' });
+  };
+  r.post('/agent/runs/:id/cancel', requireRole('publisher'), cancel);
+
+  // ---- Shopping Assistant (agentic commerce, buyer side) ----------------------------------
+  // The assistant searches, checks licenses and proposes; the buyer pays in PayPal.
+
+  r.post('/shopper/runs', requireRole('buyer'), quotas.agentRun(), async (req, res) => {
+    const body = ShopperBody.parse(req.body);
+    let run;
+    try {
+      run = await createShopperRunWithinCap(db, planner(), { buyerId: currentUser(req).id, goal: body.goal, policy: { budgetCents: body.budgetCents, maxPurchases: body.maxPurchases } }, MAX_ACTIVE_RUNS);
+    } catch (err) {
+      if (err instanceof TooManyRunsError) throw new HttpError(429, 'You already have two shopping runs going. Finish or stop one of them first.');
+      throw err;
+    }
+    runInBackground(run.id);
+    res.status(202).json({ runId: run.id, planner: run.model });
   });
+
+  r.get('/shopper/runs', requireRole('buyer'), async (req, res) => {
+    const runs = await db.agentRun.findMany({
+      where: { kind: 'buyer', publisherId: currentUser(req).id },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: { id: true, goal: true, status: true, model: true, policy: true, createdAt: true, summary: true },
+    });
+    res.json({ runs });
+  });
+
+  r.get('/shopper/runs/:id', requireRole('buyer'), async (req, res) => {
+    const run = await db.agentRun.findFirst({
+      where: { id: param(req, 'id'), kind: 'buyer', publisherId: currentUser(req).id },
+      select: { id: true, goal: true, status: true, model: true, policy: true, pending: true, summary: true, createdAt: true, finishedAt: true, steps: { orderBy: { ordinal: 'asc' } } },
+    });
+    if (!run) throw new HttpError(404, 'Run not found.');
+    // Only the proposal, never the loop's bookkeeping (call ids, partial results).
+    const p = run.pending as { type?: string; artifactId?: string; title?: string; priceCents?: number; currency?: string; reason?: string } | null;
+    const pending = p?.type === 'purchase' ? { artifactId: p.artifactId, title: p.title, priceCents: p.priceCents, currency: p.currency, reason: p.reason } : null;
+    res.json({ run: { ...run, pending } });
+  });
+
+  r.post('/shopper/runs/:id/decision', requireRole('buyer'), async (req, res) => {
+    const { approved } = z.object({ approved: z.boolean() }).parse(req.body);
+    const runId = param(req, 'id');
+    try {
+      await decidePurchase(db, runId, currentUser(req).id, approved);
+    } catch (err) {
+      if (err instanceof AgentStateError) throw new HttpError(err.message === 'Run not found.' ? 404 : 409, err.message);
+      throw err;
+    }
+    runInBackground(runId);
+    res.status(202).json({ runId, approved });
+  });
+
+  r.post('/shopper/runs/:id/cancel', requireRole('buyer'), cancel);
 
   r.get('/builds/:id/explain', requireRole('publisher', 'admin'), async (req, res) => {
     const { id } = await ownedBuild(db, currentUser(req), param(req, 'id'));

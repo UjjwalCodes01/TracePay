@@ -24,6 +24,8 @@ export function describeEvent(eventType: string, payload: Record<string, unknown
       return { text: 'You declined the replacement source, so the report was not built.', tone: 'neutral' };
     case 'agent.completed':
       return { text: 'The assistant finished its work.', tone: 'good' };
+    case 'agent.cancelled':
+      return { text: 'An assistant run was stopped.', tone: 'neutral' };
     case 'agent.failed':
       return { text: 'The assistant stopped because of a problem.', tone: 'bad' };
     case 'build.preflight_blocked':

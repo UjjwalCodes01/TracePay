@@ -1,21 +1,25 @@
-import type { BuildIntent } from '@tracepay/shared';
+import { formatMoney, type BuildIntent } from '@tracepay/shared';
 import { Prisma } from '../../generated/prisma/client';
 import type { Db, Tx } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import type { ReportWriter } from '../generation/writers';
 import type { AgentMessage, AgentPlanner } from './planners';
+import { executeShopperTool, purchasesFrom, type PurchaseApproval, type ShopperContext, type ShopperPolicy } from './buyer-tools';
 import { executeTool, type AgentPolicy, type PendingApproval, type ToolContext } from './tools';
 
 export const MAX_AGENT_TURNS = 14;
 
 const json = (v: unknown) => v as Prisma.InputJsonValue;
 
-interface Pending extends PendingApproval {
+/** What a paused run waits on: a source replacement (publisher) or a purchase (buyer). */
+type Pending = (PendingApproval | PurchaseApproval) & {
   callId: string;
   /** Results of other calls in the same model turn, completed before the pause. */
   partialResults: Array<{ id: string; name: string; response: Record<string, unknown> }>;
   remainingCallIds: string[];
-}
+};
+
+type ToolResults = Array<{ id: string; name: string; response: Record<string, unknown> }>;
 
 export class AgentStateError extends Error {
   constructor(message: string) {
@@ -34,6 +38,12 @@ export interface StartRunInput {
 
 export class TooManyRunsError extends Error {}
 
+export interface StartShopperInput {
+  buyerId: string;
+  goal: string;
+  policy: ShopperPolicy;
+}
+
 /**
  * How long a run waits for a decision before it lapses. Short in demo mode, where
  * every visitor shares one publisher: abandoned runs must not lock others out.
@@ -48,18 +58,51 @@ export const approvalTtlMs = () => (process.env.DEMO_MODE === 'true' ? 30 * 60_0
  * earlier timestamp may not be committed yet.)
  */
 export async function createRunWithinCap(db: Db, planner: AgentPlanner, input: StartRunInput, max: number) {
+  return withinCap(db, input.publisherId, max, (tx) => insertRun(tx, planner, input));
+}
+
+/** Starts a Shopping Assistant run for a buyer, under the same cap. */
+export async function createShopperRunWithinCap(db: Db, planner: AgentPlanner, input: StartShopperInput, max: number) {
+  return withinCap(db, input.buyerId, max, (tx) => insertShopperRun(tx, planner, input));
+}
+
+async function withinCap<T>(db: Db, ownerId: string, max: number, insert: (tx: Tx) => Promise<T>): Promise<T> {
   return db.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent-runs:${input.publisherId}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent-runs:${ownerId}`}))`;
     // A run paused for approval resumes (and calls the model again) without a new start: it counts.
     const active = await tx.agentRun.count({
       where: {
-        publisherId: input.publisherId,
+        publisherId: ownerId,
         OR: [{ status: 'running' }, { status: 'awaiting_approval', updatedAt: { gt: new Date(Date.now() - approvalTtlMs()) } }],
       },
     });
     if (active >= max) throw new TooManyRunsError(`You already have ${active} agent runs in progress. Wait for one to finish.`);
-    return insertRun(tx, planner, input);
+    return insert(tx);
   });
+}
+
+async function insertShopperRun(tx: Tx, planner: AgentPlanner, input: StartShopperInput) {
+  const opening: AgentMessage = {
+    role: 'user',
+    text:
+      `${input.goal}\n\nBudget for this run (you cannot exceed it): ${formatMoney(input.policy.budgetCents)}.\n` +
+      `You may propose up to ${input.policy.maxPurchases} purchase(s). The buyer approves each payment in PayPal.`,
+  };
+  const run = await tx.agentRun.create({
+    data: {
+      kind: 'buyer',
+      publisherId: input.buyerId,
+      goal: input.goal,
+      policy: json(input.policy),
+      intent: json({}),
+      selection: json([]),
+      transcript: json([opening]),
+      model: `${planner.name}:${planner.model}`,
+    },
+  });
+  await tx.agentStep.create({ data: { runId: run.id, ordinal: 0, kind: 'plan', output: json({ text: input.goal, policy: input.policy }) } });
+  await appendAudit(tx, { entityType: 'agent_run', entityId: run.id, eventType: 'agent.started', payload: { kind: 'buyer', goal: input.goal, policy: input.policy, planner: run.model } });
+  return run;
 }
 
 export async function createRun(db: Db, planner: AgentPlanner, input: StartRunInput) {
@@ -100,17 +143,24 @@ export async function runAgent(db: Db, planner: AgentPlanner, writer: ReportWrit
   if (run.status !== 'running') throw new AgentStateError(`Run is ${run.status}.`);
 
   const history = run.transcript as unknown as AgentMessage[];
-  const ctx: ToolContext = {
-    db,
-    runId,
-    publisherId: run.publisherId,
-    intent: run.intent as unknown as BuildIntent,
-    policy: run.policy as unknown as AgentPolicy,
-    selection: run.selection as unknown as string[],
-    approvedReplacements: approvedReplacementsFrom(history),
-    writer,
-    asOf: opts.asOf,
-  };
+  let execute: (name: string, args: Record<string, unknown>) => Promise<{ kind: 'result' | 'pause'; response: Record<string, unknown>; approval?: PendingApproval | PurchaseApproval }>;
+  if (run.kind === 'buyer') {
+    const ctx: ShopperContext = { db, runId, buyerId: run.publisherId, policy: run.policy as unknown as ShopperPolicy, purchases: purchasesFrom(history) };
+    execute = (name, args) => executeShopperTool(ctx, name, args);
+  } else {
+    const ctx: ToolContext = {
+      db,
+      runId,
+      publisherId: run.publisherId,
+      intent: run.intent as unknown as BuildIntent,
+      policy: run.policy as unknown as AgentPolicy,
+      selection: run.selection as unknown as string[],
+      approvedReplacements: approvedReplacementsFrom(history),
+      writer,
+      asOf: opts.asOf,
+    };
+    execute = (name, args) => executeTool(ctx, name, args);
+  }
   let ordinal = await db.agentStep.count({ where: { runId } });
   const step = (kind: 'plan' | 'tool_call' | 'tool_result' | 'approval_request' | 'message' | 'error', data: { tool?: string; input?: unknown; output?: unknown }) =>
     db.agentStep.create({
@@ -125,7 +175,7 @@ export async function runAgent(db: Db, planner: AgentPlanner, writer: ReportWrit
 
   try {
     for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
-      const next = await planner.next(history);
+      const next = await planner.next(history, run.kind);
       history.push({ role: 'model', text: next.text, calls: next.calls, raw: next.raw });
       if (next.text) await step(next.calls.length ? 'plan' : 'message', { output: { text: next.text } });
 
@@ -135,11 +185,11 @@ export async function runAgent(db: Db, planner: AgentPlanner, writer: ReportWrit
         return;
       }
 
-      const results: Array<{ id: string; name: string; response: Record<string, unknown> }> = [];
+      const results: ToolResults = [];
       for (const [i, call] of next.calls.entries()) {
         await step('tool_call', { tool: call.name, input: call.args });
-        const result = await executeTool(ctx, call.name, call.args);
-        if (result.kind === 'pause') {
+        const result = await execute(call.name, call.args);
+        if (result.kind === 'pause' && result.approval) {
           const pending: Pending = {
             ...result.approval,
             callId: call.id,
@@ -173,7 +223,7 @@ export async function cancelRun(db: Db, runId: string, publisherId: string) {
     if (!run || run.publisherId !== publisherId) throw new AgentStateError('Run not found.');
     const res = await tx.agentRun.updateMany({
       where: { id: runId, status: { in: ['running', 'awaiting_approval'] } },
-      data: { status: 'failed', pending: Prisma.DbNull, finishedAt: new Date(), summary: 'Stopped by the publisher.' },
+      data: { status: 'failed', pending: Prisma.DbNull, finishedAt: new Date(), summary: 'Stopped by you.' },
     });
     if (!res.count) throw new AgentStateError('This run has already finished.');
     await appendAudit(tx, { entityType: 'agent_run', entityId: runId, eventType: 'agent.cancelled', payload: { publisherId } });
@@ -182,24 +232,79 @@ export async function cancelRun(db: Db, runId: string, publisherId: string) {
 
 /** The publisher decides on a proposed replacement; the run then continues. */
 export async function decideReplacement(db: Db, runId: string, publisherId: string, approved: boolean) {
-  const run = await db.agentRun.findUnique({ where: { id: runId } });
-  if (!run || run.publisherId !== publisherId) throw new AgentStateError('Run not found.');
-  if (run.status !== 'awaiting_approval' || !run.pending) throw new AgentStateError('This run is not waiting for a decision.');
-
-  const pending = run.pending as unknown as Pending;
-  const history = run.transcript as unknown as AgentMessage[];
-  const lastModel = [...history].reverse().find((m) => m.role === 'model') as Extract<AgentMessage, { role: 'model' }>;
+  const { pending } = await pausedRun(db, runId, publisherId, 'publisher');
+  if ('type' in pending) throw new AgentStateError('This run is not waiting for a decision.');
   const decision = approved
     ? { approved: true, by: 'publisher', replacement: pending.replacementAssetVersionId }
     : { approved: false, by: 'publisher', message: 'The publisher declined this replacement.' };
+  await resume(db, runId, pending, 'propose_replacement', decision, {
+    eventType: approved ? 'agent.replacement_approved' : 'agent.replacement_declined',
+    payload: { blocked: pending.blockedAssetVersionId, replacement: pending.replacementAssetVersionId, publisherId },
+  });
+}
 
-  const results = [
+/**
+ * The buyer's answer to a proposed purchase. "Yes" counts only once PayPal has
+ * actually taken the payment (the buyer pays through the normal checkout, which
+ * the server captures and verifies); the run then continues with the result.
+ */
+export async function decidePurchase(db: Db, runId: string, buyerId: string, approved: boolean) {
+  const { pending, run } = await pausedRun(db, runId, buyerId, 'buyer');
+  if (!('type' in pending) || pending.type !== 'purchase') throw new AgentStateError('This run is not waiting for a decision.');
+  let decision: Record<string, unknown>;
+  if (approved) {
+    const sale = await db.sale.findFirst({
+      where: { artifactId: pending.artifactId, buyerId, status: 'captured' },
+      orderBy: { createdAt: 'desc' },
+      include: { payment: { select: { captureId: true } } },
+    });
+    if (!sale) {
+      const processing = await db.sale.count({ where: { artifactId: pending.artifactId, buyerId, status: 'pending_payment', payment: { captureId: { not: null } } } });
+      throw new AgentStateError(
+        processing ? 'PayPal is still processing this payment. The assistant continues once PayPal confirms it.' : 'The payment hasn’t been completed in PayPal yet.',
+      );
+    }
+    const policy = run.policy as unknown as ShopperPolicy;
+    const spentBefore = purchasesFrom(run.transcript as unknown as AgentMessage[]).reduce((n, p) => n + p.amountCents, 0);
+    decision = {
+      approved: true,
+      purchased: true,
+      by: 'buyer',
+      reportId: pending.artifactId,
+      saleId: sale.id,
+      captureId: sale.payment?.captureId ?? null,
+      amountCents: sale.amountCents,
+      amount: formatMoney(sale.amountCents),
+      remainingBudget: formatMoney(Math.max(0, policy.budgetCents - spentBefore - sale.amountCents)),
+    };
+  } else {
+    decision = { approved: false, purchased: false, by: 'buyer', message: 'The buyer decided not to buy this report.' };
+  }
+  await resume(db, runId, pending, 'propose_purchase', decision, {
+    eventType: approved ? 'agent.purchase_approved' : 'agent.purchase_declined',
+    payload: { artifactId: pending.artifactId, priceCents: pending.priceCents, saleId: decision.saleId ?? null, buyerId },
+  });
+}
+
+async function pausedRun(db: Db, runId: string, ownerId: string, kind: 'publisher' | 'buyer') {
+  const run = await db.agentRun.findUnique({ where: { id: runId } });
+  if (!run || run.publisherId !== ownerId || run.kind !== kind) throw new AgentStateError('Run not found.');
+  if (run.status !== 'awaiting_approval' || !run.pending) throw new AgentStateError('This run is not waiting for a decision.');
+  return { run, pending: run.pending as unknown as Pending };
+}
+
+/** Answers the paused tool call with the decision and hands the run back to the loop. */
+async function resume(db: Db, runId: string, pending: Pending, tool: string, decision: Record<string, unknown>, auditEvent: { eventType: string; payload: Record<string, unknown> }) {
+  const run = await db.agentRun.findUniqueOrThrow({ where: { id: runId }, select: { transcript: true } });
+  const history = run.transcript as unknown as AgentMessage[];
+  const lastModel = [...history].reverse().find((m) => m.role === 'model') as Extract<AgentMessage, { role: 'model' }>;
+  const results: ToolResults = [
     ...pending.partialResults,
-    { id: pending.callId, name: 'propose_replacement', response: decision },
+    { id: pending.callId, name: tool, response: decision },
     ...pending.remainingCallIds.map((id) => ({
       id,
       name: lastModel.calls.find((c) => c.id === id)?.name ?? 'unknown',
-      response: { skipped: true, message: 'Not executed: the run paused for publisher approval. Call it again if still needed.' },
+      response: { skipped: true, message: 'Not executed: the run paused for approval. Call it again if still needed.' },
     })),
   ];
   history.push({ role: 'tool', results });
@@ -212,13 +317,8 @@ export async function decideReplacement(db: Db, runId: string, publisherId: stri
     });
     if (claimed.count === 0) throw new AgentStateError('This decision was already made, or the run has stopped.');
     const ordinal = await tx.agentStep.count({ where: { runId } });
-    await tx.agentStep.create({ data: { runId, ordinal, kind: 'tool_result', tool: 'propose_replacement', output: json(decision) } });
-    await appendAudit(tx, {
-      entityType: 'agent_run',
-      entityId: runId,
-      eventType: approved ? 'agent.replacement_approved' : 'agent.replacement_declined',
-      payload: { blocked: pending.blockedAssetVersionId, replacement: pending.replacementAssetVersionId, publisherId },
-    });
+    await tx.agentStep.create({ data: { runId, ordinal, kind: 'tool_result', tool, output: json(decision) } });
+    await appendAudit(tx, { entityType: 'agent_run', entityId: runId, ...auditEvent });
   });
 }
 

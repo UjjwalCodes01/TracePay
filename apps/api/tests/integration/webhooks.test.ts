@@ -521,7 +521,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       expect((await db().agentRun.findUniqueOrThrow({ where: { id: a.id } })).status).toBe('failed');
       // And a run can be stopped by hand.
       await cancelRun(db(), c.id, 'user_atlas');
-      expect((await db().agentRun.findUniqueOrThrow({ where: { id: c.id } })).summary).toBe('Stopped by the publisher.');
+      expect((await db().agentRun.findUniqueOrThrow({ where: { id: c.id } })).summary).toBe('Stopped by you.');
       await expect(cancelRun(db(), c.id, 'user_atlas')).rejects.toBeInstanceOf(AgentStateError);
       await db().agentRun.updateMany({ where: { id: { in: [a.id, b.id] } }, data: { status: 'failed' } });
     });

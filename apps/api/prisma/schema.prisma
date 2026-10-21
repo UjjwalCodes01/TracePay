@@ -223,8 +223,17 @@ enum AgentRunStatus {
   failed
 }
 
+enum AgentRunKind {
+  /// The Publisher Agent: builds a licensed report and lists it.
+  publisher
+  /// The Shopping Assistant: finds a report for a buyer, within their budget.
+  buyer
+}
+
 model AgentRun {
   id          String         @id @default(cuid())
+  kind        AgentRunKind   @default(publisher)
+  /// The user the run works for: the publisher, or the buyer for a shopping run.
   publisherId String
   publisher   User           @relation(fields: [publisherId], references: [id])
   goal        String

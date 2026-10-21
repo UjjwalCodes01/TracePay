@@ -101,6 +101,10 @@ export function StudioPage() {
     mutationFn: (approved: boolean) => post(`/agent/runs/${runId}/decision`, { approved }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-run', runId] }),
   });
+  const stop = useMutation({
+    mutationFn: () => post(`/agent/runs/${runId}/cancel`),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['agent-run', runId] }),
+  });
 
   if (catalog.isLoading) return <Spinner />;
   if (catalog.error) return <ErrorNote error={catalog.error} />;
@@ -231,7 +235,7 @@ export function StudioPage() {
               {run.error && <ErrorNote error={run.error} />}
               {run.data && (
                 <div className="mt-5 border-t border-line pt-5">
-                  <AgentTrace run={run.data.run} titles={titles} onDecide={(a) => decide.mutate(a)} deciding={decide.isPending} />
+                  <AgentTrace run={run.data.run} titles={titles} onDecide={(a) => decide.mutate(a)} deciding={decide.isPending} onStop={() => stop.mutate()} stopping={stop.isPending} />
                 </div>
               )}
             </Card>

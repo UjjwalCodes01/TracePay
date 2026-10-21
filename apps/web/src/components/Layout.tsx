@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { BookOpenCheck, Bot, Code2, Database, FileStack, LayoutDashboard, Library, LogOut, Receipt, RotateCcw, ShoppingBag, UserRound, Wallet } from 'lucide-react';
+import { BookOpenCheck, Bot, Code2, Database, FileStack, LayoutDashboard, Library, LogOut, Receipt, RotateCcw, ShoppingBag, Sparkles, UserRound, Wallet } from 'lucide-react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { post } from '../lib/api';
 import { useSession } from '../lib/session';
@@ -14,6 +14,7 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; role
   { to: '/reports', label: 'My Reports', icon: FileStack, roles: ['publisher', 'admin'] },
   { to: '/settlements', label: 'Pay Contributors', icon: Receipt, roles: ['publisher', 'admin'] },
   { to: '/store', label: 'Report Store', icon: ShoppingBag, roles: ['buyer'] },
+  { to: '/assistant', label: 'Shopping Assistant', icon: Sparkles, roles: ['buyer'] },
   { to: '/sources', label: 'My Sources', icon: Database, roles: ['contributor'] },
   { to: '/earnings', label: 'My Earnings', icon: Wallet, roles: ['contributor'] },
   { to: '/developers', label: 'Developers', icon: Code2, roles: ['publisher', 'admin'] },
@@ -28,6 +29,7 @@ const PAGE_ROLES: Array<[RegExp, Role[]]> = [
   [/^\/reports\/[^/]+(\/(receipt|provenance))?\/?$/, ALL_ROLES],
   [/^\/(reports|dashboard|registry|settlements|developers)(\/|$)/, PUBLISHING],
   [/^\/studio(\/|$)/, ['publisher']],
+  [/^\/assistant(\/|$)/, ['buyer']],
   [/^\/(sources|earnings)(\/|$)/, ['contributor']],
 ];
 
