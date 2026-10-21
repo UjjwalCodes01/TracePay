@@ -307,7 +307,7 @@ render.yaml   Render Blueprint (API; database on Neon); apps/web/vercel.json for
 
 - **PayPal Developer Platform (sandbox):** Orders v2, JS SDK Smart Buttons, Payouts, Webhooks.
 - **Google Gemini (Gemini API or Vertex AI):** function-calling Publisher Agent and buyer Shopping Assistant, structured-output report writer, license drafting, failure explanations — via `@google/genai`.
-- **AG Grid Community:** registry and settlement ledger. **React Flow:** provenance graph.
+- **AG Grid Community:** source registry, per-sale settlement grid, and a royalty ledger across every sale (quick search, column filters, totals that follow the filters, CSV export, cells that flash when PayPal changes a payout). **React Flow:** provenance graph.
 - **Render** (API), **Neon** (serverless Postgres) and **Vercel** (web).
 - Node.js, TypeScript, Express 5, Prisma 7, PostgreSQL 17, React 19, Tailwind CSS 4, Vitest.
 - **Model Context Protocol** (`@modelcontextprotocol/sdk`): the TracePay MCP server for outside AI agents.

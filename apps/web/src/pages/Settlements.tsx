@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { CheckCheck, RefreshCw, Send } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
+import { RoyaltyLedger } from '../components/RoyaltyLedger';
 import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, StatusBadge } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatMoney } from '../lib/format';
@@ -265,6 +266,9 @@ export function SettlementsPage() {
             </Card>
           </div>
         </div>
+      </div>
+      <div className="mt-6">
+        <RoyaltyLedger runs={runs} names={names} />
       </div>
     </>
   );
