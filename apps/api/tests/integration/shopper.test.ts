@@ -2,6 +2,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../../src/db';
 import { executeShopperTool, matchScore } from '../../src/modules/agent/buyer-tools';
+import { createApiKey } from '../../src/modules/auth/auth.service';
 import { resetAndSeed } from '../../src/modules/demo/seed';
 import { FakePayPal } from '../fake-paypal';
 import { testApp } from '../test-app';
@@ -121,5 +122,48 @@ describe.runIf(process.env.TEST_DATABASE_URL)('Shopping Assistant (integration)'
     expect((await request(app).get('/api/shopper/runs').set(buyer).expect(200)).body.runs).toHaveLength(1);
     await request(app).post('/api/shopper/runs').set(buyer).send({ goal: 'short', budgetCents: 500 }).expect(400);
     await request(app).post('/api/shopper/runs').set(buyer).send({ goal, budgetCents: 10_000_000 }).expect(400);
+  });
+
+  describe('buying through the API (for a buyer’s own AI agent)', () => {
+    it('searches, checks, starts a checkout the buyer approves at PayPal, then captures and unlocks the report', async () => {
+      const key = { Authorization: `Bearer ${(await createApiKey(db(), 'user_buyer', 'my agent')).key}` };
+      const search = await request(app).get('/api/v1/store/reports').query({ query: 'developer tools market' }).set(key).expect(200);
+      expect(search.body.data[0]).toMatchObject({ id: artifactId, object: 'store_report', price_cents: 2000, owned: false, citations_ok: true, match: 1 });
+
+      const detail = await request(app).get(`/api/v1/store/reports/${artifactId}`).set(key).expect(200);
+      expect(detail.body).toMatchObject({ license_check: { valid_today: true, problems: [] }, content: null });
+
+      const checkout = await request(app).post('/api/v1/checkouts').set(key).send({ report_id: artifactId }).expect(201);
+      expect(checkout.body).toMatchObject({ object: 'checkout', status: 'pending_payment', amount_cents: 2000 });
+      expect(checkout.body.approve_url).toContain(checkout.body.paypal_order_id);
+      // Software can't approve the payment for the buyer.
+      const early = await request(app).post(`/api/v1/checkouts/${checkout.body.id}/capture`).set(key).send({}).expect(409);
+      expect(early.body.error.code).toBe('invalid_state');
+
+      paypal.approve(checkout.body.paypal_order_id);
+      const captured = await request(app).post(`/api/v1/checkouts/${checkout.body.id}/capture`).set(key).send({}).expect(200);
+      expect(captured.body).toMatchObject({ status: 'captured', approve_url: null });
+      expect(captured.body.capture_id).toBeTruthy();
+      const owned = await request(app).get(`/api/v1/store/reports/${artifactId}`).set(key).expect(200);
+      expect(owned.body.owned).toBe(true);
+      expect(owned.body.content.length).toBeGreaterThan(0);
+      await request(app).post('/api/v1/checkouts').set(key).send({ report_id: artifactId }).expect(409); // already owned
+    });
+
+    it('keeps buyer keys to buying, and other buyers’ checkouts out of reach', async () => {
+      const key = { Authorization: `Bearer ${(await createApiKey(db(), 'user_buyer', 'my agent')).key}` };
+      expect((await request(app).get('/api/v1/account').set(key).expect(200)).body.role).toBe('buyer');
+      expect((await request(app).get('/api/v1/sales').set(key).expect(403)).body.error.code).toBe('publisher_account_required');
+      await request(app).get('/api/v1/builds').set(key).expect(403);
+      const publisherKey = { Authorization: `Bearer ${(await createApiKey(db(), 'user_atlas', 'pub')).key}` };
+      await request(app).get('/api/v1/store/reports').set(publisherKey).expect(403);
+      const checkout = await request(app).post('/api/v1/checkouts').set(key).send({ report_id: artifactId }).expect(201);
+      const other = await db().user.create({ data: { email: 'other-buyer@example.com', name: 'Other', role: 'buyer' } });
+      const otherKey = { Authorization: `Bearer ${(await createApiKey(db(), other.id, 'theirs')).key}` };
+      await request(app).get(`/api/v1/checkouts/${checkout.body.id}`).set(otherKey).expect(404);
+      await request(app).post(`/api/v1/checkouts/${checkout.body.id}/capture`).set(otherKey).send({}).expect(404);
+      await db().artifact.update({ where: { id: artifactId }, data: { status: 'withdrawn' } });
+      await request(app).get(`/api/v1/store/reports/${artifactId}`).set(key).expect(404);
+    });
   });
 });

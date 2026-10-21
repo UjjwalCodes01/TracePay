@@ -33,7 +33,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Typecheck
-        run: npm run typecheck -w @tracepay/api && npm run typecheck -w @tracepay/web
+        run: npm run typecheck -w @tracepay/api && npm run typecheck -w @tracepay/web && npm run typecheck -w @tracepay/mcp
       - name: Unit + integration tests (real Postgres, in-memory PayPal fake)
         run: npm run test:integration -w @tracepay/api
       - name: Build

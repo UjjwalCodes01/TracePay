@@ -102,7 +102,7 @@ export function authRoutes({ db, config }: AppDeps) {
 
   // ---- API keys for platform integrations --------------------------------------
 
-  r.get('/auth/api-keys', requireRole('publisher', 'admin'), async (req, res) => {
+  r.get('/auth/api-keys', requireRole('publisher', 'admin', 'buyer'), async (req, res) => {
     const keys = await db.apiKey.findMany({
       where: { userId: currentUser(req).id },
       orderBy: { createdAt: 'desc' },
@@ -111,7 +111,7 @@ export function authRoutes({ db, config }: AppDeps) {
     res.json({ keys });
   });
 
-  r.post('/auth/api-keys', requireRole('publisher', 'admin'), async (req, res) => {
+  r.post('/auth/api-keys', requireRole('publisher', 'admin', 'buyer'), async (req, res) => {
     const body = z
       .object({
         name: z.string().trim().min(1).max(80),
@@ -131,7 +131,7 @@ export function authRoutes({ db, config }: AppDeps) {
     res.status(201).json(created);
   });
 
-  r.delete('/auth/api-keys/:id', requireRole('publisher', 'admin'), async (req, res) => {
+  r.delete('/auth/api-keys/:id', requireRole('publisher', 'admin', 'buyer'), async (req, res) => {
     const id = z.string().min(1).max(64).parse(req.params.id);
     const result = await db.apiKey.updateMany({ where: { id, userId: currentUser(req).id, revokedAt: null }, data: { revokedAt: new Date() } });
     if (result.count === 0) throw new HttpError(404, 'API key not found.');

@@ -75,7 +75,7 @@ export class VertexReportWriter implements ReportWriter {
 const firstSentence = (text: string) => (text.match(/^.*?[.!?](\s|$)/)?.[0] ?? text).trim();
 
 /**
- * Deterministic extractive writer used when Vertex AI is not configured.
+ * Deterministic extractive writer used when no Gemini model is configured.
  * Output is always labeled `fromFixture: true` and must never be presented
  * as live model output.
  */
@@ -99,7 +99,7 @@ export class FixtureReportWriter implements ReportWriter {
         {
           key: 'summary',
           heading: 'Summary',
-          body: `${input.intent.title}: ${picks.length} findings drawn from ${bySource.size} licensed sources. (Fixture output — Vertex AI not configured.)`,
+          body: `${input.intent.title}: ${picks.length} findings drawn from ${bySource.size} licensed sources. (Fixture output — no AI model configured.)`,
           requiresCitation: false,
         },
         ...picks.map((p, i) => ({

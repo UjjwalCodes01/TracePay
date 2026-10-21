@@ -94,7 +94,7 @@ export function platformRoutes(deps: PlatformDeps): AnyRoute[] {
   return [
     // ---- account ------------------------------------------------------------------------------
     defineRoute({
-      method: 'get', path: '/account', operationId: 'getAccount', tag: 'Account', summary: 'The account behind the credentials',
+      method: 'get', path: '/account', operationId: 'getAccount', roles: ['publisher', 'admin', 'buyer'], tag: 'Account', summary: 'The account behind the credentials',
       response: R.Account,
       handler: async ({ req, user }) => ({
         id: user.id, object: 'account' as const, name: user.name, email: user.email, role: user.role,

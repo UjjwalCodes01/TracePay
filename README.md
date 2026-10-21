@@ -49,7 +49,7 @@ The innovation isn't splitting $20 — many systems can do that. It's that **the
 
 Everything the dashboard does is also available to other software, so a company can plug TracePay into its own stack after the hackathon:
 
-- **REST API at `/api/v1`** — sources and licenses, license preflight, citation-checked generation, reports, signed receipts and provenance, sales, settlements and PayPal payouts, Publisher Agent runs. **OpenAPI 3.1** at [`/api/v1/openapi.json`](https://trace-pay-umber.vercel.app/api/v1/openapi.json), browsable on the **Developers → API reference** page.
+- **REST API at `/api/v1`** — sources and licenses, license preflight, citation-checked generation, reports, signed receipts and provenance, sales, settlements and PayPal payouts, Publisher Agent runs, and **buying** for buyer accounts (search, license check, PayPal checkout). **OpenAPI 3.1** at [`/api/v1/openapi.json`](https://trace-pay-umber.vercel.app/api/v1/openapi.json), browsable on the **Developers → API reference** page.
 - **API keys** from the Developers page: full or read-only, optional expiry, revocable. Keys work only on `/api/v1` (never on the dashboard's own routes).
 - **Signed webhooks** for 35+ event types (`sale.completed`, `settlement.created`, `payout_batch.updated`, `license.offered`, …): HMAC-SHA256 with timestamp, retries with backoff for about a day, secret rotation without downtime, a test button and a delivery log.
 - **Safe to retry:** `Idempotency-Key` on every POST; cursor pagination; one error format with request ids; per-key rate limits.
@@ -60,6 +60,10 @@ curl https://tracepay-api.onrender.com/api/v1/sales?status=captured \
 ```
 
 ---
+
+### AI agents can shop too (MCP)
+
+[`packages/mcp`](packages/mcp) is an **MCP server** that lets any AI agent — Claude Desktop, an IDE agent — shop for a buyer through the Platform API's **Buying** endpoints (`/store/reports`, `/checkouts`): search, re-check licenses, and start a checkout. **It can never pay:** it hands the buyer PayPal's approve link and only completes a checkout the buyer approved, and it refuses anything over the buyer's price cap. Buyers create the key on *Connect an AI agent*.
 
 ## Screens
 
@@ -227,7 +231,7 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
 | **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
-| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 267 tests against real Postgres, Render Blueprint, Vercel config |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 269 tests against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 
@@ -263,7 +267,7 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 ## Tests
 
 ```bash
-npm run test:integration -w @tracepay/api   # 267 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api   # 269 tests; creates/migrates a tracepay_test database
 ```
 
 | Suite | Covers |
@@ -276,7 +280,7 @@ npm run test:integration -w @tracepay/api   # 267 tests; creates/migrates a trac
 | Money path (21) | capture before approval, duplicate webhooks, webhook-before-response, forged-then-genuine webhook ids, reprocessing a half-applied webhook, amount mismatch, **sale-time terms that later edits never touch**, expired license blocks the sale, capture recorded even when settlement fails, no double purchase, **concurrent payout clicks send once**, denied batches (and retrying them), refunds stay exceptions, **lost payout response recovered via webhook**, missing Payouts permission |
 | Hardening (20) | no source text or payout addresses in builds or purchase lists, per-viewer provenance and receipts, refunds never undone or dropped, partial refunds, revocation closes pending offers, new credit requirements stop sales, generation and capture-time license re-checks, unreadable stored terms, payout retry with history, settlement recalculation, interrupted-work recovery, scoped demo reset, demo header limited to personas, cross-site writes, per-account login lockout, checkout reuse, price limits |
 | Publisher agent (5) | recovery, approval pause, decline, guardrail violations, turn limit |
-| Shopping Assistant (6) | finds, verifies and proposes; "yes" counts only once PayPal has the money, and only once; never over budget; decline; guardrails enforced whatever the model asks; buyer-only runs kept out of publisher screens |
+| Shopping Assistant & buying API (8) | finds, verifies and proposes; "yes" counts only once PayPal has the money, and only once; never over budget; decline; guardrails enforced whatever the model asks; buyer-only runs kept out of publisher screens; the `/v1` buying flow an MCP agent uses (search → license check → checkout → buyer approves → capture → read), buyer keys limited to buying, other buyers' checkouts unreachable |
 | Security (17) | sign-up/sign-in/sign-out, hashed passwords and sessions, no account enumeration, rate limits, demo mode off, cross-tenant 404s on every resource, role-appropriate provenance views, API keys, CSRF, security headers, readiness |
 | License extraction (13) | the rule-based extractor reproduces all five demo licenses' approved terms; restrictive defaults with warnings; end date read after "until"; impossible percentages; thousands separators; expired documents; schema normalisation |
 | Licensing lifecycle (10) | source registration, private marketplace listings, request → offer → accept, hash-bound acceptance, renegotiation, decline/withdraw, revocation vs. frozen settlement, contributor isolation, audit trail |
@@ -302,10 +306,11 @@ render.yaml   Render Blueprint (API; database on Neon); apps/web/vercel.json for
 ## Tools used
 
 - **PayPal Developer Platform (sandbox):** Orders v2, JS SDK Smart Buttons, Payouts, Webhooks.
-- **Google Gemini (Gemini API or Vertex AI):** function-calling agent, structured-output report writer, failure explanations — via `@google/genai`.
+- **Google Gemini (Gemini API or Vertex AI):** function-calling Publisher Agent and buyer Shopping Assistant, structured-output report writer, license drafting, failure explanations — via `@google/genai`.
 - **AG Grid Community:** registry and settlement ledger. **React Flow:** provenance graph.
 - **Render** (API), **Neon** (serverless Postgres) and **Vercel** (web).
 - Node.js, TypeScript, Express 5, Prisma 7, PostgreSQL 17, React 19, Tailwind CSS 4, Vitest.
+- **Model Context Protocol** (`@modelcontextprotocol/sdk`): the TracePay MCP server for outside AI agents.
 
 ## License
 

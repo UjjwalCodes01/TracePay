@@ -78,7 +78,7 @@ const normalize = (s: string) => s.toLowerCase().replace(/[“”]/g, '"').repla
 // ---------------------------------------------------------------- rule-based extractor
 
 /**
- * Deterministic extractor used when Vertex AI is not configured, and as a
+ * Deterministic extractor used when no Gemini model is configured, and as a
  * cross-check. It errs on the side of the most restrictive reading and says
  * so in its warnings whenever it has to assume.
  */

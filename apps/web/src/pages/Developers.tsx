@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Check, ChevronDown, ChevronRight, Copy, KeyRound, Plus, RotateCw, Send, Webhook } from 'lucide-react';
+import { BookOpen, Bot, Check, ChevronDown, ChevronRight, Copy, KeyRound, Plus, RotateCw, Send, Webhook } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { useSession } from '../lib/session';
 import { Link } from 'react-router';
@@ -52,6 +52,25 @@ type List<T> = { data: T[] };
 
 export function DevelopersPage() {
   const { user } = useSession();
+  if (user?.role === 'buyer') {
+    return (
+      <>
+        <PageHeader
+          title="Connect an AI agent"
+          subtitle="Let your own AI assistant (for example Claude Desktop) find and buy licensed reports for you. It can search and prepare a purchase; you approve every payment in PayPal."
+          action={
+            <Link to="/developers/api" className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium hover:bg-slate-50">
+              <BookOpen className="size-4" /> API reference
+            </Link>
+          }
+        />
+        <div className="space-y-6">
+          <McpCard />
+          <ApiKeysCard />
+        </div>
+      </>
+    );
+  }
   if (user && user.role !== 'publisher' && user.role !== 'admin') {
     return (
       <>
@@ -76,6 +95,51 @@ export function DevelopersPage() {
         <WebhooksCard />
       </div>
     </>
+  );
+}
+
+// ---- AI agents (MCP) ---------------------------------------------------------------------
+
+const MCP_CONFIG = `{
+  "mcpServers": {
+    "tracepay": {
+      "command": "node",
+      "args": ["/path/to/TracePay/packages/mcp/src/server.ts"],
+      "env": {
+        "TRACEPAY_API_KEY": "tp_… (create one below)",
+        "TRACEPAY_MAX_PRICE_CENTS": "5000"
+      }
+    }
+  }
+}`;
+
+function McpCard() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Card title={<span className="inline-flex items-center gap-2"><Bot className="size-4" /> Use TracePay from your AI assistant</span>}>
+      <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-sm text-slate-700">
+        <li>Create an API key below.</li>
+        <li>
+          Download TracePay (needs Node 24) and run <code className="rounded bg-slate-100 px-1">npm install</code>.
+        </li>
+        <li>Add this to your assistant’s MCP settings (in Claude Desktop: Settings → Developer → Edit config), with your key and the real path:</li>
+      </ol>
+      <div className="relative">
+        <pre className="overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">{MCP_CONFIG}</pre>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="absolute right-2 top-2"
+          onClick={() => void navigator.clipboard?.writeText(MCP_CONFIG).then(() => setCopied(true))}
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+      <p className="mt-4 text-sm text-muted">
+        Then ask it something like “Find me a report on developer tools under $25.” It can search, check that every source is licensed, and prepare the checkout — then it gives
+        you a PayPal link to approve. It can never pay on its own, and it won’t start a purchase over the price cap you set (in cents).
+      </p>
+    </Card>
   );
 }
 

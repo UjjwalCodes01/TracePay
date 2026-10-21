@@ -18,6 +18,7 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; role
   { to: '/sources', label: 'My Sources', icon: Database, roles: ['contributor'] },
   { to: '/earnings', label: 'My Earnings', icon: Wallet, roles: ['contributor'] },
   { to: '/developers', label: 'Developers', icon: Code2, roles: ['publisher', 'admin'] },
+  { to: '/developers', label: 'Connect an AI agent', icon: Code2, roles: ['buyer'] },
   { to: '/profile', label: 'Profile', icon: UserRound, roles: ['publisher', 'contributor', 'buyer', 'admin'] },
 ];
 
@@ -27,7 +28,8 @@ const PUBLISHING: Role[] = ['publisher', 'admin'];
 /** Which roles may open a page; the first matching pattern wins. Anything else sends you to your start page. */
 const PAGE_ROLES: Array<[RegExp, Role[]]> = [
   [/^\/reports\/[^/]+(\/(receipt|provenance))?\/?$/, ALL_ROLES],
-  [/^\/(reports|dashboard|registry|settlements|developers)(\/|$)/, PUBLISHING],
+  [/^\/developers(\/|$)/, ['publisher', 'admin', 'buyer']],
+  [/^\/(reports|dashboard|registry|settlements)(\/|$)/, PUBLISHING],
   [/^\/studio(\/|$)/, ['publisher']],
   [/^\/assistant(\/|$)/, ['buyer']],
   [/^\/(sources|earnings)(\/|$)/, ['contributor']],

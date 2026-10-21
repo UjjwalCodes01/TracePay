@@ -100,7 +100,7 @@ function toContents(history: AgentMessage[]): Content[] {
 // ---------------------------------------------------------------- Rule-based fallback
 
 /**
- * Deterministic planner used when Vertex AI is not configured. It follows the
+ * Deterministic planner used when no Gemini model is configured. It follows the
  * same tools and guardrails with a fixed policy, and is labeled as such in the
  * UI — it is never presented as model output.
  */

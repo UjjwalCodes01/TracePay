@@ -5,6 +5,7 @@ import { secondsUntilReset } from '../http/limits';
 import { EVENT_DATA_SHAPES, EVENT_TYPES } from '../modules/platform/events';
 import { SIGNATURE_HEADER, SIGNATURE_TOLERANCE_SECONDS } from '../modules/platform/webhook-crypto';
 import { buildOpenApi, mount, routes, v1ErrorHandler } from './framework';
+import { buyerRoutes } from './buyer-routes';
 import { platformRoutes, type PlatformDeps } from './routes';
 import { Event } from './resources';
 
@@ -28,7 +29,7 @@ Read-only keys can make GET requests only. Keys can expire and be revoked at any
   \`parameter_invalid\`, \`invalid_json\`, \`invalid_cursor\`, \`unauthenticated\`, \`invalid_api_key\`, \`read_only_key\`, \`forbidden\`,
   \`publisher_account_required\`, \`resource_missing\`, \`route_not_found\`, \`conflict\`, \`invalid_state\`, \`resource_limit\`,
   \`too_many_active_runs\`, \`rights_not_satisfied\`, \`generation_failed\`, \`idempotency_key_reused\`, \`idempotency_in_progress\`,
-  \`rate_limited\`, \`quota_exceeded\`, \`paypal_unavailable\`, \`payouts_unavailable\`.
+  \`rate_limited\`, \`quota_exceeded\`, \`paypal_unavailable\`, \`payouts_unavailable\`, \`not_for_sale\`.
 - **Idempotency:** send an \`Idempotency-Key\` header with any POST to make it safe to retry. The same key and body
   return the first response (header \`Idempotent-Replayed: true\`); the same key with a different body is refused (\`422\`).
 - **Rate limits:** per API key; \`429\` responses carry \`Retry-After\`. Standard \`RateLimit\` headers show what is left.
@@ -71,6 +72,7 @@ const TAGS = [
   { name: 'Reconciliation', description: 'TracePay checks payments and payouts with PayPal on a schedule and lists what needs you.' },
   { name: 'Publisher Agent', description: 'The bounded agent that plans a report, fixes license problems and asks before risky steps.' },
   { name: 'Events & webhooks', description: 'The event log and signed webhook deliveries.' },
+  { name: 'Buying', description: 'For buyer accounts and their AI agents: search, check licenses, check out. The buyer approves every payment at PayPal.' },
 ];
 
 export interface PlatformApiOptions {
@@ -120,9 +122,10 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
     res.json(openApiDocument(opts.serverUrl));
   });
 
-  // Everything else needs a publisher (or admin) account.
+  // Everything else needs a publisher (or admin) account — except buying, which is for buyers.
   r.use((req: Request, _res: Response, next: NextFunction) => {
     if (!req.user) return next(new HttpError(401, 'Send an API key: Authorization: Bearer tp_…', { code: 'unauthenticated' }));
+    if (req.user.role === 'buyer' && /^\/(store|checkouts|account)(\/|$)/.test(req.path)) return next();
     if (req.user.role !== 'publisher' && req.user.role !== 'admin') {
       return next(new HttpError(403, 'The platform API is available to publisher accounts.', { code: 'publisher_account_required' }));
     }
@@ -153,7 +156,7 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
     }),
   );
 
-  mount(r, platformRoutes(deps), { db: deps.db, validateResponses: opts.validateResponses });
+  mount(r, [...platformRoutes(deps), ...buyerRoutes(deps)], { db: deps.db, validateResponses: opts.validateResponses });
 
   r.use((_req, _res, next) => next(new HttpError(404, 'No such endpoint. See /api/v1/openapi.json.', { code: 'route_not_found' })));
   r.use(v1ErrorHandler);
