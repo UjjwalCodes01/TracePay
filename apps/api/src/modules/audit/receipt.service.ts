@@ -1,7 +1,7 @@
 import type { PreflightReport } from '@tracepay/shared';
 import type { Tx } from '../../db';
 import type { ArtifactContent } from '../generation/generation.service';
-import { preflightSummary } from '../provenance/provenance.service';
+import { countsAsSale, preflightSummary } from '../provenance/provenance.service';
 import { verifyAuditChainCached } from './audit-log';
 import { publicKeyPem, signDocument, type SigningKeys } from './signing';
 
@@ -62,8 +62,12 @@ export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys
   const head = await tx.auditEvent.findFirst({ orderBy: { seq: 'desc' }, select: { seq: true, hash: true } });
 
   const salesInView = artifact.sales
-    .filter((s) => s.payment?.captureId)
+    .filter((s) => countsAsSale(s))
     .filter((s) => view.level !== 'buyer' || s.buyerId === view.userId);
+  // Recipient names, so people reading the receipt don't have to know user ids.
+  const recipientIds = [...new Set(salesInView.flatMap((s) => s.settlement?.lines.map((l) => l.recipientId) ?? []))];
+  const recipients = recipientIds.length ? await tx.user.findMany({ where: { id: { in: recipientIds } }, select: { id: true, name: true } }) : [];
+  const nameOf = new Map(recipients.map((u) => [u.id, u.name]));
   const document = {
     receiptVersion: RECEIPT_VERSION,
     view: view.level,
@@ -114,6 +118,7 @@ export async function buildReceipt(tx: Tx, artifactId: string, keys: SigningKeys
                 .map((l) => ({
                 kind: l.kind,
                 recipientId: l.recipientId,
+                recipientName: nameOf.get(l.recipientId) ?? null,
                 licenseId: l.licenseGrantId,
                 amountCents: l.amountCents,
                 formula: l.formula,

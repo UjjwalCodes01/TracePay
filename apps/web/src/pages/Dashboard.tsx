@@ -19,14 +19,14 @@ interface NextStep {
 }
 
 function nextStep(d: Dashboard, openIssues: number): NextStep {
-  if (openIssues > 0 && d.exceptions === 0)
+  // Open reconciliation issues are what still needs a person. A settlement stays marked as an
+  // exception after a refund even once it's been handled, so that count alone mustn't block the next steps.
+  if (openIssues > 0)
     return {
       tone: 'attention',
       title: openIssues === 1 ? 'One thing needs your attention' : `${openIssues} things need your attention`,
       text: 'TracePay checked your payments with PayPal and found something a person should look at. It’s explained just below.',
     };
-  if (d.exceptions > 0)
-    return { tone: 'attention', title: 'Something needs your attention', text: 'A refund or a failed payment was reported by PayPal. Take a look so contributors are treated fairly.', cta: { to: '/settlements', label: 'Review it' } };
   if (d.licenseOffers > 0)
     return { tone: 'action', title: d.licenseOffers === 1 ? 'A contributor offered you a license' : `${d.licenseOffers} license offers are waiting`, text: 'Review the terms in plain language. Nothing applies until you accept.', cta: { to: '/registry?tab=offers', label: 'Review offers' } };
   if (d.agentWaiting > 0)
@@ -62,7 +62,7 @@ export function DashboardPage() {
   const { user } = useSession();
   const [technical, setTechnical] = useState(false);
   const q = useQuery({ queryKey: ['dashboard'], queryFn: () => api<Dashboard>('/dashboard'), refetchInterval: 5000 });
-  const chain = useQuery({ queryKey: ['chain'], queryFn: () => api<{ ok: boolean; length?: number }>('/audit/verify-chain'), enabled: technical });
+  const chain = useQuery({ queryKey: ['chain'], queryFn: () => api<{ ok: boolean; length?: number; brokenAtSeq?: number }>('/audit/verify-chain'), enabled: technical });
   const isPublisher = user?.role === 'publisher' || user?.role === 'admin';
   // Shared with the "Needs attention" panel (same query key: fetched once).
   const recon = useQuery({ queryKey: ['reconciliation'], queryFn: () => api<{ open_issues: number }>('/v1/reconciliation'), refetchInterval: 30_000, enabled: isPublisher });
@@ -163,7 +163,7 @@ export function DashboardPage() {
 
       {/* Technical details, for auditors and judges */}
       <section>
-        <button onClick={() => setTechnical((t) => !t)} className="text-sm font-medium text-muted hover:text-ink">
+        <button onClick={() => setTechnical((t) => !t)} aria-expanded={technical} className="text-sm font-medium text-muted hover:text-ink">
           {technical ? 'Hide technical details ▲' : 'Show technical details ▼'}
         </button>
         {technical && (
@@ -172,9 +172,11 @@ export function DashboardPage() {
               <ShieldCheck className={clsx('size-4', chain.data?.ok ? 'text-pass' : 'text-muted')} />
               {chain.isLoading
                 ? 'Checking the audit log…'
-                : chain.data?.ok
-                  ? `Audit log is intact: all ${chain.data.length} events are hash-chained and unmodified.`
-                  : 'Audit log check FAILED: an event was modified.'}
+                : chain.error || !chain.data
+                  ? 'Couldn’t run the audit log check right now. Try again in a moment.'
+                  : chain.data.ok
+                    ? `Audit log is intact: all ${chain.data.length} events are hash-chained and unmodified.`
+                    : `Audit log check FAILED: event #${chain.data.brokenAtSeq} was modified.`}
             </div>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-3">
               <Tech label="Builds passed preflight" value={d.buildsPassed} />

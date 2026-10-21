@@ -10,7 +10,7 @@ import { generateArtifact } from '../../src/modules/generation/generation.servic
 import { FixtureReportWriter } from '../../src/modules/generation/writers';
 import { captureSale, PaymentError, startCheckout } from '../../src/modules/payments/payments.service';
 import { handlePayPalWebhook } from '../../src/modules/payments/webhooks.service';
-import { approveSettlement, refreshPayouts, SettlementStateError, submitPayouts } from '../../src/modules/settlements/settlement.service';
+import { approveSettlement, refreshPayouts, retryFailedPayouts, SettlementStateError, submitPayouts } from '../../src/modules/settlements/settlement.service';
 import { FakePayPal, usd } from '../fake-paypal';
 
 const A = 'asset_northwind_index_v1';
@@ -221,6 +221,22 @@ describe.runIf(process.env.TEST_DATABASE_URL)('money path (integration)', () => 
     const batch = await submitPayouts(db(), paypal, runId);
     paypal.denyBatch(batch!.paypalBatchId!);
     expect((await refreshPayouts(db(), paypal, runId)).runStatus).toBe('exception');
+  });
+
+  it('retries every payout of a batch PayPal denied as a whole', async () => {
+    const { captured } = await paidSale(paypal);
+    const runId = captured.settlementRunId!;
+    await approveSettlement(db(), runId, DEMO_IDS.publisher);
+    const batch = await submitPayouts(db(), paypal, runId);
+    paypal.denyBatch(batch!.paypalBatchId!);
+    await refreshPayouts(db(), paypal, runId);
+    const retry = await retryFailedPayouts(db(), paypal, runId);
+    expect(retry!.attempt).toBe(2);
+    const items = await db().payoutItem.findMany({ where: { batch: { runId } }, include: { batch: true } });
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((i) => i.batch.attempt === 2)).toBe(true);
+    paypal.setAllItems(retry!.paypalBatchId!, 'SUCCESS');
+    expect((await refreshPayouts(db(), paypal, runId)).runStatus).toBe('completed');
   });
 
   it('keeps a refunded sale an exception even if payouts later succeed, and blocks new payouts', async () => {

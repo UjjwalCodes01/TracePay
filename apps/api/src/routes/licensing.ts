@@ -156,7 +156,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
         id: true, title: true, kind: true, description: true, createdAt: true,
         owner: { select: { id: true, name: true } },
         versions: { orderBy: { version: 'desc' }, take: 1, select: { version: true, _count: { select: { chunks: true } } } },
-        licenses: { where: { licenseeId: me }, orderBy: { version: 'desc' }, take: 1, select: { id: true, status: true, version: true, terms: true } },
+        licenses: { where: { licenseeId: me }, orderBy: { version: 'desc' }, take: 20, select: { id: true, status: true, version: true, terms: true } },
       },
     });
     res.json({
@@ -168,7 +168,11 @@ export function licensingRoutes({ db, config }: AppDeps) {
         owner: a.owner,
         version: a.versions[0]?.version ?? 0,
         passages: a.versions[0]?._count.chunks ?? 0,
-        myLicense: a.licenses[0] ?? null,
+        // The license in force, if any — a newer offer that was declined or withdrawn
+        // doesn't end it — otherwise the newest one.
+        myLicense: a.licenses.find((l) => l.status === 'approved') ?? a.licenses[0] ?? null,
+        // A newer offer or request still open next to the license in force.
+        pendingLicense: a.licenses.find((l) => l.status === 'approved') ? (a.licenses.find((l) => l.status === 'offered' || l.status === 'requested') ?? null) : null,
       })),
     });
   });

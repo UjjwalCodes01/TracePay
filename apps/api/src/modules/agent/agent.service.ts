@@ -35,6 +35,12 @@ export interface StartRunInput {
 export class TooManyRunsError extends Error {}
 
 /**
+ * How long a run waits for a decision before it lapses. Short in demo mode, where
+ * every visitor shares one publisher: abandoned runs must not lock others out.
+ */
+export const approvalTtlMs = () => (process.env.DEMO_MODE === 'true' ? 30 * 60_000 : 24 * 60 * 60_000);
+
+/**
  * Starts a run unless the publisher already has `max` running. Counting and
  * inserting happen in ONE transaction under a per-publisher advisory lock, so
  * simultaneous starts are serialised: each sees the runs committed before it.
@@ -45,7 +51,12 @@ export async function createRunWithinCap(db: Db, planner: AgentPlanner, input: S
   return db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent-runs:${input.publisherId}`}))`;
     // A run paused for approval resumes (and calls the model again) without a new start: it counts.
-    const active = await tx.agentRun.count({ where: { publisherId: input.publisherId, status: { in: ['running', 'awaiting_approval'] } } });
+    const active = await tx.agentRun.count({
+      where: {
+        publisherId: input.publisherId,
+        OR: [{ status: 'running' }, { status: 'awaiting_approval', updatedAt: { gt: new Date(Date.now() - approvalTtlMs()) } }],
+      },
+    });
     if (active >= max) throw new TooManyRunsError(`You already have ${active} agent runs in progress. Wait for one to finish.`);
     return insertRun(tx, planner, input);
   });
@@ -155,6 +166,20 @@ export async function runAgent(db: Db, planner: AgentPlanner, writer: ReportWrit
   }
 }
 
+/** Stops a run that is working or waiting for a decision. A loop still running notices and stops. */
+export async function cancelRun(db: Db, runId: string, publisherId: string) {
+  await db.$transaction(async (tx) => {
+    const run = await tx.agentRun.findUnique({ where: { id: runId }, select: { publisherId: true } });
+    if (!run || run.publisherId !== publisherId) throw new AgentStateError('Run not found.');
+    const res = await tx.agentRun.updateMany({
+      where: { id: runId, status: { in: ['running', 'awaiting_approval'] } },
+      data: { status: 'failed', pending: Prisma.DbNull, finishedAt: new Date(), summary: 'Stopped by the publisher.' },
+    });
+    if (!res.count) throw new AgentStateError('This run has already finished.');
+    await appendAudit(tx, { entityType: 'agent_run', entityId: runId, eventType: 'agent.cancelled', payload: { publisherId } });
+  });
+}
+
 /** The publisher decides on a proposed replacement; the run then continues. */
 export async function decideReplacement(db: Db, runId: string, publisherId: string, approved: boolean) {
   const run = await db.agentRun.findUnique({ where: { id: runId } });
@@ -185,7 +210,7 @@ export async function decideReplacement(db: Db, runId: string, publisherId: stri
       where: { id: runId, status: 'awaiting_approval' },
       data: { status: 'running', pending: Prisma.DbNull, transcript: json(history) },
     });
-    if (claimed.count === 0) throw new AgentStateError('This decision was already made.');
+    if (claimed.count === 0) throw new AgentStateError('This decision was already made, or the run has stopped.');
     const ordinal = await tx.agentStep.count({ where: { runId } });
     await tx.agentStep.create({ data: { runId, ordinal, kind: 'tool_result', tool: 'propose_replacement', output: json(decision) } });
     await appendAudit(tx, {

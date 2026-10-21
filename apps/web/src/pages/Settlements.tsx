@@ -13,18 +13,35 @@ import { useSession } from '../lib/session';
 import type { SettlementLine, SettlementRun } from '../lib/types';
 
 type Row = SettlementLine & { recipientName: string; isTotal?: boolean };
+/** The API adds each recipient's name to the lines. */
+type NamedRun = Omit<SettlementRun, 'lines'> & { lines: Array<SettlementLine & { recipientName?: string | null }> };
 
-const STEPS: Array<{ key: SettlementRun['status'][]; label: string }> = [
-  { key: ['calculated', 'approved', 'payout_submitted', 'completed', 'exception'], label: 'Captured & calculated' },
-  { key: ['approved', 'payout_submitted', 'completed', 'exception'], label: 'Publisher approved' },
-  { key: ['payout_submitted', 'completed', 'exception'], label: 'Payouts submitted' },
-  { key: ['completed'], label: 'All payouts succeeded' },
+/** Each step from what actually happened, not from the overall status (an exception can come at any point). */
+const STEPS: Array<{ label: string; done: (r: SettlementRun) => boolean }> = [
+  { label: 'Captured & calculated', done: (r) => r.lines.length > 0 && !r.failureReason },
+  { label: 'Publisher approved', done: (r) => Boolean(r.approvedAt) },
+  { label: 'Payouts submitted', done: (r) => r.batches.some((b) => b.paypalBatchId) },
+  { label: 'All payouts succeeded', done: (r) => r.status === 'completed' },
 ];
+
+/** Why a sale whose payment didn't stand has no more payouts, in plain words. */
+const SALE_PROBLEM: Record<string, string> = {
+  pending_payment: 'PayPal hasn’t finished taking the buyer’s payment yet',
+  payment_failed: 'PayPal didn’t complete the buyer’s payment',
+  refunded: 'The buyer’s payment was refunded in PayPal',
+  exception: 'The buyer’s payment was partly refunded, reversed or disputed in PayPal',
+};
+
+/** A calculation error meant for people, or null when it's a technical message (e.g. JSON). */
+function readableReason(reason: string): string | null {
+  const t = reason.trim();
+  return /^[[{]/.test(t) || t.length > 300 ? null : t;
+}
 
 export function SettlementsPage() {
   const qc = useQueryClient();
   const { users } = useSession();
-  const q = useQuery({ queryKey: ['settlements'], queryFn: () => api<{ settlements: SettlementRun[] }>('/settlements'), refetchInterval: 8000 });
+  const q = useQuery({ queryKey: ['settlements'], queryFn: () => api<{ settlements: NamedRun[] }>('/settlements'), refetchInterval: 8000 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const names = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u.name])), [users]);
 
@@ -94,7 +111,7 @@ export function SettlementsPage() {
     );
   }
 
-  const rows: Row[] = run.lines.map((l) => ({ ...l, recipientName: names[l.recipientId] ?? l.recipientId }));
+  const rows: Row[] = run.lines.map((l) => ({ ...l, recipientName: l.recipientName ?? names[l.recipientId] ?? l.recipientId }));
   const total: Row = {
     id: 'total', kind: 'contributor', recipientId: '', recipientName: 'Total', payeeEmail: null, licenseGrantId: null, assetVersionId: null,
     amountCents: rows.reduce((s, r) => s + r.amountCents, 0), formula: `= verified capture ${formatMoney(run.grossCents)}`, payable: false, note: null, payoutItem: null, isTotal: true,
@@ -169,7 +186,7 @@ export function SettlementsPage() {
           >
             <ol className="mb-5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
               {STEPS.map((s, i) => {
-                const done = s.key.includes(run.status) && !(run.status === 'exception' && i === 3);
+                const done = s.done(run);
                 return (
                   <li key={s.label} className={clsx('rounded-lg border px-3 py-2', done ? 'border-verified/30 bg-verified-soft text-verified' : 'border-line text-muted')}>
                     {i + 1}. {s.label}
@@ -180,9 +197,19 @@ export function SettlementsPage() {
             {run.status === 'exception' && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-block">
                 {run.sale.status !== 'captured'
-                  ? `The buyer's payment was ${run.sale.status.replace('_', ' ')} by PayPal, so nothing more will be paid out. Any payouts already sent need to be reconciled with contributors under their agreements.`
+                  ? `${SALE_PROBLEM[run.sale.status] ?? 'The buyer’s payment didn’t go through in PayPal'}, so nothing more will be paid out. ${run.batches.some((b) => b.paypalBatchId) ? 'Payouts already sent need to be settled with the contributors under their agreements.' : 'No payouts were sent for this sale.'}`
                   : run.failureReason
-                    ? `The contributor shares couldn't be calculated: ${run.failureReason} Fix the cause (usually a missing PayPal email), then recalculate.`
+                    ? (
+                        <>
+                          The contributor shares couldn’t be calculated{readableReason(run.failureReason) ? `: ${readableReason(run.failureReason)}` : '.'} Fix the cause (usually a contributor’s missing PayPal email), then recalculate.
+                          {!readableReason(run.failureReason) && (
+                            <details className="mt-1 text-xs">
+                              <summary className="cursor-pointer">Technical details</summary>
+                              <pre className="mt-1 whitespace-pre-wrap break-all">{run.failureReason}</pre>
+                            </details>
+                          )}
+                        </>
+                      )
                     : latest && ['DENIED', 'CANCELED'].includes(latest.status)
                       ? 'PayPal declined this payout batch. Check your PayPal account, then retry.'
                       : 'Some payouts failed or came back from PayPal. Ask the contributor to check their PayPal email in their profile, then retry the failed payouts.'}

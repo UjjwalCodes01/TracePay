@@ -93,5 +93,12 @@ export function aiConfig(): AiConfig | null {
 
 export const aiReady = (): boolean => aiConfig() !== null;
 
+/**
+ * Free text telling demo visitors which PayPal sandbox buyer account to pay with
+ * (e.g. "judge@example.com / password"). Sandbox-only credentials, shown only in
+ * demo mode; never put real account details here.
+ */
+export const sandboxBuyerHint = (): string | null => process.env.PAYPAL_SANDBOX_BUYER_HINT?.trim().slice(0, 300) || null;
+
 export const signingEnv = () =>
   parse(z.object({ AUDIT_SIGNING_PRIVATE_KEY: nonEmpty }), 'audit signing');

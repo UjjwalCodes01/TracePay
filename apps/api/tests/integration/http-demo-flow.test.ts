@@ -80,6 +80,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', ()
     paypal.setAllItems(payout.body.batch.paypalBatchId, 'SUCCESS');
     const refreshed = await request(app).post(`/api/settlements/${runId}/refresh`).set(publisher).expect(200);
     expect(refreshed.body.runStatus).toBe('completed');
+    // Lines carry recipient names, for people who don't know user ids.
+    const settlement = await request(app).get(`/api/settlements/${runId}`).set(publisher).expect(200);
+    expect(settlement.body.settlement.lines.find((l: { recipientId: string }) => l.recipientId === 'user_northwind').recipientName).toBe('Northwind Data Co.');
 
     // Contributor sees their own record
     const earnings = await request(app).get('/api/contributor/earnings').set(as('user_northwind')).expect(200);

@@ -32,6 +32,18 @@ export class ApiError extends Error {
   }
 }
 
+const SERVER_UNAVAILABLE = 'TracePay’s server isn’t responding right now (it may be waking up). Try again in a minute.';
+
+/** "Too small: expected string to have >=10 characters" on "goal" → "Goal: too short (at least 10 characters)." */
+function readable(issue: { message: string; path?: unknown[] }): string {
+  const field = Array.isArray(issue.path) && issue.path.length ? String(issue.path.at(-1)) : null;
+  const label = field ? `${field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())}: ` : '';
+  const min = issue.message.match(/Too small: expected string to have >=(\d+) characters?/);
+  const max = issue.message.match(/Too big: expected string to have <=(\d+) characters?/);
+  const text = min ? `too short (at least ${min[1]} characters)` : max ? `too long (at most ${max[1]} characters)` : issue.message.replace(/^./, (c) => c.toLowerCase());
+  return `${label}${text.replace(/^./, (c) => (label ? c : c.toUpperCase()))}${/[.!?]$/.test(text) ? '' : '.'}`;
+}
+
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const demoUser = getDemoUserId();
   const res = await fetch(`${BASE}/api${path}`, {
@@ -44,16 +56,22 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // Not JSON: an HTML error page from the hosting platform (502/504 while the API wakes up), not from TracePay.
+    throw new ApiError(res.status, res.ok ? 'TracePay sent an unexpected response. Please try again.' : SERVER_UNAVAILABLE);
+  }
   if (!res.ok && !(res.status === 422 && path.endsWith('/generate') && !path.startsWith('/v1/'))) {
     // Dashboard routes answer { error: "…", details }; the platform API (/v1) answers
     // { error: { message, code, details }, request_id }.
     const envelope = data?.error && typeof data.error === 'object' ? data.error : null;
     const details = envelope ? envelope.details : data?.details;
-    const message: string = envelope?.message ?? data?.error ?? `Request failed (${res.status})`;
-    // Surface the first validation message in plain words (the v1 message already includes it).
-    const first = !envelope && Array.isArray(details) && details[0]?.message ? `: ${details[0].message}` : '';
-    throw new ApiError(res.status, `${message}${first}`, details);
+    const message: string = envelope?.message ?? data?.error ?? (res.status >= 502 ? SERVER_UNAVAILABLE : `Request failed (${res.status})`);
+    // A validation failure: show its first message on its own, in plain words (the v1 message already includes it).
+    const first = !envelope && Array.isArray(details) && details[0]?.message ? readable(details[0]) : null;
+    throw new ApiError(res.status, first ?? message, details);
   }
   return data as T;
 }

@@ -50,11 +50,29 @@ const STATUS_TEXT: Record<Grant['status'], { text: (g: Grant) => string; tone: '
   draft: { text: () => 'Draft', tone: 'neutral' },
 };
 
-/** Latest grant per publisher — what each relationship looks like right now. */
+/** Latest grant per publisher. */
 function latestPerPublisher(grants: Grant[]): Grant[] {
   const seen = new Map<string, Grant>();
   for (const g of grants) if (!seen.has(g.licensee.id)) seen.set(g.licensee.id, g);
   return [...seen.values()];
+}
+
+/**
+ * Each publisher relationship as it stands: the license in force (a newer offer that
+ * was declined or withdrawn doesn't end it), plus a newer offer next to it, if any.
+ * Open requests are shown separately, at the top of the page.
+ */
+function relationships(grants: Grant[]): Array<{ current: Grant; newer: Grant | null }> {
+  const byPublisher = new Map<string, Grant[]>();
+  for (const g of grants) byPublisher.set(g.licensee.id, [...(byPublisher.get(g.licensee.id) ?? []), g]);
+  const out: Array<{ current: Grant; newer: Grant | null }> = [];
+  for (const list of byPublisher.values()) {
+    const latest = list[0]!; // newest version first (API order)
+    const active = list.find((g) => g.status === 'approved');
+    if (active) out.push({ current: active, newer: latest !== active && ['offered', 'declined', 'withdrawn'].includes(latest.status) ? latest : null });
+    else if (latest.status !== 'requested') out.push({ current: latest, newer: null });
+  }
+  return out;
 }
 
 export function MySourcesPage() {
@@ -132,7 +150,7 @@ export function MySourcesPage() {
         <div className="space-y-4">
           {assets.map((a) => {
             const v = a.versions[0];
-            const relationships = latestPerPublisher(a.licenses).filter((g) => g.status !== 'requested');
+            const rels = relationships(a.licenses);
             return (
               <Card
                 key={a.id}
@@ -161,11 +179,11 @@ export function MySourcesPage() {
                 }
               >
                 <p className="text-sm text-muted">{a.description}</p>
-                {relationships.length === 0 ? (
+                {rels.length === 0 ? (
                   <p className="mt-4 text-sm text-muted">Not licensed to anyone yet.</p>
                 ) : (
                   <ul className="mt-4 divide-y divide-line rounded-lg border border-line">
-                    {relationships.map((g) => {
+                    {rels.map(({ current: g, newer }) => {
                       const s = STATUS_TEXT[g.status];
                       return (
                         <li key={g.id} className="grid gap-3 p-4 md:grid-cols-[1fr_1.4fr_auto] md:items-start">
@@ -173,6 +191,17 @@ export function MySourcesPage() {
                             <div className="font-medium">{g.licensee.name}</div>
                             <Badge tone={s.tone}>{s.text(g)}</Badge>
                             <div className="mt-1 text-xs text-muted">Terms version {g.version} · {timeAgo(g.updatedAt)}</div>
+                            {newer && (
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                                <span className="text-muted">Newer terms (version {newer.version}):</span>
+                                <Badge tone={STATUS_TEXT[newer.status].tone}>{STATUS_TEXT[newer.status].text(newer)}</Badge>
+                                {newer.status === 'offered' && (
+                                  <Button size="sm" variant="ghost" loading={act.isPending && act.variables?.id === newer.id} onClick={() => act.mutate({ id: newer.id, action: 'withdraw' })}>
+                                    Withdraw
+                                  </Button>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div>{g.terms && <TermsSummary terms={g.terms} compact />}</div>
                           <div className="flex gap-2 md:flex-col">

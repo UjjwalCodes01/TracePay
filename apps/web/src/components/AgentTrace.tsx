@@ -101,7 +101,8 @@ export function AgentTrace({
 }) {
   const steps = run.steps.filter((s) => s.kind !== 'approval_request');
   const artifactId = run.builds.find((b) => b.artifact)?.artifact?.id;
-  const planner = run.model.startsWith('gemini') ? 'Gemini on Vertex AI' : 'Rule-based planner (Vertex AI not configured)';
+  // run.model is "<planner>:<model>", e.g. "gemini:gemini-flash-latest" or "rule-based:rule-based-planner/1".
+  const planner = run.model.startsWith('gemini') ? `Gemini (${run.model.slice(run.model.indexOf(':') + 1)})` : 'Rule-based planner (no AI model configured)';
 
   return (
     <div className="space-y-3">

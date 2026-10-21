@@ -16,6 +16,8 @@ export interface AppConfig {
   agentPlanner: 'gemini' | 'rule-based';
   vertexReady: boolean;
   demoMode: boolean;
+  /** Demo mode only: which PayPal sandbox buyer account to pay with. */
+  sandboxBuyerHint?: string | null;
 }
 
 export interface CatalogEntry {

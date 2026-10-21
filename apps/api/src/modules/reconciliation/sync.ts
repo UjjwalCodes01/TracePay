@@ -102,10 +102,26 @@ export async function pollPayoutBatch(db: Db, paypal: PayPalGateway, claim: Clai
         await release(null);
         return 'too old to resend safely';
       }
-      await submitPayouts(db, paypal, batch.runId).catch((err) => {
-        if (!(err instanceof SettlementStateError)) throw err;
-      });
+      const refused = await submitPayouts(db, paypal, batch.runId).then(
+        () => null,
+        (err) => {
+          if (!(err instanceof SettlementStateError)) throw err;
+          return err;
+        },
+      );
       const sent = await db.payoutBatch.findUniqueOrThrow({ where: { id: batch.id }, select: { status: true } });
+      if (refused && sent.status === 'SUBMITTING') {
+        // It may not be sent any more (the sale was refunded, the app lost its Payouts
+        // permission…): stop retrying it and hand it to a person, instead of looping.
+        const owner = await saleOwner(db, batch.run.saleId);
+        if (owner) {
+          await db.$transaction((tx) =>
+            openIssue(tx, { ownerId: owner.ownerId, kind: 'payout_submit_failed', subjectType: 'payout_batch', subjectId: batch.id, artifactId: owner.artifactId, data: { attempt: batch.attempt, reason: refused.message } }),
+          );
+        }
+        await release(null);
+        return `not resent: ${refused.message}`;
+      }
       // sendBatch scheduled the next poll if PayPal took it; otherwise a person decides (issue opened there).
       await db.payoutBatch.updateMany({ where: { id: batch.id, pollLockedUntil: c.lease }, data: { pollLockedUntil: null, pollCount: nextCount } });
       return `resubmitted → ${sent.status}`;

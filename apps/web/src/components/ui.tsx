@@ -107,7 +107,7 @@ export function Empty({ children }: { children: ReactNode }) {
 
 export function ErrorNote({ error }: { error: unknown }) {
   if (!error) return null;
-  return <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-block">{(error as Error).message}</div>;
+  return <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-block">{(error as Error).message}</div>;
 }
 
 export function Hash({ value, n = 10 }: { value: string | null | undefined; n?: number }) {

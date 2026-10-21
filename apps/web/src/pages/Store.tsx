@@ -1,16 +1,17 @@
 import { PayPalButtons, PayPalScriptProvider } from '@paypal/react-paypal-js';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Lock, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Clock, GitBranch, Lock, ScrollText, ShieldCheck } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ReportBody } from '../components/ReportBody';
 import { Badge, Card, Empty, ErrorNote, Hash, PageHeader, Spinner } from '../components/ui';
 import { api, post } from '../lib/api';
-import { formatMoney } from '../lib/format';
+import { formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
 import type { ArtifactFull, ArtifactPreview } from '../lib/types';
 
 export function StorePage() {
+  const { user } = useSession();
   const q = useQuery({ queryKey: ['artifacts'], queryFn: () => api<{ artifacts: ArtifactPreview[] }>('/artifacts') });
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
@@ -40,7 +41,61 @@ export function StorePage() {
           ))}
         </div>
       )}
+      {user?.role === 'buyer' && <MyPurchases />}
     </>
+  );
+}
+
+interface BuyerSale {
+  id: string;
+  status: 'pending_payment' | 'captured' | 'payment_failed' | 'refunded' | 'exception';
+  amountCents: number;
+  createdAt: string;
+  artifact: { id: string; title: string };
+  payment: { captureId: string | null } | null;
+}
+
+/** What the buyer should understand about each purchase. Unfinished or declined checkouts never charged anyone, so they aren't listed. */
+const PURCHASE_STATE: Partial<Record<BuyerSale['status'], { label: string; tone: 'pass' | 'warn' | 'block' | 'neutral' }>> = {
+  captured: { label: 'Paid', tone: 'pass' },
+  pending_payment: { label: 'PayPal is processing', tone: 'warn' },
+  exception: { label: 'Being checked with PayPal', tone: 'warn' },
+  refunded: { label: 'Refunded', tone: 'neutral' },
+};
+
+function MyPurchases() {
+  const q = useQuery({ queryKey: ['my-purchases'], queryFn: () => api<{ sales: BuyerSale[] }>('/sales') });
+  const purchases = (q.data?.sales ?? []).filter((s) => PURCHASE_STATE[s.status] && (s.status !== 'pending_payment' || s.payment?.captureId));
+  if (q.error) return <div className="mt-8"><ErrorNote error={q.error} /></div>;
+  if (!purchases.length) return null;
+  return (
+    <section className="mt-10">
+      <h2 className="mb-3 font-semibold">My purchases</h2>
+      <ul className="divide-y divide-line rounded-xl border border-line bg-white">
+        {purchases.map((s) => {
+          const state = PURCHASE_STATE[s.status]!;
+          return (
+            <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
+              <div className="min-w-0">
+                <Link to={`/store/${s.artifact.id}`} className="font-medium hover:underline">
+                  {s.artifact.title}
+                </Link>
+                <div className="text-xs text-muted">Bought {timeAgo(s.createdAt)}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="tabular-nums">{formatMoney(s.amountCents)}</span>
+                <Badge tone={state.tone}>{state.label}</Badge>
+                {s.status === 'captured' && (
+                  <Link to={`/reports/${s.artifact.id}/receipt`} className="text-brand hover:underline">
+                    Receipt
+                  </Link>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -59,14 +114,33 @@ export function StoreItemPage() {
   const { id } = useParams();
   const qc = useQueryClient();
   const { config } = useSession();
-  const q = useQuery({ queryKey: ['artifact', id], queryFn: () => api<{ artifact: ArtifactFull | ArtifactPreview; full: boolean }>(`/artifacts/${id}`) });
   const saleRef = useRef<string | null>(null);
+  // Set when we already showed why checkout couldn't start, so PayPal's generic onError doesn't replace it.
+  const shownRef = useRef(false);
   const [result, setResult] = useState<CaptureResult | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // PayPal accepted the payment but is still holding it: keep checking until the report unlocks.
+  const waiting = result?.saleStatus === 'pending_payment' || result?.saleStatus === 'exception';
+  const q = useQuery({
+    queryKey: ['artifact', id],
+    queryFn: () => api<{ artifact: ArtifactFull | ArtifactPreview; full: boolean }>(`/artifacts/${id}`),
+    refetchInterval: (query) => (waiting && !query.state.data?.full ? 4000 : false),
+  });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['artifact', id] });
+    qc.invalidateQueries({ queryKey: ['artifacts'] });
+    qc.invalidateQueries({ queryKey: ['my-purchases'] });
+  };
+  const fail = (e: unknown) => {
+    setError(e);
+    // The report may have been withdrawn or already bought: show what is true now.
+    refresh();
+  };
 
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
   const { artifact, full } = q.data!;
+  const showPay = !full && !waiting && result?.saleStatus !== 'captured';
 
   return (
     <>
@@ -103,66 +177,101 @@ export function StoreItemPage() {
         <div className="space-y-4">
           <Card title={full ? 'Purchased' : 'Buy this report'}>
             <div className="text-3xl font-semibold tabular-nums">{formatMoney(artifact.priceCents)}</div>
-            {!full && (
+            {full && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link to={`/reports/${artifact.id}/receipt`} className="inline-flex h-9 items-center gap-2 rounded-lg bg-ink px-3 text-sm font-medium text-white hover:bg-slate-800">
+                  <ScrollText className="size-4" /> Receipt
+                </Link>
+                <Link to={`/reports/${artifact.id}/provenance`} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium hover:bg-slate-50">
+                  <GitBranch className="size-4" /> Where it came from
+                </Link>
+              </div>
+            )}
+            {showPay && (
               <>
-                <p className="mb-4 mt-1 text-sm text-muted">Pay with your PayPal sandbox buyer account.</p>
+                <p className="mb-4 mt-1 text-sm text-muted">Pay with a PayPal sandbox (test) account or a test card. No real money moves.</p>
                 {!config?.paypalClientId ? (
                   <ErrorNote error={new Error('PayPal sandbox is not configured on the server.')} />
                 ) : (
                   <PayPalScriptProvider options={{ clientId: config.paypalClientId, currency: 'USD', intent: 'capture', components: 'buttons' }}>
                     <PayPalButtons
                       style={{ layout: 'vertical', shape: 'rect', label: 'pay', height: 44 }}
-                      fundingSource="paypal"
                       createOrder={async () => {
                         setError(null);
-                        const r = await post<{ saleId: string; orderId: string }>('/checkout/orders', { artifactId: artifact.id });
-                        saleRef.current = r.saleId;
-                        return r.orderId;
+                        shownRef.current = false;
+                        try {
+                          const r = await post<{ saleId: string; orderId: string }>('/checkout/orders', { artifactId: artifact.id });
+                          saleRef.current = r.saleId;
+                          return r.orderId;
+                        } catch (e) {
+                          shownRef.current = true;
+                          fail(e);
+                          throw e;
+                        }
                       }}
                       onApprove={async () => {
                         try {
                           // The server captures and verifies; returning from the popup proves nothing on its own.
                           const r = await post<CaptureResult>(`/checkout/${saleRef.current}/capture`);
                           setResult(r);
-                          qc.invalidateQueries({ queryKey: ['artifact', id] });
+                          if (r.saleStatus === 'payment_failed') setError(new Error('PayPal didn’t complete this payment, so nothing was charged. You can try again.'));
+                          refresh();
                         } catch (e) {
-                          setError(e);
+                          fail(e);
                         }
                       }}
                       onCancel={() => setError(new Error('Checkout cancelled. No payment was taken.'))}
-                      onError={(e) => setError(e instanceof Error ? e : new Error('PayPal reported an error.'))}
+                      onError={(e) => {
+                        // Errors we raised in createOrder are already shown.
+                        if (!shownRef.current) fail(e instanceof Error ? e : new Error('PayPal reported an error. No payment was taken.'));
+                      }}
                     />
                   </PayPalScriptProvider>
+                )}
+                {config?.sandboxBuyerHint && (
+                  <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted">
+                    <span className="font-medium text-ink">Test buyer:</span> {config.sandboxBuyerHint}
+                  </p>
                 )}
               </>
             )}
             <ErrorNote error={error} />
           </Card>
 
-          {result && (
-            <Card title="Server-verified payment">
-              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-pass">
-                <CheckCircle2 className="size-4" /> {result.saleStatus === 'captured' ? 'Payment captured and verified' : `Sale ${result.saleStatus}`}
-              </div>
-              <dl className="grid grid-cols-[7rem_1fr] gap-y-1.5 text-sm">
-                <dt className="text-muted">Order</dt>
-                <dd><Hash value={result.orderId} n={20} /></dd>
-                <dt className="text-muted">Capture</dt>
-                <dd><Hash value={result.captureId} n={20} /></dd>
-                <dt className="text-muted">Status</dt>
-                <dd>{result.captureStatus}</dd>
-                <dt className="text-muted">Amount</dt>
-                <dd>{result.capturedCents !== null ? formatMoney(result.capturedCents) : '—'}</dd>
-                <dt className="text-muted">Settlement</dt>
-                <dd><Hash value={result.settlementRunId} n={20} /></dd>
-              </dl>
-              <p className="mt-3 text-xs text-muted">
-                The server captured this order with PayPal and checked the amount, currency and sale reference before unlocking the report and calculating contributor royalties.
-              </p>
-            </Card>
-          )}
+          {result && result.saleStatus !== 'payment_failed' && <PaymentResult result={result} unlocked={full} />}
         </div>
       </div>
     </>
+  );
+}
+
+function PaymentResult({ result, unlocked }: { result: CaptureResult; unlocked: boolean }) {
+  const captured = result.saleStatus === 'captured' || unlocked;
+  return (
+    <Card title="Your payment">
+      {captured ? (
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-pass">
+          <CheckCircle2 className="size-4" /> Payment received and checked with PayPal
+        </div>
+      ) : (
+        <div className="mb-3 flex items-start gap-2 text-sm font-medium text-amber-700">
+          <Clock className="mt-0.5 size-4 shrink-0" />
+          {result.saleStatus === 'pending_payment'
+            ? 'PayPal is still processing this payment. The report unlocks as soon as PayPal confirms it — you can leave this page.'
+            : 'We’re double-checking this payment with PayPal. The report unlocks once it’s confirmed.'}
+        </div>
+      )}
+      <dl className="grid grid-cols-[7rem_1fr] gap-y-1.5 text-sm">
+        <dt className="text-muted">Order</dt>
+        <dd><Hash value={result.orderId} n={20} /></dd>
+        <dt className="text-muted">Capture</dt>
+        <dd><Hash value={result.captureId} n={20} /></dd>
+        <dt className="text-muted">Amount</dt>
+        <dd>{result.capturedCents !== null ? formatMoney(result.capturedCents) : '—'}</dd>
+      </dl>
+      <p className="mt-3 text-xs text-muted">
+        TracePay confirmed this payment with PayPal itself and checked the amount before unlocking the report and working out what each contributor is owed.
+      </p>
+    </Card>
   );
 }

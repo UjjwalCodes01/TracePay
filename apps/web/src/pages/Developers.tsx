@@ -254,6 +254,7 @@ const GROUPS: { label: string; prefix: string }[] = [
   { label: 'Builds', prefix: 'build.' },
   { label: 'Licenses', prefix: 'license.' },
   { label: 'Publisher Agent', prefix: 'agent_run.' },
+  { label: 'Checks with PayPal', prefix: 'reconciliation.' },
 ];
 
 const DELIVERY_TONE = { succeeded: 'pass', failed: 'block', pending: 'warn', skipped: 'neutral' } as const;

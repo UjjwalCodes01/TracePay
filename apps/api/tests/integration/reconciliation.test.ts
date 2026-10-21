@@ -10,7 +10,7 @@ import { DEMO_ASSETS, DEMO_IDS } from '../../src/modules/demo/world';
 import { generateArtifact } from '../../src/modules/generation/generation.service';
 import { FixtureReportWriter } from '../../src/modules/generation/writers';
 import { PayPalApiError } from '../../src/integrations/paypal/client';
-import { captureSale, startCheckout } from '../../src/modules/payments/payments.service';
+import { applyCapture, captureSale, startCheckout } from '../../src/modules/payments/payments.service';
 import { handlePayPalWebhook } from '../../src/modules/payments/webhooks.service';
 import { checkPayment, nextReconcileAt, reconcileDue, ReconciliationWorker, UNCONFIRMED_AFTER_MS } from '../../src/modules/reconciliation/sync';
 import { approveSettlement, refreshPayouts, retryFailedPayouts, submitPayouts } from '../../src/modules/settlements/settlement.service';
@@ -200,6 +200,36 @@ describe.runIf(process.env.TEST_DATABASE_URL)('reconciliation with PayPal (integ
       await reconcileDue(db(), paypal, { now: later(MIN) });
       expect((await sale(c.saleId)).status).toBe('captured');
       expect(await db().settlementRun.count({ where: { saleId: c.saleId } })).toBe(1);
+    });
+
+    it('refuses a new checkout while an earlier payment is still pending, so nothing is charged twice', async () => {
+      const c = await checkout(paypal);
+      paypal.approve(c.orderId);
+      paypal.nextCaptureOverrides = { status: 'PENDING' };
+      await captureSale(db(), paypal, c.saleId);
+      // Hours later the buyer tries again: the reuse window is over, but the pending payment must not be closed.
+      await db().sale.update({ where: { id: c.saleId }, data: { createdAt: new Date(Date.now() - 3 * HOUR) } });
+      const artifactId = (await sale(c.saleId)).artifactId;
+      await expect(startCheckout(db(), paypal, { artifactId, buyerId: DEMO_IDS.buyer, appBaseUrl: APP })).rejects.toMatchObject({ code: 'state' });
+      expect((await sale(c.saleId)).status).toBe('pending_payment');
+      paypal.settlePendingCapture(c.orderId, 'COMPLETED');
+      await db().payPalPayment.update({ where: { saleId: c.saleId }, data: { nextCheckAt: new Date() } });
+      await reconcileDue(db(), paypal, { now: later(MIN) });
+      expect((await sale(c.saleId)).status).toBe('captured');
+    });
+
+    it('flags money PayPal completes for a pending capture on a sale that was closed', async () => {
+      const c = await checkout(paypal);
+      paypal.approve(c.orderId);
+      paypal.nextCaptureOverrides = { status: 'PENDING' };
+      await captureSale(db(), paypal, c.saleId);
+      // A sale closed before this fix (or by any other path) while its capture was pending.
+      await db().sale.update({ where: { id: c.saleId }, data: { status: 'payment_failed' } });
+      paypal.settlePendingCapture(c.orderId, 'COMPLETED');
+      const { captureId } = await payment(c.saleId);
+      await applyCapture(db(), c.saleId, null, await paypal.getCapture(captureId!), 'webhook');
+      expect((await sale(c.saleId)).status).toBe('exception');
+      expect((await issues(c.saleId)).map((i) => i.kind)).toEqual(['capture_after_close']);
     });
 
     it('records a declined pending capture as a failed payment that needs a look', async () => {

@@ -131,6 +131,7 @@ function IssueRow({ issue, onResolved }: { issue: Issue; onResolved: () => void 
           <input
             autoFocus
             required
+            aria-label="What did you do to handle this?"
             minLength={3}
             maxLength={500}
             placeholder="What did you do? e.g. “Settled with the contributors directly.”"

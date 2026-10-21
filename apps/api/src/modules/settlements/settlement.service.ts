@@ -366,7 +366,12 @@ export async function retryFailedPayouts(db: Db, paypal: PayPalGateway, runId: s
     if (!latest?.paypalBatchId) throw new SettlementStateError('There is no accepted payout batch to retry yet.');
 
     const items = await tx.payoutItem.findMany({ where: { batch: { runId } }, include: { settlementLine: true, batch: true } });
-    const failed = items.filter((i) => FAILED_ITEM_STATES.includes(i.status as PayoutItemState));
+    // A batch PayPal denied or cancelled as a whole paid nobody: every item in it that
+    // didn't succeed is retried (its items never reach a failed state of their own).
+    const wholeBatchFailed = latest.status === 'DENIED' || latest.status === 'CANCELED';
+    const failed = items.filter(
+      (i) => FAILED_ITEM_STATES.includes(i.status as PayoutItemState) || (wholeBatchFailed && i.batchId === latest.id && i.status !== 'SUCCESS'),
+    );
     if (failed.length === 0) throw new SettlementStateError('There are no failed payouts to retry.');
 
     const attempt = latest.attempt + 1;

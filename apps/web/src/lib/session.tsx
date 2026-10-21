@@ -10,10 +10,13 @@ interface Session {
   user: DemoUser | null;
   authMethod: AuthMethod | null;
   loading: boolean;
+  /** Who-am-I failed for a reason other than "not signed in" (server down, rate limited…). */
+  error: unknown;
+  retry: () => void;
   /** Seeded demo users — empty unless the server runs in demo mode. */
   users: DemoUser[];
   config: AppConfig | null;
-  switchUser: (id: string) => void;
+  switchUser: (id: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (input: { email: string; password: string; name: string; role: 'publisher' | 'contributor' | 'buyer'; paypalEmail?: string }) => Promise<void>;
   signOut: () => Promise<void>;
@@ -44,9 +47,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [qc]);
 
   const switchUser = useCallback(
-    (id: string) => {
+    async (id: string) => {
       setDemoUserId(id);
-      void resetUserData();
+      await resetUserData();
     },
     [resetUserData],
   );
@@ -80,6 +83,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       user: me.data?.user ?? null,
       authMethod: me.data?.authMethod ?? null,
       loading: me.isLoading || config.isLoading,
+      error: me.data === undefined ? me.error : null,
+      retry: () => void me.refetch(),
       users: users.data?.users ?? [],
       config: config.data ?? null,
       switchUser,
@@ -87,7 +92,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       signUp,
       signOut,
     }),
-    [me.data, me.isLoading, config.data, config.isLoading, users.data, switchUser, signIn, signUp, signOut],
+    [me.data, me.isLoading, me.error, me.refetch, config.data, config.isLoading, users.data, switchUser, signIn, signUp, signOut],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

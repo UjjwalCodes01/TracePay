@@ -8,7 +8,7 @@ import { HttpError } from '../http/errors';
 import { quotas } from '../http/limits';
 
 const MAX_ACTIVE_RUNS = 2;
-import { AgentStateError, createRunWithinCap, decideReplacement, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
+import { AgentStateError, cancelRun, createRunWithinCap, decideReplacement, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
 import { explainPreflight } from '../modules/builds/explain';
 
 const StartBody = z.object({
@@ -40,7 +40,7 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
         MAX_ACTIVE_RUNS,
       );
     } catch (err) {
-      if (err instanceof TooManyRunsError) throw new HttpError(429, err.message.replace('agent runs', 'assistant runs'));
+      if (err instanceof TooManyRunsError) throw new HttpError(429, `${err.message.replace('agent runs', 'assistant runs').replace('Wait for one to finish.', 'Finish or stop one of them first.')}`);
       throw err;
     }
     runInBackground(run.id);
@@ -76,6 +76,17 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
     }
     runInBackground(runId);
     res.status(202).json({ runId, approved });
+  });
+
+  r.post('/agent/runs/:id/cancel', requireRole('publisher'), async (req, res) => {
+    const runId = param(req, 'id');
+    try {
+      await cancelRun(db, runId, currentUser(req).id);
+    } catch (err) {
+      if (err instanceof AgentStateError) throw new HttpError(err.message === 'Run not found.' ? 404 : 409, err.message);
+      throw err;
+    }
+    res.json({ runId, status: 'failed' });
   });
 
   r.get('/builds/:id/explain', requireRole('publisher', 'admin'), async (req, res) => {

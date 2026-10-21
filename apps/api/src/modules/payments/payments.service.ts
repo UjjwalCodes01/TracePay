@@ -47,11 +47,16 @@ export async function startCheckout(
   if (args.buyerId && (await db.sale.count({ where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'captured' } })) > 0) {
     throw new PaymentError('You already own this report.', 'state');
   }
+  // A payment PayPal is still processing (a pending capture) must finish first: closing
+  // it to start again would leave real money untracked, and could charge the buyer twice.
+  if (args.buyerId && (await db.sale.count({ where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment', payment: { captureId: { not: null } } } })) > 0) {
+    throw new PaymentError('PayPal is still processing your earlier payment for this report. It unlocks as soon as PayPal confirms it.', 'state');
+  }
   // Re-clicking "Pay" reuses the buyer's open checkout instead of piling up sales and
   // PayPal orders. (PayPal orders stay approvable for ~3 hours; reuse within 2.)
   if (args.buyerId) {
     const open = await db.sale.findFirst({
-      where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment', createdAt: { gt: new Date(Date.now() - 2 * 60 * 60_000) }, payment: { isNot: null } },
+      where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment', createdAt: { gt: new Date(Date.now() - 2 * 60 * 60_000) }, payment: { is: { captureId: null } } },
       orderBy: { createdAt: 'desc' },
       include: { payment: true },
     });
@@ -68,10 +73,18 @@ export async function startCheckout(
     }
     // Older open checkouts of this buyer for this report are over: the buyer started again.
     // (Reconciliation must never capture one of them as well — that would charge twice.)
+    // Locked first, so a capture landing at the same moment is seen; and only checkouts
+    // PayPal has taken no money for are closed.
     if (args.buyerId) {
-      const stale = await tx.sale.findMany({ where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment' }, select: { id: true } });
-      for (const old of stale) {
-        await tx.sale.update({ where: { id: old.id }, data: { status: 'payment_failed' } });
+      const open = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Sale" WHERE "artifactId" = ${artifact.id} AND "buyerId" = ${args.buyerId} AND status = 'pending_payment' FOR UPDATE`;
+      if (open.length) {
+        const pendingCapture = await tx.payPalPayment.count({ where: { saleId: { in: open.map((o) => o.id) }, captureId: { not: null } } });
+        if (pendingCapture) throw new PaymentError('PayPal is still processing your earlier payment for this report. It unlocks as soon as PayPal confirms it.', 'state');
+      }
+      for (const old of open) {
+        const closed = await tx.sale.updateMany({ where: { id: old.id, status: 'pending_payment' }, data: { status: 'payment_failed' } });
+        if (!closed.count) continue;
         await tx.payPalPayment.updateMany({ where: { saleId: old.id }, data: { nextCheckAt: null } });
         await appendAudit(tx, { entityType: 'sale', entityId: old.id, artifactId: artifact.id, eventType: 'sale.checkout_expired', payload: { reason: 'The buyer started a new checkout.' } });
       }
@@ -182,7 +195,7 @@ export async function captureSale(db: Db, paypal: PayPalGateway, saleId: string)
     const reason = ownedElsewhere ? 'The buyer already owns this report.' : 'The report was taken off sale.';
     await db.$transaction(async (tx) => {
       const moved = await tx.sale.updateMany({ where: { id: saleId, status: 'pending_payment' }, data: { status: 'payment_failed' } });
-      await tx.payPalPayment.update({ where: { saleId }, data: { nextCheckAt: null } });
+      if (moved.count) await tx.payPalPayment.update({ where: { saleId }, data: { nextCheckAt: null } });
       if (moved.count) await appendAudit(tx, { entityType: 'sale', entityId: saleId, artifactId: payment.sale.artifactId, eventType: 'sale.blocked_before_capture', payload: { reasons: [reason] } });
     });
     throw new PaymentError(ownedElsewhere ? 'You already own this report, so this payment was not taken.' : 'This report is no longer for sale, so your payment was not taken.', 'not_for_sale');
@@ -192,10 +205,16 @@ export async function captureSale(db: Db, paypal: PayPalGateway, saleId: string)
   // buyer was in the PayPal window, don't capture at all — the buyer is never charged.
   if (payment.sale.termsSnapshot) {
     const rights = await db.$transaction((tx) => checkSaleRights(tx, payment.sale.artifactId));
+    if (!rights.ok && !rights.permanent) {
+      // Temporary (a contributor is updating payout details): don't take the money now,
+      // but leave the checkout open — the approved order can be captured once it's fixed.
+      throw new PaymentError('This report is temporarily unavailable while a contributor updates their payout details. Your payment was not taken; please try again later.', 'not_for_sale');
+    }
     if (!rights.ok) {
       await db.$transaction(async (tx) => {
-        if (rights.permanent) await withdrawArtifact(tx, payment.sale.artifactId, rights.reasons, 'system');
-        await tx.sale.update({ where: { id: saleId }, data: { status: 'payment_failed' } });
+        await withdrawArtifact(tx, payment.sale.artifactId, rights.reasons, 'system');
+        const moved = await tx.sale.updateMany({ where: { id: saleId, status: 'pending_payment' }, data: { status: 'payment_failed' } });
+        if (!moved.count) return; // captured meanwhile (another tab, a webhook): leave it to that path
         await tx.payPalPayment.update({ where: { saleId }, data: { nextCheckAt: null } });
         await appendAudit(tx, { entityType: 'sale', entityId: saleId, artifactId: payment.sale.artifactId, eventType: 'sale.blocked_before_capture', payload: { reasons: rights.reasons } });
       });
@@ -246,7 +265,12 @@ export async function applyCapture(
     // the refund must not resurrect it.
     // PayPal took money for a sale TracePay had already closed (a checkout that looked
     // expired, then completed after all). Never drop it: record it, flag it, watch it.
-    if (sale.status === 'payment_failed' && (capture.status === 'COMPLETED' || capture.status === 'PENDING') && payment.captureId === null) {
+    // (Also a capture TracePay knew as pending on a sale that was closed: once PayPal
+    // completes it, the money is taken all the same.)
+    const lateMoney =
+      (capture.status === 'COMPLETED' && (payment.captureId === null || payment.captureId === capture.id)) ||
+      (capture.status === 'PENDING' && payment.captureId === null);
+    if (sale.status === 'payment_failed' && lateMoney) {
       const p = await tx.payPalPayment.update({
         where: { saleId },
         data: {

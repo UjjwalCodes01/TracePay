@@ -119,13 +119,16 @@ export async function getProvenance(tx: Tx, artifactId: string): Promise<Provena
   }
 
   for (const sale of artifact.sales) {
-    if (!sale.payment?.captureId) continue;
+    if (!sale.payment || !countsAsSale(sale)) continue;
     const saleNode = `sale:${sale.id}`;
+    const verifiedSale = sale.status === 'captured';
     nodes.push({
       id: saleNode,
       kind: 'sale',
-      label: `Sale ${sale.status}`,
-      evidence: 'verified',
+      label: verifiedSale ? 'Sale paid' : sale.status === 'refunded' ? 'Sale refunded' : 'Sale under review',
+      // Only a sale whose payment stands is shown as verified; a refunded or disputed
+      // one is still part of the record, but not as a completed sale.
+      evidence: verifiedSale ? 'verified' : 'recorded',
       data: {
         saleId: sale.id,
         status: sale.status,
@@ -135,7 +138,7 @@ export async function getProvenance(tx: Tx, artifactId: string): Promise<Provena
         capturedCents: sale.payment.capturedCents,
       },
     });
-    edge(artifactNode, saleNode, 'sold_as', 'verified');
+    edge(artifactNode, saleNode, 'sold_as', verifiedSale ? 'verified' : 'recorded');
 
     for (const line of sale.settlement?.lines ?? []) {
       const lineNode = `line:${line.id}`;
@@ -163,6 +166,19 @@ export async function getProvenance(tx: Tx, artifactId: string): Promise<Provena
   }
 
   return { artifactId, nodes, edges };
+}
+
+/**
+ * Sales that belong on a report's record: paid ones, and ones that were paid and then
+ * refunded or reversed (status refunded, or exception with a settlement calculated).
+ * Not checkouts that were never paid, nor a capture PayPal declined or one that arrived
+ * after the checkout had closed (payment_failed / exception without a settlement):
+ * those keep a captureId but were never a sale.
+ */
+export function countsAsSale(sale: { status: string; payment: { captureId: string | null } | null; settlement?: unknown }): boolean {
+  if (!sale.payment?.captureId) return false;
+  if (sale.status === 'captured' || sale.status === 'refunded') return true;
+  return sale.status === 'exception' && Boolean(sale.settlement);
 }
 
 /** Exported for receipts: the preflight result stored on a build. */

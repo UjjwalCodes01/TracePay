@@ -5,12 +5,14 @@ import { Bot, ListChecks, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AgentTrace } from '../components/AgentTrace';
+import { DraftInput, parseDollars } from '../components/DraftInput';
 import { PreflightMatrix } from '../components/PreflightMatrix';
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner } from '../components/ui';
 import { api, post } from '../lib/api';
 import { economicsLabel } from '../lib/format';
 import type { AgentRun, CatalogEntry, Explanation, PreflightOutcome } from '../lib/types';
 
+/** The demo's three sources, pre-ticked when they are in this publisher's catalog. */
 const DEFAULT_SELECTION = ['asset_northwind_index_v1', 'asset_okafor_notes_v1', 'asset_kestrel_panel_v1'];
 const DEFAULT_GOAL =
   'Create a commercial developer-tools market report using approved sources. Find a compatible replacement if any source fails licensing checks.';
@@ -21,7 +23,8 @@ export function StudioPage() {
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: () => api<{ assets: CatalogEntry[] }>('/catalog') });
 
   const [mode, setMode] = useState<'agent' | 'manual'>('agent');
-  const [selection, setSelection] = useState<string[]>(DEFAULT_SELECTION);
+  // null until the publisher ticks something: then the demo defaults apply, if they exist.
+  const [picked, setPicked] = useState<string[] | null>(null);
   const [goal, setGoal] = useState(DEFAULT_GOAL);
   const [autoReplace, setAutoReplace] = useState(false);
   const [intent, setIntent] = useState<BuildIntent>({
@@ -39,6 +42,9 @@ export function StudioPage() {
     () => Object.fromEntries((catalog.data?.assets ?? []).map((a) => [a.assetVersionId, a.assetTitle])),
     [catalog.data],
   );
+  // Only what the catalog shows can be selected: a source that was archived, or a version
+  // replaced by a newer one, must not stay selected (and built) without a visible tick.
+  const selection = useMemo(() => (picked ?? DEFAULT_SELECTION).filter((id) => id in titles), [picked, titles]);
 
   // ---- manual preflight
   const [outcome, setOutcome] = useState<PreflightOutcome | null>(null);
@@ -81,7 +87,15 @@ export function StudioPage() {
     queryKey: ['agent-run', runId],
     queryFn: () => api<{ run: AgentRun }>(`/agent/runs/${runId}`),
     enabled: Boolean(runId),
-    refetchInterval: (q) => (q.state.data && ['completed', 'failed'].includes(q.state.data.run.status) ? false : 800),
+    retry: false,
+    // Fast while the agent works, slow while it waits for the publisher, and stop on an
+    // error (e.g. the run is gone after a demo reset) or when it's finished.
+    refetchInterval: (q) => {
+      if (q.state.status === 'error') return false;
+      const status = q.state.data?.run.status;
+      if (status === 'completed' || status === 'failed') return false;
+      return status === 'awaiting_approval' ? 3000 : 800;
+    },
   });
   const decide = useMutation({
     mutationFn: (approved: boolean) => post(`/agent/runs/${runId}/decision`, { approved }),
@@ -93,7 +107,7 @@ export function StudioPage() {
 
   const toggle = (id: string) => {
     setOutcome(null);
-    setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+    setPicked(selection.includes(id) ? selection.filter((x) => x !== id) : [...selection, id]);
   };
   const set = <K extends keyof BuildIntent>(k: K, v: BuildIntent[K]) => {
     setOutcome(null);
@@ -135,13 +149,14 @@ export function StudioPage() {
                 </label>
                 <label className="grid gap-1">
                   <span className="text-muted">Price (USD)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    step="0.01"
+                  <DraftInput
+                    inputMode="decimal"
                     className="h-9 rounded-lg border border-line px-3"
                     value={(intent.priceCents / 100).toFixed(2)}
-                    onChange={(e) => set('priceCents', Math.round(Number(e.target.value) * 100))}
+                    onCommit={(text) => {
+                      const cents = parseDollars(text);
+                      if (cents !== null && cents <= 1_000_000) set('priceCents', cents);
+                    }}
                   />
                 </label>
                 <label className="grid gap-1">
@@ -201,7 +216,7 @@ export function StudioPage() {
 
           {mode === 'agent' ? (
             <Card title="3 · Give the agent a goal">
-              <textarea className="min-h-20 w-full rounded-lg border border-line px-3 py-2 text-sm" value={goal} onChange={(e) => setGoal(e.target.value)} />
+              <textarea aria-label="The agent's goal" className="min-h-20 w-full rounded-lg border border-line px-3 py-2 text-sm" value={goal} onChange={(e) => setGoal(e.target.value)} />
               <label className="mt-2 flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={autoReplace} onChange={(e) => setAutoReplace(e.target.checked)} />
                 Pre-authorise compatible source replacements (otherwise the agent asks first)
@@ -213,6 +228,7 @@ export function StudioPage() {
                 <span className="text-xs text-muted">The agent cannot change price or purpose, override the compiler, or move money.</span>
               </div>
               <ErrorNote error={start.error} />
+              {run.error && <ErrorNote error={run.error} />}
               {run.data && (
                 <div className="mt-5 border-t border-line pt-5">
                   <AgentTrace run={run.data.run} titles={titles} onDecide={(a) => decide.mutate(a)} deciding={decide.isPending} />

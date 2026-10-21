@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { BookOpenCheck, Bot, Code2, Database, FileStack, LayoutDashboard, Library, LogOut, Receipt, RotateCcw, ShoppingBag, UserRound, Wallet } from 'lucide-react';
-import { Navigate, NavLink, Outlet, useNavigate } from 'react-router';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { post } from '../lib/api';
 import { useSession } from '../lib/session';
 import type { Role } from '../lib/types';
-import { Badge, Button, Spinner } from './ui';
+import { Badge, Button, Card, ErrorNote, Spinner } from './ui';
 
 const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; roles: Role[] }> = [
   { to: '/dashboard', label: 'Home', icon: LayoutDashboard, roles: ['publisher', 'admin'] },
@@ -20,11 +20,28 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; role
   { to: '/profile', label: 'Profile', icon: UserRound, roles: ['publisher', 'contributor', 'buyer', 'admin'] },
 ];
 
+const ALL_ROLES: Role[] = ['publisher', 'contributor', 'buyer', 'admin'];
+const PUBLISHING: Role[] = ['publisher', 'admin'];
+
+/** Which roles may open a page; the first matching pattern wins. Anything else sends you to your start page. */
+const PAGE_ROLES: Array<[RegExp, Role[]]> = [
+  [/^\/reports\/[^/]+(\/(receipt|provenance))?\/?$/, ALL_ROLES],
+  [/^\/(reports|dashboard|registry|settlements|developers)(\/|$)/, PUBLISHING],
+  [/^\/studio(\/|$)/, ['publisher']],
+  [/^\/(sources|earnings)(\/|$)/, ['contributor']],
+];
+
+export function allowedOn(path: string, role: Role): boolean {
+  const rule = PAGE_ROLES.find(([pattern]) => pattern.test(path));
+  return !rule || rule[1].includes(role);
+}
+
 const ROLE_LABEL: Record<Role, string> = { publisher: 'Publisher', buyer: 'Buyer', contributor: 'Contributor', admin: 'Admin' };
 
 export function Layout() {
-  const { user, authMethod, loading, users, config, switchUser, signOut } = useSession();
+  const { user, authMethod, loading, error, retry, users, config, switchUser, signOut } = useSession();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const qc = useQueryClient();
   const reset = useMutation({
     mutationFn: () => post('/demo/reset'),
@@ -32,7 +49,20 @@ export function Layout() {
   });
 
   if (loading) return <Spinner />;
+  if (!user && error) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-16">
+        <Card title="We couldn’t reach TracePay">
+          <ErrorNote error={error} />
+          <Button className="mt-4" onClick={retry}>
+            Try again
+          </Button>
+        </Card>
+      </div>
+    );
+  }
   if (!user) return <Navigate to="/login" replace />;
+  if (!allowedOn(pathname, user.role)) return <Navigate to="/" replace />;
 
   return (
     <div className="flex min-h-full">
@@ -85,8 +115,9 @@ export function Layout() {
                 <span className="hidden sm:inline">Demo role</span>
                 <select
                   value={user.id}
-                  onChange={(e) => switchUser(e.target.value)}
-                  className="h-8 max-w-[14rem] rounded-lg border border-line bg-white px-2 text-sm text-ink"
+                  // Start the new role on its own start page, once the switch has loaded.
+                  onChange={(e) => void switchUser(e.target.value).then(() => navigate('/'))}
+                  className="h-8 max-w-[9rem] truncate rounded-lg sm:max-w-[14rem] border border-line bg-white px-2 text-sm text-ink"
                   aria-label="Switch demo user"
                 >
                   {users.map((u) => (

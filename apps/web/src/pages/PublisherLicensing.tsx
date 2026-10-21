@@ -86,10 +86,10 @@ export function OffersPanel() {
                 : 'Accepting makes these exact terms binding for reports you build from now on.'}
             </p>
             <div className="mt-3 flex gap-2">
-              <Button loading={decide.isPending} onClick={() => decide.mutate({ item: o, accept: true })}>
+              <Button loading={decide.isPending && decide.variables?.item.id === o.id && decide.variables.accept} disabled={decide.isPending} onClick={() => decide.mutate({ item: o, accept: true })}>
                 Accept these terms
               </Button>
-              <Button variant="secondary" disabled={decide.isPending} onClick={() => decide.mutate({ item: o, accept: false })}>
+              <Button variant="secondary" loading={decide.isPending && decide.variables?.item.id === o.id && !decide.variables.accept} disabled={decide.isPending} onClick={() => decide.mutate({ item: o, accept: false })}>
                 Decline
               </Button>
             </div>
@@ -119,7 +119,10 @@ interface Listing {
   owner: { id: string; name: string };
   version: number;
   passages: number;
+  /** The license in force if there is one, otherwise the newest. */
   myLicense: { id: string; status: string; version: number; terms: LicenseTerms | null } | null;
+  /** A newer offer or request still open next to the license in force. */
+  pendingLicense?: { id: string; status: string; version: number } | null;
 }
 
 const KIND_LABEL: Record<string, string> = { dataset: 'Dataset', research_notes: 'Research notes', expert_brief: 'Expert brief', api_feed: 'Data feed' };
@@ -157,7 +160,7 @@ export function FindSourcesPanel() {
     <div className="space-y-4">
       <label className="flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-3">
         <Search className="size-4 text-muted" />
-        <input className="w-full text-sm focus:outline-none" placeholder="Search sources by topic or contributor" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input aria-label="Search sources" className="w-full text-sm focus:outline-none" placeholder="Search sources by topic or contributor" value={query} onChange={(e) => setQuery(e.target.value)} />
       </label>
       <ErrorNote error={request.error} />
       {sources.length === 0 ? (
@@ -170,7 +173,11 @@ export function FindSourcesPanel() {
               <div key={s.assetId} className="flex flex-col rounded-xl border border-line bg-white p-5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-semibold">{s.title}</div>
-                  {statusOf(s)}
+                  <div className="flex flex-col items-end gap-1">
+                    {statusOf(s)}
+                    {s.pendingLicense?.status === 'offered' && <Badge tone="warn">New terms offered</Badge>}
+                    {s.pendingLicense?.status === 'requested' && <Badge tone="info">New terms requested</Badge>}
+                  </div>
                 </div>
                 <div className="mt-1 text-xs text-muted">
                   {KIND_LABEL[s.kind] ?? s.kind} by {s.owner.name} · {s.passages} passages

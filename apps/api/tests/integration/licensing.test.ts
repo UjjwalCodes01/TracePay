@@ -128,6 +128,16 @@ describe.runIf(process.env.TEST_DATABASE_URL)('contributor onboarding and licens
     expect(await db().licenseGrant.count({ where: { assetId, status: 'superseded' } })).toBe(1);
   });
 
+  it('shows the license in force, not a newer offer, in the marketplace', async () => {
+    const listing = async () => (await publisher.get('/api/marketplace').expect(200)).body.sources.find((s: { assetId: string }) => s.assetId === assetId);
+    const newer = await contributor.post(`/api/contributor/assets/${assetId}/offers`).send({ licenseeEmail: 'desk@studio.example', terms }).expect(201);
+    expect(await listing()).toMatchObject({ myLicense: { status: 'approved' }, pendingLicense: { id: newer.body.license.id, status: 'offered' } });
+
+    // Declining the newer terms doesn't end the license already in force.
+    await publisher.post(`/api/licenses/${newer.body.license.id}/decline`).send({}).expect(200);
+    expect(await listing()).toMatchObject({ myLicense: { status: 'approved' }, pendingLicense: null });
+  });
+
   it('lets the publisher decline and the contributor withdraw offers', async () => {
     const o1 = await contributor.post(`/api/contributor/assets/${assetId}/offers`).send({ licenseeEmail: 'other@studio.example', terms }).expect(201);
     await otherPublisher.post(`/api/licenses/${o1.body.license.id}/decline`).send({ reason: 'Too expensive' }).expect(200);

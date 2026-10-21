@@ -1,11 +1,14 @@
 import { useMutation } from '@tanstack/react-query';
 import { ShoppingBag, Users, Wallet, Wand2 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, Navigate, useNavigate } from 'react-router';
 import { Button, ErrorNote } from '../components/ui';
 import { useSession } from '../lib/session';
 
 function AuthShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+  const { user } = useSession();
+  // Already signed in (or acting as a demo role): nothing to do here.
+  if (user) return <Navigate to="/" replace />;
   return (
     <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
       <div className="w-full max-w-md">
@@ -48,9 +51,10 @@ function DemoShortcut() {
             <button
               key={role}
               disabled={!u}
-              onClick={() => {
+              onClick={async () => {
                 if (!u) return;
-                switchUser(u.id);
+                // Wait for the new role to load, or the app still sees "signed out" and bounces back here.
+                await switchUser(u.id);
                 navigate('/');
               }}
               className="flex flex-col items-center gap-1.5 rounded-xl border border-line px-2 py-3 text-xs font-medium hover:border-ink disabled:opacity-40"

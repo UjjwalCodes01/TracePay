@@ -69,12 +69,12 @@ export function ReportsPage() {
                   </Link>
                   <span className="flex-1" />
                   {a.status === 'listed' && (
-                    <Button size="sm" variant="ghost" onClick={() => confirm('Take this report off sale?') && act.mutate({ id: a.id, action: 'withdraw' })}>
+                    <Button size="sm" variant="ghost" loading={act.isPending && act.variables?.id === a.id && act.variables.action === 'withdraw'} disabled={act.isPending} onClick={() => confirm('Take this report off sale?') && act.mutate({ id: a.id, action: 'withdraw' })}>
                       Take off sale
                     </Button>
                   )}
                   {a.status === 'withdrawn' && (
-                    <Button size="sm" variant="secondary" loading={act.isPending} onClick={() => act.mutate({ id: a.id, action: 'relist' })}>
+                    <Button size="sm" variant="secondary" loading={act.isPending && act.variables?.id === a.id && act.variables.action === 'relist'} disabled={act.isPending} onClick={() => act.mutate({ id: a.id, action: 'relist' })}>
                       Put back on sale
                     </Button>
                   )}

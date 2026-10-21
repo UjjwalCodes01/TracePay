@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { AppDeps } from '../app';
+import { sandboxBuyerHint } from '../config/env';
 import { currentUser, requireRole } from '../http/auth';
 import { HttpError } from '../http/errors';
 import { verifyAuditChain, verifyAuditChainCached } from '../modules/audit/audit-log';
@@ -34,6 +35,7 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
       agentPlanner: planner().name,
       vertexReady: config.vertexReady,
       demoMode: config.demoMode,
+      sandboxBuyerHint: config.demoMode ? sandboxBuyerHint() : null,
     });
   });
 

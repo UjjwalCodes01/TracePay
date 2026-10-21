@@ -44,11 +44,19 @@ async function resolveTenant(tx: Tx, entityType: string, entityId: string): Prom
 }
 
 /**
+ * Takes the chain lock (held until the transaction ends). Code that locks other rows
+ * and then appends takes this FIRST, so every path acquires locks in the same order.
+ */
+export async function lockAuditChain(tx: Tx): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${AUDIT_CHAIN_LOCK})`;
+}
+
+/**
  * Appends one event to the global hash chain inside the caller's transaction,
  * so the audit record commits atomically with the state change it describes.
  */
 export async function appendAudit(tx: Tx, input: AuditInput): Promise<{ seq: number; hash: string }> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${AUDIT_CHAIN_LOCK})`;
+  await lockAuditChain(tx);
   const last = await tx.auditEvent.findFirst({ orderBy: { seq: 'desc' }, select: { hash: true } });
   const previousHash = last?.hash ?? GENESIS_HASH;
   const createdAt = new Date();

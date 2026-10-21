@@ -1,5 +1,7 @@
 import type { Db } from '../../db';
+import { Prisma } from '../../generated/prisma/client';
 import { appendAudit } from '../audit/audit-log';
+import { approvalTtlMs } from '../agent/agent.service';
 
 /**
  * Agent runs and report generation execute inside the API process. If the
@@ -23,6 +25,19 @@ export async function recoverStaleWork(db: Db, now = new Date()): Promise<{ agen
     });
   }
 
+  // Runs nobody decided on lapse, so they stop counting toward the cap and the
+  // screen says what happened.
+  const lapsed = await db.agentRun.findMany({ where: { status: 'awaiting_approval', updatedAt: { lt: new Date(now.getTime() - approvalTtlMs()) } }, select: { id: true } });
+  for (const r of lapsed) {
+    await db.$transaction(async (tx) => {
+      const res = await tx.agentRun.updateMany({
+        where: { id: r.id, status: 'awaiting_approval' },
+        data: { status: 'failed', pending: Prisma.DbNull, finishedAt: now, summary: 'Nobody decided on the proposed change in time, so the run stopped. Start it again when you are ready.' },
+      });
+      if (res.count) await appendAudit(tx, { entityType: 'agent_run', entityId: r.id, eventType: 'agent.failed', payload: { error: 'approval_expired' } });
+    });
+  }
+
   const builds = await db.buildJob.updateMany({ where: { status: 'generating', updatedAt: { lt: cutoff } }, data: { status: 'generation_failed' } });
-  return { agentRuns: runs.length, builds: builds.count };
+  return { agentRuns: runs.length + lapsed.length, builds: builds.count };
 }

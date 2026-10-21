@@ -120,7 +120,7 @@ export function ReceiptPage() {
                       <tbody className="divide-y divide-line">
                         {s.settlement.lines.map((l, i) => (
                           <tr key={i}>
-                            <td className="py-1.5">{names[l.recipientId] ?? l.recipientId}</td>
+                            <td className="py-1.5">{(l as { recipientName?: string | null }).recipientName ?? names[l.recipientId] ?? l.recipientId}</td>
                             <td className="py-1.5 mono">{l.formula}</td>
                             <td className="py-1.5 text-right tabular-nums">{formatMoney(l.amountCents)}</td>
                             <td className="py-1.5 pl-4">{l.payout ? <StatusBadge status={l.payout.status} /> : <span className="text-muted">{l.kind === 'publisher_residual' ? 'retained' : '—'}</span>}</td>

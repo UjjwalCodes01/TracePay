@@ -3,6 +3,7 @@ import { formatBps, formatMoney } from '@tracepay/shared';
 import clsx from 'clsx';
 import { Check, Quote, X } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { DraftInput, parseDollars } from './DraftInput';
 import { Badge } from './ui';
 
 export type TermField =
@@ -169,7 +170,16 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
           {terms.economics.kind === 'fixed_per_sale' && (
             <label className="flex items-center gap-1 text-sm">
               $
-              <input type="number" min={0} step={0.01} className={clsx(field, 'w-28')} value={(terms.economics.amountCents / 100).toFixed(2)} onChange={(e) => set('economics', { kind: 'fixed_per_sale', amountCents: Math.round(Number(e.target.value) * 100) })} />
+              <DraftInput
+                inputMode="decimal"
+                aria-label="Fee per sale in US dollars"
+                className={clsx(field, 'w-28')}
+                value={(terms.economics.amountCents / 100).toFixed(2)}
+                onCommit={(text) => {
+                  const cents = parseDollars(text);
+                  if (cents !== null) set('economics', { kind: 'fixed_per_sale', amountCents: cents });
+                }}
+              />
             </label>
           )}
         </div>
@@ -190,12 +200,12 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
       </EditorRow>
 
       <EditorRow label="Where can it be used?" evidence={ev('territories')}>
-        <input
+        <DraftInput
           className={field}
           placeholder="Anywhere — or country codes like US, GB"
           value={terms.territories?.join(', ') ?? ''}
-          onChange={(e) => {
-            const codes = e.target.value.toUpperCase().split(/[\s,]+/).filter((c) => /^[A-Z]{2}$/.test(c));
+          onCommit={(text) => {
+            const codes = [...new Set(text.toUpperCase().split(/[\s,;]+/).filter((c) => /^[A-Z]{2}$/.test(c)))];
             set('territories', codes.length ? codes : null);
           }}
         />

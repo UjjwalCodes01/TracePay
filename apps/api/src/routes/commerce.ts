@@ -55,18 +55,26 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
     sale: { include: { payment: true, artifact: { select: { id: true, title: true, buildJobId: true } } } },
   };
 
+  /** Adds each line's recipient name, for people who don't know user ids. */
+  const withNames = async <T extends { lines: Array<{ recipientId: string }> }>(runs: T[]) => {
+    const ids = [...new Set(runs.flatMap((r) => r.lines.map((l) => l.recipientId)))];
+    const users = ids.length ? await db.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : [];
+    const names = new Map(users.map((u) => [u.id, u.name]));
+    return runs.map((r) => ({ ...r, lines: r.lines.map((l) => ({ ...l, recipientName: names.get(l.recipientId) ?? null })) }));
+  };
+
   r.get('/settlements', requireRole('publisher', 'admin'), async (req, res) => {
     const user = currentUser(req);
     const runs = await db.settlementRun.findMany({
       where: user.role === 'admin' ? {} : { sale: { artifact: { buildJob: { publisherId: user.id } } } },
       orderBy: { createdAt: 'desc' }, take: 100, include: settlementInclude });
-    res.json({ settlements: runs });
+    res.json({ settlements: await withNames(runs) });
   });
 
   r.get('/settlements/:id', requireRole('publisher', 'admin'), async (req, res) => {
     const { id } = await ownedSettlement(db, currentUser(req), param(req, 'id'));
     const run = await db.settlementRun.findUniqueOrThrow({ where: { id }, include: settlementInclude });
-    res.json({ settlement: run });
+    res.json({ settlement: (await withNames([run]))[0] });
   });
 
   r.post('/settlements/:id/approve', requireRole('publisher'), async (req, res) => {

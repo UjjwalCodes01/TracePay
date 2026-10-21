@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
@@ -22,12 +22,39 @@ export const DEMO_EMAILS = new Set(DEMO_USERS.map((u) => u.email.toLowerCase()))
  * are never deleted. The audit chain is never rewritten either.
  */
 export async function softResetDemo(db: Db): Promise<{ removedBuilds: number; removedSales: number }> {
+  // Background work (PayPal webhooks, reconciliation, the agent, other demo visitors)
+  // can touch the demo's rows mid-reset. Locks below keep that orderly; a collision
+  // that still slips through (a deadlock, a row added under us) just runs it again.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await resetOnce(db);
+    } catch (err) {
+      if (attempt >= 3 || !collided(err)) throw err;
+    }
+  }
+}
+
+const collided = (err: unknown) => {
+  const code = (err as { code?: string }).code;
+  return code === 'P2003' || code === 'P2034' || /40P01|deadlock/i.test((err as Error).message ?? '');
+};
+
+async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales: number }> {
   const publisherIds = DEMO_USERS.filter((u) => u.role === 'publisher').map((u) => u.id);
   const payees = payeeEmails();
   const contents = await Promise.all(DEMO_ASSETS.map((a) => readFile(path.join(FIXTURE_DIR, a.file), 'utf8')));
 
   return db.$transaction(
     async (tx) => {
+      // 0. Lock first, in the order the money paths use (sale rows, then the rest): an
+      // in-flight capture finishes before we delete, and no new sale, settlement or
+      // agent step can attach to rows we are removing.
+      const mine = Prisma.join(publisherIds);
+      await tx.$queryRaw`SELECT s.id FROM "Sale" s JOIN "Artifact" a ON a.id = s."artifactId" JOIN "BuildJob" b ON b.id = a."buildJobId" WHERE b."publisherId" IN (${mine}) FOR UPDATE OF s`;
+      await tx.$queryRaw`SELECT a.id FROM "Artifact" a JOIN "BuildJob" b ON b.id = a."buildJobId" WHERE b."publisherId" IN (${mine}) FOR UPDATE OF a`;
+      await tx.$queryRaw`SELECT s.id FROM "Sale" s JOIN "Artifact" a ON a.id = s."artifactId" JOIN "BuildJob" b ON b.id = a."buildJobId" WHERE b."publisherId" IN (${mine}) FOR UPDATE OF s`;
+      await tx.$queryRaw`SELECT id FROM "AgentRun" WHERE "publisherId" IN (${mine}) FOR UPDATE`;
+
       // 1. The demo publisher's work and everything downstream of it.
       const buildIds = (await tx.buildJob.findMany({ where: { publisherId: { in: publisherIds } }, select: { id: true } })).map((b) => b.id);
       const artifactIds = (await tx.artifact.findMany({ where: { buildJobId: { in: buildIds } }, select: { id: true } })).map((a) => a.id);

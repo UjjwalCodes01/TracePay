@@ -63,6 +63,8 @@ services:
         sync: false
       - key: PAYPAL_WEBHOOK_ID
         sync: false
+      - key: PAYPAL_SANDBOX_BUYER_HINT
+        sync: false # demo mode only: sandbox buyer login shown on the Store page
       - key: GEMINI_API_KEY
         sync: false # from aistudio.google.com/apikey; or use the Vertex AI keys below
       - key: GOOGLE_CLOUD_PROJECT

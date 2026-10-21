@@ -3,11 +3,13 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { Layout } from './components/Layout';
+import { RouteError } from './components/RouteError';
 import { Spinner } from './components/ui';
 import './index.css';
 import { SessionProvider, useSession } from './lib/session';
 import { ArtifactPage } from './pages/ArtifactPage';
 import { SignInPage, SignUpPage } from './pages/Auth';
+import { CheckoutReturnPage } from './pages/CheckoutReturn';
 import { DashboardPage } from './pages/Dashboard';
 import { EarningsPage } from './pages/Earnings';
 import { ReceiptPage } from './pages/Receipt';
@@ -28,10 +30,11 @@ function Home() {
 }
 
 const router = createBrowserRouter([
-  { path: '/login', element: <SignInPage /> },
-  { path: '/signup', element: <SignUpPage /> },
+  { path: '/login', element: <SignInPage />, errorElement: <RouteError /> },
+  { path: '/signup', element: <SignUpPage />, errorElement: <RouteError /> },
   {
     element: <Layout />,
+    errorElement: <RouteError />,
     children: [
       { index: true, element: <Home /> },
       { path: 'dashboard', element: <DashboardPage /> },
@@ -44,6 +47,8 @@ const router = createBrowserRouter([
       { path: 'settlements', lazy: async () => ({ Component: (await import('./pages/Settlements')).SettlementsPage }) },
       { path: 'store', element: <StorePage /> },
       { path: 'store/:id', element: <StoreItemPage /> },
+      { path: 'checkout/return', element: <CheckoutReturnPage /> },
+      { path: 'checkout/cancel', element: <CheckoutReturnPage cancelled /> },
       { path: 'earnings', element: <EarningsPage /> },
       { path: 'sources', element: <MySourcesPage /> },
       { path: 'sources/new', element: <NewSourcePage /> },

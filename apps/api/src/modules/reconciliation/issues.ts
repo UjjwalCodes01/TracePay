@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client';
 import type { Tx } from '../../db';
-import { appendAudit } from '../audit/audit-log';
+import { appendAudit, lockAuditChain } from '../audit/audit-log';
 
 /**
  * "Needs attention": money situations a person must look at. Each kind has a
@@ -74,6 +74,8 @@ export async function openIssue(
   tx: Tx,
   input: { ownerId: string; kind: IssueKind; subjectType: IssueSubject; subjectId: string; data?: Record<string, unknown>; artifactId?: string | null },
 ): Promise<{ id: string; created: boolean }> {
+  // Chain lock before the issue's own lock and rows: the same order as every other appender.
+  await lockAuditChain(tx);
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`issue:${input.kind}:${input.subjectId}`}))`;
   const latest = await tx.reconciliationIssue.findFirst({
     where: { kind: input.kind, subjectId: input.subjectId },
@@ -119,6 +121,7 @@ export async function resolveIssues(
     where: { subjectId: input.subjectId, kind: { in: input.kinds }, status: 'open' },
     select: { id: true, ownerId: true, kind: true },
   });
+  if (open.length) await lockAuditChain(tx); // before any issue row lock (see lockAuditChain)
   for (const issue of open) {
     const updated = await tx.reconciliationIssue.updateMany({
       where: { id: issue.id, status: 'open' },

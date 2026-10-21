@@ -12,7 +12,8 @@ import {
   deliverDue, DISABLE_AFTER_MS, MAX_ATTEMPTS, MAX_ENDPOINTS_PER_ACCOUNT, nextDueAt, pruneWebhookData, RETRY_DELAYS_MS, WebhookDispatcher,
 } from '../../src/modules/platform/webhooks';
 import { recordPublicEvent } from '../../src/modules/platform/events';
-import { createRunWithinCap, TooManyRunsError } from '../../src/modules/agent/agent.service';
+import { AgentStateError, cancelRun, createRunWithinCap, TooManyRunsError } from '../../src/modules/agent/agent.service';
+import { recoverStaleWork } from '../../src/modules/maintenance/recovery';
 import type { AgentPlanner } from '../../src/modules/agent/planners';
 import { createApp } from '../../src/app';
 import { FakePayPal } from '../fake-paypal';
@@ -513,6 +514,15 @@ describe.runIf(process.env.TEST_DATABASE_URL)('outbound webhooks (integration)',
       await expect(createRunWithinCap(db(), planner, input, 2)).rejects.toBeInstanceOf(TooManyRunsError);
       const res = await request(app).post('/api/v1/agent_runs').set(atlas).send({ goal: 'Create a commercial report from approved sources.', intent, source_version_ids: PASSING }).expect(409);
       expect(res.body.error.code).toBe('too_many_active_runs');
+      // Nobody decides: past the approval window the paused runs lapse and stop counting.
+      await db().$executeRaw`UPDATE "AgentRun" SET "updatedAt" = now() - interval '25 hours' WHERE id IN (${a.id}, ${b.id})`;
+      const c = await createRunWithinCap(db(), planner, input, 2);
+      await recoverStaleWork(db());
+      expect((await db().agentRun.findUniqueOrThrow({ where: { id: a.id } })).status).toBe('failed');
+      // And a run can be stopped by hand.
+      await cancelRun(db(), c.id, 'user_atlas');
+      expect((await db().agentRun.findUniqueOrThrow({ where: { id: c.id } })).summary).toBe('Stopped by the publisher.');
+      await expect(cancelRun(db(), c.id, 'user_atlas')).rejects.toBeInstanceOf(AgentStateError);
       await db().agentRun.updateMany({ where: { id: { in: [a.id, b.id] } }, data: { status: 'failed' } });
     });
 
