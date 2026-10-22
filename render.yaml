@@ -1,5 +1,7 @@
 # Render Blueprint for the TracePay API.
 # The database is Neon (serverless Postgres); the web app (apps/web) is on Vercel.
+# Render runs the API and a Key Value instance that holds the rate-limit counters,
+# so limits and quotas hold across every instance (scale the API out freely).
 services:
   - type: web
     name: tracepay-api
@@ -42,6 +44,13 @@ services:
         value: cf-connecting-ip
       - key: LOG_LEVEL
         value: info
+      # Shared rate-limit counters, over Render's private network. Limits fail open
+      # (and /api/ready reports it) if the Key Value instance is ever unreachable.
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: tracepay-limits
+          property: connectionString
       # Neon → Connect: the POOLED string (host contains "-pooler"), with ?sslmode=require
       - key: DATABASE_URL
         sync: false
@@ -85,3 +94,12 @@ services:
         sync: false # npm run keys:generate -w @tracepay/api
       - key: DEMO_PAYEE_EMAILS
         sync: false # sandbox personal accounts: Northwind,Okafor,Lumen
+
+  # Rate-limit counters only: losing them on a restart just restarts the windows,
+  # so the free plan (no persistence) fits. Reachable only from inside Render.
+  - type: keyvalue
+    name: tracepay-limits
+    region: ohio
+    plan: free
+    maxmemoryPolicy: volatile-lru # every counter carries an expiry
+    ipAllowList: []

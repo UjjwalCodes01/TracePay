@@ -17,5 +17,13 @@ services:
       timeout: 3s
       retries: 20
 
+  # Shared rate-limit counters (Render Key Value in production). Optional for dev:
+  # without REDIS_URL the API counts in memory.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+
 volumes:
   tracepay-db:

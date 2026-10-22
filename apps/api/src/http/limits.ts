@@ -1,5 +1,6 @@
 import { rateLimit, type RateLimitRequestHandler } from 'express-rate-limit';
 import { HttpError } from './errors';
+import { limitStore } from './rate-store';
 
 /**
  * Per-ACCOUNT quotas for writes that cost storage, money or model calls.
@@ -8,6 +9,7 @@ import { HttpError } from './errors';
  */
 export function perUser(name: string, limit: number, windowMs: number, message: string) {
   return rateLimit({
+    ...limitStore(`quota-${name}`),
     windowMs,
     limit,
     keyGenerator: (req) => `${name}:${req.user?.id ?? 'anonymous'}`,

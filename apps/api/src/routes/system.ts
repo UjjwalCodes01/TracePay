@@ -7,6 +7,7 @@ import { verifyAuditChain, verifyAuditChainCached } from '../modules/audit/audit
 import { publicKeyPem } from '../modules/audit/signing';
 import { softResetDemo } from '../modules/demo/soft-reset';
 import { DEMO_USERS } from '../modules/demo/world';
+import { limitStoreStatus } from '../http/rate-store';
 
 export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDeps) {
   const r = Router();
@@ -20,7 +21,8 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
   r.get('/ready', async (_req, res) => {
     try {
       await db.$queryRaw`SELECT 1`;
-      res.json({ ok: true });
+      // Rate limits fail open, so a Redis outage doesn't make the API unready; it's reported.
+      res.json({ ok: true, rateLimits: limitStoreStatus() });
     } catch {
       res.status(503).json({ ok: false, error: 'database unavailable' });
     }

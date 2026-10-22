@@ -1,8 +1,11 @@
 import type { ColDef, GridApi } from 'ag-grid-community';
 import { AgGridReact } from 'ag-grid-react';
+import type { AgCartesianChartOptions } from 'ag-charts-community';
+import { AgCharts } from 'ag-charts-react';
 import { Download, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { formatMoney } from '../lib/format';
+import { chartTheme, SERIES_COLORS } from '../lib/charts';
 import { gridTheme } from '../lib/grid';
 import type { SettlementLine, SettlementRun } from '../lib/types';
 import { Badge, Button, Card } from './ui';
@@ -54,6 +57,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
   const [gridApi, setGridApi] = useState<GridApi<LedgerRow> | null>(null);
   const [search, setSearch] = useState('');
   const [total, setTotal] = useState<LedgerRow | null>(null);
+  const [byRecipient, setByRecipient] = useState<Array<{ recipient: string; amount: number }>>([]);
 
   const rows = useMemo<LedgerRow[]>(
     () =>
@@ -76,7 +80,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
 
   const columns = useMemo<ColDef<LedgerRow>[]>(
     () => [
-      { headerName: 'Date', field: 'date', width: 120, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? new Date(p.data.date) : null) },
+      { headerName: 'Date', field: 'date', width: 150, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? new Date(p.data.date) : null) },
       { headerName: 'Report', field: 'report', flex: 1.4, minWidth: 200, filter: 'agTextColumnFilter' },
       { headerName: 'Recipient', field: 'recipient', flex: 1, minWidth: 160, filter: 'agTextColumnFilter' },
       { headerName: 'Role', field: 'role', width: 150, filter: 'agTextColumnFilter' },
@@ -109,13 +113,44 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
   const recount = (api: GridApi<LedgerRow>) => {
     let cents = 0;
     let n = 0;
+    const sums = new Map<string, number>();
     api.forEachNodeAfterFilter((node) => {
       if (!node.data) return;
       cents += node.data.amountCents;
       n++;
+      sums.set(node.data.recipient, (sums.get(node.data.recipient) ?? 0) + node.data.amountCents);
     });
+    setByRecipient([...sums].map(([recipient, c]) => ({ recipient, amount: c / 100 })).sort((a, b) => b.amount - a.amount));
     setTotal({ id: 'total', date: '', report: `${n} ${n === 1 ? 'line' : 'lines'}`, recipient: '', role: '', formula: '', amountCents: cents, payout: '', saleId: '', paypalTransaction: null, isTotal: true });
   };
+
+  const chart = useMemo<AgCartesianChartOptions>(
+    () => ({
+      theme: chartTheme,
+      data: byRecipient,
+      height: Math.max(140, 44 * byRecipient.length + 50),
+      // Room for the value label at the end of the longest bar.
+      padding: { right: 64 },
+      series: [
+        {
+          type: 'bar',
+          direction: 'horizontal',
+          xKey: 'recipient',
+          yKey: 'amount',
+          yName: 'Amount',
+          fill: SERIES_COLORS[0],
+          label: { enabled: true, placement: 'outside-end', formatter: ({ value }: { value: number }) => formatMoney(Math.round(value * 100)) },
+          tooltip: { renderer: ({ datum }: { datum: { recipient: string; amount: number } }) => ({ title: datum.recipient, content: formatMoney(Math.round(datum.amount * 100)) }) },
+        },
+      ],
+      axes: {
+        x: { type: 'category', position: 'left' },
+        y: { type: 'number', position: 'bottom', label: { formatter: ({ value }: { value: number }) => formatMoney(Math.round(value * 100)) } },
+      },
+      legend: { enabled: false },
+    }),
+    [byRecipient],
+  );
 
   if (rows.length === 0) return null;
 
@@ -165,6 +200,12 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
           onRowDataUpdated={(e) => recount(e.api)}
         />
       </div>
+      {byRecipient.length > 0 && (
+        <div className="mt-5" role="img" aria-label="Total per recipient for the rows shown above">
+          <div className="mb-1 text-sm font-medium">Total per recipient{search || byRecipient.length < new Set(rows.map((r) => r.recipient)).size ? ' (filtered)' : ''}</div>
+          <AgCharts options={chart} />
+        </div>
+      )}
     </Card>
   );
 }

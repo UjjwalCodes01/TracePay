@@ -7,6 +7,7 @@ import { HttpError } from '../http/errors';
 import { AuthError, createApiKey, createSession, destroySession, logIn, signUp } from '../modules/auth/auth.service';
 import { hashPassword, sha256 } from '../modules/auth/crypto';
 import { DEMO_EMAILS } from '../modules/demo/soft-reset';
+import { limitStore } from '../http/rate-store';
 
 const SignUpBody = z.object({
   email: z.email().max(254),
@@ -22,7 +23,7 @@ export function authRoutes({ db, config }: AppDeps) {
   const r = Router();
 
   // Brute-force protection on credential endpoints.
-  const credentialLimiter = rateLimit({
+  const credentialLimiter = rateLimit({ ...limitStore('auth-ip'),
     windowMs: 15 * 60_000,
     limit: config.authRateLimit,
     standardHeaders: 'draft-8',
@@ -31,7 +32,7 @@ export function authRoutes({ db, config }: AppDeps) {
   });
 
   // Per-account limit on FAILED logins: holds even if an attacker rotates IPs.
-  const loginEmailLimiter = rateLimit({
+  const loginEmailLimiter = rateLimit({ ...limitStore('auth-email'),
     windowMs: 15 * 60_000,
     limit: 10,
     skipSuccessfulRequests: true,

@@ -10,6 +10,7 @@ import { addVersion, ASSET_KINDS, createAsset, MAX_CONTENT_CHARS } from '../modu
 import { todayUtc } from '../modules/builds/preflight.service';
 import { extractTerms, MAX_LICENSE_TEXT } from '../modules/licenses/extract';
 import { acceptOffer, declineOffer, declineRequest, offerLicense, requestLicense, revokeLicense, withdrawOffer } from '../modules/licenses/license.service';
+import { limitStore } from '../http/rate-store';
 
 const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 const Reason = z.object({ reason: z.string().max(500).optional().nullable() });
@@ -23,7 +24,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
   const r = Router();
 
   // AI extraction costs money: cap it per signed-in user.
-  const extractLimiter = rateLimit({
+  const extractLimiter = rateLimit({ ...limitStore('license-extract'),
     windowMs: 10 * 60_000,
     limit: 30,
     keyGenerator: (req) => req.user?.id ?? 'anonymous',

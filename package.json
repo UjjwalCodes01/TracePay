@@ -7,7 +7,7 @@
     "apps/*"
   ],
   "scripts": {
-    "db:up": "docker compose up -d db",
+    "db:up": "docker compose up -d db redis",
     "db:down": "docker compose down",
     "dev:api": "npm run dev -w @tracepay/api",
     "dev:web": "npm run dev -w @tracepay/web",

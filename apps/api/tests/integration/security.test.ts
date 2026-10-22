@@ -230,7 +230,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('security (integration)', () => {
     });
 
     it('answers readiness only when the database is reachable', async () => {
-      await request(app).get('/api/ready').expect(200, { ok: true });
+      await request(app).get('/api/ready').expect(200, { ok: true, rateLimits: 'memory' });
     });
   });
 });

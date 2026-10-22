@@ -14,6 +14,8 @@
     "@tanstack/react-query": "5.104.4",
     "@tracepay/shared": "*",
     "@xyflow/react": "12.12.0",
+    "ag-charts-community": "14.2.0",
+    "ag-charts-react": "14.2.0",
     "ag-grid-community": "36.2.0",
     "ag-grid-react": "36.2.0",
     "clsx": "2.1.1",

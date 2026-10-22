@@ -176,7 +176,7 @@ TracePay enforces recorded, approved license terms. It does not establish legal 
 ```bash
 git clone https://github.com/UjjwalCodes01/TracePay.git && cd TracePay
 npm install
-npm run db:up                                  # Postgres 17 on localhost:5433
+npm run db:up                                  # Postgres 17 on localhost:5433, Redis on :6380
 
 cp apps/api/.env.example apps/api/.env         # then fill in the values below
 npm run keys:generate -w @tracepay/api         # paste AUDIT_SIGNING_PRIVATE_KEY into .env
@@ -220,7 +220,7 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Accounts** | Sign-up / sign-in with **scrypt** password hashing (OWASP parameters, constant-time compare, timing-safe for unknown emails); server-side sessions in **httpOnly, SameSite=Lax, Secure** cookies — only a SHA-256 of the token is stored |
 | **Platform API** | Versioned `/api/v1` described by OpenAPI 3.1, generated from the same declarations that validate requests (tests check every response against it); idempotency keys with heartbeat-held locks, cursor pagination, uniform errors with request ids |
 | **API keys** | Hashed at rest, shown once, read-only or read & write, optional expiry, revocable; accepted only on `/api/v1`; guessing is throttled per address without ever blocking working keys; per-key and per-account rate limits |
-| **Scaling out** | Rate limits and quotas are kept in process memory, which is exact for one instance (the current deployment). Before running several API instances, back them with a shared store (e.g. Redis) — webhook delivery and reconciliation already coordinate through Postgres (`SKIP LOCKED` leases) |
+| **Scaling out** | Rate limits and quotas are counted in a **Render Key Value** instance (Redis-compatible, `REDIS_URL`), so they hold across any number of API instances; they fail open — and `/api/ready` says so — if it is unreachable. Without `REDIS_URL` they count in memory (exact for one instance). Webhook delivery and reconciliation already coordinate through Postgres (`SKIP LOCKED` leases) |
 | **Webhooks** | Events written in the same transaction as the change (outbox); HMAC-SHA256 signatures with timestamps; AES-256-GCM encrypted secrets with overlap-safe rotation; SSRF checks at connection time (DNS rebinding, IPv4-mapped IPv6, no redirects); backoff retries, auto-disable after 3 days or `410 Gone`; leases + `SKIP LOCKED` so several servers never double-send; the worker sleeps when the API is idle so Neon can too |
 | **Tenant isolation** | Every build, run, report, sale, settlement and audit event is scoped to its publisher. Other tenants get **404** (not 403), so they can't even confirm a record exists. Buyers see sourcing but not the money split; only the owner sees payout addresses |
 | **Request security** | Helmet security headers and a locked-down CSP; CSRF origin check on cookie-authenticated writes; per-IP rate limits with stricter limits on credential endpoints; 1 MB body limit; zod validation on every input |
@@ -231,7 +231,7 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
 | **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
-| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 269 tests against real Postgres, Render Blueprint, Vercel config |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck + 271 tests against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 
@@ -267,7 +267,7 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 ## Tests
 
 ```bash
-npm run test:integration -w @tracepay/api   # 269 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api   # 271 tests; creates/migrates a tracepay_test database
 ```
 
 | Suite | Covers |
@@ -290,6 +290,7 @@ npm run test:integration -w @tracepay/api   # 269 tests; creates/migrates a trac
 | Webhooks (35) | signed delivery to subscribed endpoints only, no event on rollback, backoff then give-up, redirects, `410`, 3-day auto-disable, SSRF and DNS rebinding at send time, concurrent workers and leases, pings, secret rotation, redelivery, pruning, demo reset, NUL bytes in responses, crashing attempts, atomic failure streaks, lost leases, concurrent resends/rotations, secrets never stored for replay, agent-run cap races, paused runs lapsing and stopping, idle-friendly wake-ups |
 | Reconciliation (37) | approved-then-abandoned checkouts captured (license re-checked, within the 2-hour window only), never a double charge when the buyer starts over (nor while an earlier payment is still pending), never for a report off sale, abandoned and forgotten checkouts closed (double "not found"), pending captures completed or declined, refunds and partial refunds made in PayPal detected once, money captured after a checkout closed flagged, payouts polled to the end across attempts, unclaimed/failed/denied/unconfirmed payouts flagged and auto-cleared, interrupted sends finished safely and never past 25 days, stale refreshes can't undo a retry, "Check now" never ends the refund watch, PayPal outages back off, schedules always end, leases, the worker, the API |
 | Platform units (17) | signature verification and replay window, secret encryption and key rotation, address classification, URL rules, safe POST (timeouts, truncation, no redirects, rebinding), event catalog |
+| Shared rate limits (2) | two API instances share one limit through Redis / Render Key Value; limits fail open when it's unreachable |
 | AI config · sale records (5) | Gemini API key vs. Vertex AI selection; which sales count on receipts and provenance |
 
 ---
@@ -307,8 +308,12 @@ render.yaml   Render Blueprint (API; database on Neon); apps/web/vercel.json for
 
 - **PayPal Developer Platform (sandbox):** Orders v2, JS SDK Smart Buttons, Payouts, Webhooks.
 - **Google Gemini (Gemini API or Vertex AI):** function-calling Publisher Agent and buyer Shopping Assistant, structured-output report writer, license drafting, failure explanations — via `@google/genai`.
-- **AG Grid Community:** source registry, per-sale settlement grid, and a royalty ledger across every sale (quick search, column filters, totals that follow the filters, CSV export, cells that flash when PayPal changes a payout). **React Flow:** provenance graph.
-- **Render** (API), **Neon** (serverless Postgres) and **Vercel** (web).
+- **AG Grid Community + AG Charts:**
+  - **Price & royalty simulator** (Create a Report): an editable grid of prices, each settled in the browser with the same engine that settles real sales (`packages/shared`), with a stacked chart of who gets what.
+  - **Royalty ledger** (Pay Contributors): every sale's royalty lines with quick search, column filters, totals and a per-recipient chart that follow the filters, CSV export, and cells that flash when PayPal changes a payout.
+  - **Contributor earnings** with filters and CSV export (for taxes), plus the source registry and per-sale settlement grids.
+- **React Flow:** provenance graph.
+- **Render:** the API (Blueprint in `render.yaml`) and a **Render Key Value** instance holding the shared rate-limit counters. **Neon** (serverless Postgres) and **Vercel** (web).
 - Node.js, TypeScript, Express 5, Prisma 7, PostgreSQL 17, React 19, Tailwind CSS 4, Vitest.
 - **Model Context Protocol** (`@modelcontextprotocol/sdk`): the TracePay MCP server for outside AI agents.
 

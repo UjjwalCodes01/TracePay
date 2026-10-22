@@ -2,7 +2,7 @@ import type { BuildIntent } from '@tracepay/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Bot, ListChecks, Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AgentTrace } from '../components/AgentTrace';
 import { DraftInput, parseDollars } from '../components/DraftInput';
@@ -13,6 +13,9 @@ import { economicsLabel } from '../lib/format';
 import type { AgentRun, CatalogEntry, Explanation, PreflightOutcome } from '../lib/types';
 
 /** The demo's three sources, pre-ticked when they are in this publisher's catalog. */
+// AG Grid and AG Charts load only when the simulator is shown.
+const PriceSimulator = lazy(() => import('../components/PriceSimulator'));
+
 const DEFAULT_SELECTION = ['asset_northwind_index_v1', 'asset_okafor_notes_v1', 'asset_kestrel_panel_v1'];
 const DEFAULT_GOAL =
   'Create a commercial developer-tools market report using approved sources. Find a compatible replacement if any source fails licensing checks.';
@@ -206,6 +209,7 @@ export function StudioPage() {
               })}
             </ul>
           </Card>
+
         </div>
 
         <div className="space-y-6">
@@ -282,6 +286,18 @@ export function StudioPage() {
           )}
         </div>
       </div>
+
+      {intent.distribution === 'sale' && (
+        <div className="mt-6">
+          <Suspense fallback={<Spinner />}>
+            <PriceSimulator
+              sources={catalog.data!.assets.filter((a) => selection.includes(a.assetVersionId))}
+              priceCents={intent.priceCents}
+              onUsePrice={(cents) => set('priceCents', cents)}
+            />
+          </Suspense>
+        </div>
+      )}
     </>
   );
 }

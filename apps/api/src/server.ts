@@ -14,6 +14,7 @@ import { setOutboxListener } from './modules/platform/events';
 import { pruneWebhookData, WebhookDispatcher, type WebhookDeps } from './modules/platform/webhooks';
 import { SecretBox } from './modules/platform/webhook-crypto';
 import { DEMO_USERS } from './modules/demo/world';
+import { closeLimitStore } from './http/rate-store';
 
 const env = serverEnv();
 
@@ -135,7 +136,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     server.close(async () => {
       // Let in-flight webhook sends finish and be recorded (bounded by the hard exit below).
       await Promise.all([dispatcher.stop().catch(() => undefined), reconciler.stop().catch(() => undefined)]);
-      await db().$disconnect().catch(() => undefined);
+      await Promise.all([db().$disconnect().catch(() => undefined), closeLimitStore()]);
       process.exit(0);
     });
     setTimeout(() => process.exit(1), 10_000).unref();

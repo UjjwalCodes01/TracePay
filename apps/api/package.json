@@ -20,7 +20,7 @@
     "smoke:vertex": "tsx --env-file-if-exists=.env --env-file-if-exists=../../.env.local src/scripts/smoke-vertex.ts",
     "keys:generate": "tsx src/scripts/generate-signing-key.ts",
     "pretest:integration": "prisma generate",
-    "test:integration": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgresql://tracepay:tracepay@localhost:5433/tracepay_test} vitest run"
+    "test:integration": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgresql://tracepay:tracepay@localhost:5433/tracepay_test} TEST_REDIS_URL=${TEST_REDIS_URL-redis://localhost:6380} vitest run"
   },
   "dependencies": {
     "@google/genai": "2.30.0",
@@ -34,6 +34,7 @@
     "pg": "^8.16.0",
     "pino": "10.4.0",
     "pino-http": "11.0.0",
+    "redis": "6.3.0",
     "zod": "4.6.7"
   },
   "devDependencies": {

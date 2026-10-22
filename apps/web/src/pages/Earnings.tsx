@@ -1,10 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { LicenseTermsSchema } from '@tracepay/shared';
-import { Link } from 'react-router';
-import { Badge, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, Stat, StatusBadge } from '../components/ui';
+import { lazy, Suspense } from 'react';
+import { Badge, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 import { economicsLabel, formatMoney } from '../lib/format';
 import type { PayoutItem } from '../lib/types';
+
+// AG Grid loads only on this page.
+const EarningsGrid = lazy(() => import('../components/EarningsGrid'));
 
 interface EarningLine {
   id: string;
@@ -69,46 +72,28 @@ export function EarningsPage() {
         <Stat label="Sales using your work" value={lines.length} />
       </div>
 
-      <Card title="Settlement records">
+      <Card title="Settlement records — every sale that used your work">
         {lines.length === 0 ? (
           <Empty>No sales have used your work yet.</Empty>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs text-muted">
-              <tr>
-                <th className="pb-2 font-medium">Report</th>
-                <th className="pb-2 font-medium">PayPal capture</th>
-                <th className="pb-2 font-medium">Calculation</th>
-                <th className="pb-2 text-right font-medium">Amount</th>
-                <th className="pb-2 pl-4 font-medium">Payout</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {lines.map((l) => (
-                <tr key={l.id}>
-                  <td className="py-2">
-                    <div className="font-medium">{l.run.sale.artifact.title}</div>
-                    <Link to={`/reports/${l.run.sale.artifact.id}/receipt`} className="text-xs text-brand hover:underline">
-                      View receipt
-                    </Link>
-                  </td>
-                  <td className="py-2"><Hash value={l.run.sale.payment?.captureId} n={14} /></td>
-                  <td className="py-2">
-                    <span className="mono">{l.formula}</span>
-                    {l.note && <div className="text-xs text-muted">{l.note}</div>}
-                  </td>
-                  <td className="py-2 text-right tabular-nums">{formatMoney(l.amountCents)}</td>
-                  <td className="py-2 pl-4">
-                    {l.payoutItem ? (
-                      <Badge tone={PAYOUT_TEXT[l.payoutItem.status]?.tone ?? 'neutral'}>{PAYOUT_TEXT[l.payoutItem.status]?.text ?? l.payoutItem.status}</Badge>
-                    ) : (
-                      <Badge tone={l.run.status === 'exception' ? 'warn' : 'neutral'}>{l.payable ? (SETTLEMENT_TEXT[l.run.status] ?? l.run.status) : 'Not owed'}</Badge>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <Suspense fallback={<Spinner />}>
+            <EarningsGrid
+              rows={lines.map((l) => ({
+                id: l.id,
+                date: l.run.createdAt.slice(0, 10),
+                reportId: l.run.sale.artifact.id,
+                report: l.run.sale.artifact.title,
+                formula: l.formula,
+                note: l.note,
+                amountCents: l.amountCents,
+                status: l.payoutItem
+                  ? (PAYOUT_TEXT[l.payoutItem.status] ?? { text: l.payoutItem.status, tone: 'neutral' })
+                  : { text: l.payable ? (SETTLEMENT_TEXT[l.run.status] ?? l.run.status) : 'Not owed', tone: l.run.status === 'exception' ? 'warn' : 'neutral' },
+                captureId: l.run.sale.payment?.captureId ?? null,
+                paypalTransaction: l.payoutItem?.transactionId ?? null,
+              }))}
+            />
+          </Suspense>
         )}
       </Card>
 

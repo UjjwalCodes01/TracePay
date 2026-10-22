@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
+import { limitStore } from '../http/rate-store';
 import { HttpError } from '../http/errors';
 import { secondsUntilReset } from '../http/limits';
 import { EVENT_DATA_SHAPES, EVENT_TYPES } from '../modules/platform/events';
@@ -134,7 +135,7 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
 
   // Per credential, so integrations behind one IP don't share a limit.
   r.use(
-    rateLimit({
+    rateLimit({ ...limitStore('v1-key'),
       windowMs: 60_000,
       limit: opts.rateLimitPerMinute,
       standardHeaders: 'draft-8',
@@ -146,7 +147,7 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
 
   // …and per account, so many keys can't multiply one account's allowance.
   r.use(
-    rateLimit({
+    rateLimit({ ...limitStore('v1-account'),
       windowMs: 60_000,
       limit: opts.rateLimitPerMinute * 2,
       standardHeaders: false,

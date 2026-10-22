@@ -21,6 +21,7 @@ import { systemRoutes } from './routes/system';
 import { platformApi } from './platform-api';
 import { v1ErrorHandler } from './platform-api/framework';
 import type { WebhookDeps } from './modules/platform/webhooks';
+import { limitStore } from './http/rate-store';
 
 export interface AppDeps {
   db: Db;
@@ -132,14 +133,14 @@ export function createApp(deps: AppDeps) {
   // mounted before the JSON body parser and outside the general rate limit.
   app.post(
     '/api/webhooks/paypal',
-    rateLimit({ windowMs: 60_000, limit: deps.config.webhookRateLimitPerMinute, standardHeaders: 'draft-8', legacyHeaders: false }),
+    rateLimit({ ...limitStore('paypal-webhook'), windowMs: 60_000, limit: deps.config.webhookRateLimitPerMinute, standardHeaders: 'draft-8', legacyHeaders: false }),
     express.raw({ type: '*/*', limit: '256kb' }),
     webhookRoute(deps),
   );
 
   app.use(
     '/api',
-    rateLimit({
+    rateLimit({ ...limitStore('api'),
       windowMs: 60_000,
       limit: deps.config.rateLimitPerMinute,
       standardHeaders: 'draft-8',
@@ -153,7 +154,7 @@ export function createApp(deps: AppDeps) {
   // address, whatever visitor address a request claims.
   app.use(
     '/api',
-    rateLimit({
+    rateLimit({ ...limitStore('api-ip-ceiling'),
       windowMs: 60_000,
       limit: deps.config.rateLimitPerMinute * 10,
       standardHeaders: false,
