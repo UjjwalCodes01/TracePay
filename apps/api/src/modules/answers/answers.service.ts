@@ -83,7 +83,7 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   const eligible = DEMO_IDS.has(input.askerId)
     ? rights.eligible.filter((e) => {
         if (DEMO_CONTRIBUTORS.has(e.source.contributorId)) return true;
-        excluded.push({ assetVersionId: e.source.assetVersionId, assetTitle: e.source.assetTitle, contributorName: e.source.contributorName, code: 'demo_only', reason: 'Demo credit only pays the demo’s own authors.' });
+        excluded.push({ assetVersionId: e.source.assetVersionId, assetTitle: e.source.assetTitle, contributorName: e.source.contributorName, code: 'demo_only', reason: 'Demo credit can only pay the demo’s own contributors.' });
         return false;
       })
     : rights.eligible;

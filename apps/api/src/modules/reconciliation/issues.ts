@@ -11,19 +11,19 @@ import { appendAudit, lockAuditChain } from '../audit/audit-log';
 export const ISSUE_KINDS = {
   sale_refunded: {
     title: 'A sale was refunded',
-    detail: 'PayPal refunded this sale. Its settlement is on hold; any royalties already paid out are settled under your license agreements.',
+    detail: 'PayPal refunded this sale, so paying its contributors is on hold. Shares already paid out are handled under your license agreements.',
   },
   sale_partially_refunded: {
     title: 'A sale was partly refunded',
-    detail: 'PayPal refunded part of this sale. Its settlement is on hold until you decide how to settle the remainder.',
+    detail: 'PayPal refunded part of this sale, so paying its contributors is on hold until you decide what to do with the rest.',
   },
   sale_reversed: {
     title: 'A payment was reversed',
-    detail: 'PayPal reversed this payment (for example a chargeback). Its settlement is on hold.',
+    detail: 'PayPal reversed this payment (for example, the buyer disputed it with their bank). Paying its contributors is on hold.',
   },
   capture_mismatch: {
     title: 'A payment didn’t match the sale',
-    detail: 'PayPal captured a different amount, currency or status than the sale expected. Check it in PayPal before settling.',
+    detail: 'PayPal took a different amount or currency than the sale expected, or reported a different status. Check it in PayPal before paying contributors.',
   },
   capture_declined: {
     title: 'A pending payment was declined',
@@ -38,28 +38,28 @@ export const ISSUE_KINDS = {
     detail: 'A contributor hasn’t claimed their payout yet (usually: no PayPal account for that email). PayPal returns it after 30 days if unclaimed.',
   },
   payout_batch_denied: {
-    title: 'PayPal refused a payout batch',
-    detail: 'PayPal denied this batch of payouts. Nothing was paid. Check your PayPal account, then retry.',
+    title: 'PayPal refused a group of payouts',
+    detail: 'PayPal refused this group of payouts, so nothing was paid. Check your PayPal account, then try again.',
   },
   payout_unconfirmed: {
-    title: 'PayPal hasn’t confirmed a payout batch',
-    detail: 'PayPal already received this batch (an earlier response was lost) but hasn’t confirmed it yet. Nothing was paid twice. If this lasts, check the batch in your PayPal dashboard.',
+    title: 'PayPal hasn’t confirmed some payouts',
+    detail: 'PayPal already has these payouts (its earlier reply was lost) but hasn’t confirmed them yet. Nothing was paid twice. If this lasts, check them in your PayPal dashboard.',
   },
   capture_after_close: {
     title: 'PayPal took a payment for a closed checkout',
-    detail: 'PayPal captured money for a sale TracePay had already closed (for example a checkout that had looked expired). Check it in PayPal and refund the buyer or honour the sale.',
+    detail: 'PayPal took a payment for a sale TracePay had already closed (for example a checkout that had looked expired). Check it in PayPal and refund the buyer or honour the sale.',
   },
   payout_submit_failed: {
     title: 'Royalties weren’t sent',
-    detail: 'PayPal didn’t accept a batch of payouts, so nothing was paid. Use “Send payouts” or “Retry failed payouts” again from the settlement.',
+    detail: 'PayPal didn’t accept a group of payouts, so nothing was paid. Open the sale under Pay contributors and send them again.',
   },
   check_stuck: {
     title: 'TracePay can’t confirm something with PayPal',
     detail: 'Repeated checks with PayPal didn’t reach a final answer. Look it up in your PayPal dashboard.',
   },
   payout_stuck: {
-    title: 'A payout batch hasn’t finished',
-    detail: 'PayPal still reports unfinished payouts in this batch after 45 days. Check it in your PayPal dashboard.',
+    title: 'Some payouts haven’t finished',
+    detail: 'After 45 days PayPal still hasn’t finished some of these payouts. Check them in your PayPal dashboard.',
   },
 } as const;
 

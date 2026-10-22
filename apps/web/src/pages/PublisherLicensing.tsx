@@ -60,12 +60,12 @@ export function OffersPanel() {
             <div className={o.current ? 'grid gap-4 md:grid-cols-2' : ''}>
               {o.current && (
                 <div className="rounded-lg border border-line p-4">
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">What you have today (v{o.current.version})</div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">What you have today (version {o.current.version})</div>
                   <TermsSummary terms={o.current.terms} compact />
                 </div>
               )}
               <div className={o.current ? 'rounded-lg border border-ink p-4' : ''}>
-                {o.current && <div className="mb-2 text-xs font-semibold uppercase tracking-wide">Proposed (v{o.version})</div>}
+                {o.current && <div className="mb-2 text-xs font-semibold uppercase tracking-wide">Proposed (version {o.version})</div>}
                 {o.terms && <TermsSummary terms={o.terms} />}
               </div>
             </div>
@@ -83,7 +83,7 @@ export function OffersPanel() {
             <p className="mt-4 text-xs text-muted">
               {o.current
                 ? 'Your current license stays in force until you accept. Reports you already sold keep their original terms.'
-                : 'Accepting makes these exact terms binding for reports you build from now on.'}
+                : 'Accepting makes these exact terms binding for reports you write from now on.'}
             </p>
             <div className="mt-3 flex gap-2">
               <Button loading={decide.isPending && decide.variables?.item.id === o.id && decide.variables.accept} disabled={decide.isPending} onClick={() => decide.mutate({ item: o, accept: true })}>
@@ -125,7 +125,7 @@ interface Listing {
   pendingLicense?: { id: string; status: string; version: number } | null;
 }
 
-const KIND_LABEL: Record<string, string> = { dataset: 'Dataset', research_notes: 'Research notes', expert_brief: 'Expert brief', api_feed: 'Data feed' };
+export const KIND_LABEL: Record<string, string> = { dataset: 'Dataset', research_notes: 'Research notes', expert_brief: 'Expert brief', api_feed: 'Live data feed' };
 
 export function FindSourcesPanel() {
   const qc = useQueryClient();
@@ -164,7 +164,7 @@ export function FindSourcesPanel() {
       </label>
       <ErrorNote error={request.error} />
       {sources.length === 0 ? (
-        <Empty>No sources match.</Empty>
+        <Empty>No sources match. Try another word, or clear the search.</Empty>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {sources.map((s) => {
@@ -180,7 +180,7 @@ export function FindSourcesPanel() {
                   </div>
                 </div>
                 <div className="mt-1 text-xs text-muted">
-                  {KIND_LABEL[s.kind] ?? s.kind} by {s.owner.name} · {s.passages} passages
+                  {KIND_LABEL[s.kind] ?? s.kind.replace(/_/g, ' ')} by {s.owner.name} · {s.passages} passages
                 </div>
                 <p className="mt-2 flex-1 text-sm text-slate-700">{s.description}</p>
                 {canRequest && (

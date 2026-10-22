@@ -65,12 +65,20 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
     },
   };
 
-  /** Adds each line's recipient name, for people who don't know user ids. */
-  const withNames = async <T extends { lines: Array<{ recipientId: string }> }>(runs: T[]) => {
+  /** Adds each line's recipient name and source title, for people who don't know ids. */
+  const withNames = async <T extends { lines: Array<{ recipientId: string; assetVersionId: string | null }> }>(runs: T[]) => {
     const ids = [...new Set(runs.flatMap((r) => r.lines.map((l) => l.recipientId)))];
-    const users = ids.length ? await db.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : [];
+    const versionIds = [...new Set(runs.flatMap((r) => r.lines.flatMap((l) => (l.assetVersionId ? [l.assetVersionId] : []))))];
+    const [users, versions] = await Promise.all([
+      ids.length ? db.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : [],
+      versionIds.length ? db.assetVersion.findMany({ where: { id: { in: versionIds } }, select: { id: true, asset: { select: { title: true } } } }) : [],
+    ]);
     const names = new Map(users.map((u) => [u.id, u.name]));
-    return runs.map((r) => ({ ...r, lines: r.lines.map((l) => ({ ...l, recipientName: names.get(l.recipientId) ?? null })) }));
+    const titles = new Map(versions.map((v) => [v.id, v.asset.title]));
+    return runs.map((r) => ({
+      ...r,
+      lines: r.lines.map((l) => ({ ...l, recipientName: names.get(l.recipientId) ?? null, sourceTitle: l.assetVersionId ? (titles.get(l.assetVersionId) ?? null) : null })),
+    }));
   };
 
   r.get('/settlements', requireRole('publisher', 'admin'), async (req, res) => {

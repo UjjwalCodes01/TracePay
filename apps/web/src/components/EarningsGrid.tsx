@@ -1,6 +1,7 @@
 import type { ColDef, GridApi, ICellRendererParams } from 'ag-grid-community';
 import { AgGridReact } from 'ag-grid-react';
 import { Download, Search } from 'lucide-react';
+import { describeFormula } from '@tracepay/shared';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { formatMoney, localDate, localMidnight } from '../lib/format';
@@ -20,7 +21,7 @@ export interface EarningRow {
   paypalTransaction: string | null;
 }
 
-/** A contributor's settlement records: search, filter, and export them (e.g. for taxes). */
+/** A contributor's share of every sale: search, filter, and export them (e.g. for taxes). */
 export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
   const [gridApi, setGridApi] = useState<GridApi<EarningRow> | null>(null);
   const [search, setSearch] = useState('');
@@ -45,7 +46,18 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
           </Link>
         ),
       },
-      { headerName: 'Calculation', field: 'formula', flex: 1.2, minWidth: 190, cellClass: 'mono', tooltip: (p) => p.data?.note ?? undefined, filter: 'agTextColumnFilter' },
+      {
+        headerName: 'Your share',
+        colId: 'share',
+        flex: 1.2,
+        minWidth: 190,
+        valueGetter: (p) => (p.data ? describeFormula(p.data.formula) : ''),
+        // The exact calculation, as recorded, on hover.
+        tooltipValueGetter: (p) => (p.data ? [p.data.formula, p.data.note].filter(Boolean).join(' — ') : undefined),
+        filter: 'agTextColumnFilter',
+      },
+      // Exported with the CSV, not shown.
+      { headerName: 'Exact calculation', field: 'formula', hide: true },
       {
         headerName: 'Amount',
         field: 'amountCents',
@@ -65,8 +77,8 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
         enableCellChangeFlash: true,
         cellRenderer: (p: ICellRendererParams<EarningRow>) => <Badge tone={p.data!.status.tone}>{p.value}</Badge>,
       },
-      { headerName: 'PayPal capture', field: 'captureId', width: 170, cellClass: 'mono', valueFormatter: (p) => p.value ?? '—' },
-      { headerName: 'PayPal transaction', field: 'paypalTransaction', width: 170, cellClass: 'mono', valueFormatter: (p) => p.value ?? '—' },
+      { headerName: 'PayPal payment ID', field: 'captureId', width: 170, cellClass: 'mono', valueFormatter: (p) => p.value ?? '—', headerTooltip: 'The buyer’s payment, as PayPal records it' },
+      { headerName: 'PayPal payout ID', field: 'paypalTransaction', width: 170, cellClass: 'mono', valueFormatter: (p) => p.value ?? '—', headerTooltip: 'Your payout, as PayPal records it' },
     ],
     [],
   );
@@ -87,7 +99,7 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
             className="h-8 w-44 rounded-lg border border-line pl-8 pr-2 text-sm"
           />
         </label>
-        <Button size="sm" variant="secondary" disabled={!gridApi} onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-earnings-${localDate(new Date())}.csv` })}>
+        <Button size="sm" variant="secondary" disabled={!gridApi} onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-earnings-${localDate(new Date())}.csv`, allColumns: true })}>
           <Download className="size-3.5" /> Export CSV
         </Button>
       </div>

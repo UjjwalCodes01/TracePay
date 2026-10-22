@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { LicenseTermsSchema } from '@tracepay/shared';
 import { lazy, Suspense } from 'react';
-import { Badge, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge } from '../components/ui';
+import { Badge, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge, statusLabel } from '../components/ui';
 import { api } from '../lib/api';
 import { economicsLabel, formatMoney, localDate } from '../lib/format';
 import type { PayoutItem } from '../lib/types';
@@ -42,16 +42,16 @@ const PAYOUT_TEXT: Record<string, { text: string; tone: 'pass' | 'warn' | 'block
   DENIED: { text: 'Declined by PayPal', tone: 'block' },
 };
 
-/** Where a settlement stands when no payout has been sent yet. */
+/** Where the payment split stands when no payout has been sent yet. */
 const SETTLEMENT_TEXT: Record<string, string> = {
   calculated: 'Waiting for the publisher to approve',
   approved: 'Approved — payout not sent yet',
   payout_submitted: 'Payout being sent',
-  completed: 'Settled',
+  completed: 'Done',
   exception: 'On hold',
 };
 
-/** Still to be paid: the settlement is going ahead and PayPal hasn't paid this line yet (mirrors the publisher dashboard). */
+/** Still to be paid: the payment split is going ahead and PayPal hasn't paid this share yet (mirrors the publisher dashboard). */
 const ON_TRACK = ['calculated', 'approved', 'payout_submitted'];
 
 export function EarningsPage() {
@@ -65,16 +65,16 @@ export function EarningsPage() {
 
   return (
     <>
-      <PageHeader title="My earnings" subtitle="Every sale and AI answer that used your licensed work, the calculation applied, and what PayPal reports for your payout." />
+      <PageHeader title="My earnings" subtitle="Every sale and AI answer that used your licensed work, how your share was worked out, and where your PayPal payout stands." />
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="Paid to you" value={formatMoney(paid)} tone="pass" />
         <Stat label="Owed to you" value={formatMoney(owed)} />
         <Stat label="Sales using your work" value={lines.length} />
       </div>
 
-      <Card title="Settlement records — every sale that used your work">
+      <Card title="Your share of every sale">
         {lines.length === 0 ? (
-          <Empty>No sales have used your work yet.</Empty>
+          <Empty>No sales have used your work yet. When a publisher sells a report that uses your sources, your share shows up here.</Empty>
         ) : (
           <Suspense fallback={<Spinner />}>
             <EarningsGrid
@@ -87,8 +87,8 @@ export function EarningsPage() {
                 note: l.note,
                 amountCents: l.amountCents,
                 status: l.payoutItem
-                  ? (PAYOUT_TEXT[l.payoutItem.status] ?? { text: l.payoutItem.status, tone: 'neutral' })
-                  : { text: l.payable ? (SETTLEMENT_TEXT[l.run.status] ?? l.run.status) : 'Not owed', tone: l.run.status === 'exception' ? 'warn' : 'neutral' },
+                  ? (PAYOUT_TEXT[l.payoutItem.status] ?? { text: statusLabel(l.payoutItem.status), tone: 'neutral' })
+                  : { text: l.payable ? (SETTLEMENT_TEXT[l.run.status] ?? statusLabel(l.run.status)) : 'Not owed', tone: l.run.status === 'exception' ? 'warn' : 'neutral' },
                 captureId: l.run.sale.payment?.captureId ?? null,
                 paypalTransaction: l.payoutItem?.transactionId ?? null,
               }))}
@@ -105,7 +105,7 @@ export function EarningsPage() {
             const t = LicenseTermsSchema.safeParse(l.terms);
             return (
               <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                <span className="font-medium">{l.asset.title} <span className="text-xs text-muted">v{l.version}</span></span>
+                <span className="font-medium">{l.asset.title} <span className="text-xs text-muted">version {l.version}</span></span>
                 <span className="flex items-center gap-2">
                   {t.success && <Badge>{economicsLabel(t.data.economics)}</Badge>}
                   <StatusBadge status={l.status} />
@@ -158,7 +158,7 @@ function AnswerEarnings() {
         <Stat label="Passages cited" value={d.citations} />
       </div>
       {d.credits.length === 0 ? (
-        <Empty>No AI answer has cited your work yet. Allow AI answers in your license terms to start earning per citation.</Empty>
+        <Empty>No AI answer has cited your work yet. Allow AI answers in your license terms to start earning each time an answer cites you.</Empty>
       ) : (
         <ul className="divide-y divide-line text-sm">
           {d.credits.slice(0, 15).map((c) => (

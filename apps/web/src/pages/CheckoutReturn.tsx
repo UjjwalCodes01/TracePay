@@ -16,7 +16,7 @@ export function CheckoutReturnPage({ cancelled = false }: { cancelled?: boolean 
             : 'PayPal sent you back to TracePay. We check every payment with PayPal ourselves, and the report unlocks as soon as PayPal confirms it — usually within a minute.'}
         </p>
         <Link to="/store" className="mt-4 inline-flex h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-white hover:bg-slate-800">
-          Back to the Report Store
+          Back to the report store
         </Link>
       </Card>
     </>

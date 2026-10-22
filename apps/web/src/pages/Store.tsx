@@ -20,18 +20,18 @@ export function StorePage() {
   return (
     <>
       <PageHeader
-        title="Report Store"
+        title="Report store"
         subtitle="Research reports built only from licensed sources. Part of every purchase is paid to the people whose work it uses."
         action={
           user?.role === 'buyer' ? (
             <Link to="/assistant" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-medium hover:bg-slate-50">
-              <Sparkles className="size-4" /> Ask the Shopping Assistant
+              <Sparkles className="size-4" /> Ask the shopping assistant
             </Link>
           ) : undefined
         }
       />
       {items.length === 0 ? (
-        <Empty>No reports are listed yet. Switch to the Publisher role and create one.</Empty>
+        <Empty>No reports are for sale yet. Switch to the publisher role and create one.</Empty>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {items.map((a) => (
@@ -272,13 +272,18 @@ function PaymentResult({ result, unlocked }: { result: CaptureResult; unlocked: 
         </div>
       )}
       <dl className="grid grid-cols-[7rem_1fr] gap-y-1.5 text-sm">
-        <dt className="text-muted">Order</dt>
-        <dd><Hash value={result.orderId} n={20} /></dd>
-        <dt className="text-muted">Capture</dt>
-        <dd><Hash value={result.captureId} n={20} /></dd>
         <dt className="text-muted">Amount</dt>
-        <dd>{result.capturedCents !== null ? formatMoney(result.capturedCents) : '—'}</dd>
+        <dd>{result.capturedCents !== null ? formatMoney(result.capturedCents) : 'Not confirmed yet'}</dd>
       </dl>
+      <details className="mt-3 rounded-lg border border-line bg-slate-50 text-sm">
+        <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted hover:text-ink">Technical details</summary>
+        <dl className="grid grid-cols-[8rem_minmax(0,1fr)] gap-y-1.5 border-t border-line px-3 py-3 text-xs">
+          <dt className="text-muted">PayPal order</dt>
+          <dd><Hash value={result.orderId} n={20} /></dd>
+          <dt className="text-muted">PayPal payment ID</dt>
+          <dd><Hash value={result.captureId} n={20} /></dd>
+        </dl>
+      </details>
       <p className="mt-3 text-xs text-muted">
         TracePay confirmed this payment with PayPal itself and checked the amount before unlocking the report and working out what each contributor is owed.
       </p>

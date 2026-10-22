@@ -149,7 +149,7 @@ export const STATUS_LABEL: Record<string, string> = {
   DECLINED: 'Declined',
   PARTIALLY_REFUNDED: 'Partly refunded',
   // settlements
-  calculated: 'Calculated',
+  calculated: 'Waiting for approval',
   approved: 'Approved',
   payout_submitted: 'Payouts sent',
   completed: 'Completed',
@@ -178,6 +178,8 @@ export const STATUS_LABEL: Record<string, string> = {
   withdrawn: 'Withdrawn',
   revoked: 'Revoked',
   superseded: 'Replaced by newer terms',
+  expired: 'Expired',
+  not_started: 'Not started yet',
   // agent runs
   running: 'Working',
   awaiting_approval: 'Waiting for you',

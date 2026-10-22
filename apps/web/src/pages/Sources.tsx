@@ -4,7 +4,7 @@ import { ArrowLeft, Bell, FileUp, Plus, Sparkles, Upload, Wand2 } from 'lucide-r
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { DEFAULT_TERMS, TermsEditor, TermsSummary, type Extraction } from '../components/Terms';
-import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner } from '../components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -96,7 +96,7 @@ export function MySourcesPage() {
   return (
     <>
       <PageHeader
-        title="My Sources"
+        title="My sources"
         subtitle="The data and research you license to report publishers. You decide the terms; you’re paid automatically every time a report that uses your work sells."
         action={
           <Link to="/sources/new" className="inline-flex h-10 items-center gap-2 rounded-lg bg-ink px-4 text-sm font-medium text-white hover:bg-slate-800">
@@ -157,10 +157,10 @@ export function MySourcesPage() {
                 title={
                   <span className="flex flex-wrap items-center gap-2">
                     {a.title}
-                    <Badge>{KINDS.find((k) => k.value === a.kind)?.label ?? a.kind}</Badge>
+                    <Badge>{KINDS.find((k) => k.value === a.kind)?.label ?? statusLabel(a.kind)}</Badge>
                     {a.archivedAt && <Badge tone="neutral">Hidden from marketplace</Badge>}
                     <span className="text-xs font-normal text-muted">
-                      version {v?.version} · {v?._count.chunks} passages
+                      {v ? `version ${v.version} · ${v._count.chunks} ${v._count.chunks === 1 ? 'passage' : 'passages'}` : 'no content yet'}
                     </span>
                   </span>
                 }
@@ -184,7 +184,7 @@ export function MySourcesPage() {
                 ) : (
                   <ul className="mt-4 divide-y divide-line rounded-lg border border-line">
                     {rels.map(({ current: g, newer }) => {
-                      const s = STATUS_TEXT[g.status];
+                      const s = STATUS_TEXT[g.status] ?? { text: () => statusLabel(g.status), tone: 'neutral' as const };
                       return (
                         <li key={g.id} className="grid gap-3 p-4 md:grid-cols-[1fr_1.4fr_auto] md:items-start">
                           <div>
@@ -194,7 +194,7 @@ export function MySourcesPage() {
                             {newer && (
                               <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
                                 <span className="text-muted">Newer terms (version {newer.version}):</span>
-                                <Badge tone={STATUS_TEXT[newer.status].tone}>{STATUS_TEXT[newer.status].text(newer)}</Badge>
+                                <Badge tone={STATUS_TEXT[newer.status]?.tone ?? 'neutral'}>{STATUS_TEXT[newer.status]?.text(newer) ?? statusLabel(newer.status)}</Badge>
                                 {newer.status === 'offered' && (
                                   <Button size="sm" variant="ghost" loading={act.isPending && act.variables?.id === newer.id} onClick={() => act.mutate({ id: newer.id, action: 'withdraw' })}>
                                     Withdraw
@@ -234,9 +234,12 @@ export function MySourcesPage() {
                   </ul>
                 )}
                 {v && (
-                  <p className="mt-3 text-xs text-muted">
-                    Fingerprint <Hash value={v.sha256} n={16} /> — every report records exactly which version it used.
-                  </p>
+                  <details className="mt-3 text-xs text-muted">
+                    <summary className="cursor-pointer select-none hover:text-ink">Technical details</summary>
+                    <p className="mt-2">
+                      Fingerprint of version {v.version} <Hash value={v.sha256} n={16} /> — every report records exactly which version of this source it used.
+                    </p>
+                  </details>
                 )}
               </Card>
             );
@@ -276,7 +279,7 @@ export function NewSourcePage() {
   return (
     <div className="mx-auto max-w-2xl">
       <Link to="/sources" className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
-        <ArrowLeft className="size-4" /> My Sources
+        <ArrowLeft className="size-4" /> My sources
       </Link>
       <PageHeader title="Add a source" subtitle="Publishers see the name and description. The content itself stays private and is only used in reports by publishers you license." />
       <Card>
@@ -345,7 +348,7 @@ export function NewVersionPage() {
   return (
     <div className="mx-auto max-w-2xl">
       <Link to="/sources" className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
-        <ArrowLeft className="size-4" /> My Sources
+        <ArrowLeft className="size-4" /> My sources
       </Link>
       <PageHeader title="Upload a new version" subtitle="The previous version is kept unchanged, so reports already built still point at exactly what they used." />
       <Card>
@@ -415,7 +418,7 @@ export function OfferLicensePage() {
   return (
     <div className="mx-auto max-w-4xl">
       <Link to="/sources" className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
-        <ArrowLeft className="size-4" /> My Sources
+        <ArrowLeft className="size-4" /> My sources
       </Link>
       <PageHeader title={`License “${asset.title}”`} subtitle="Nothing is binding until the publisher accepts these exact terms." />
 
@@ -443,7 +446,7 @@ export function OfferLicensePage() {
       {step === 2 && (
         <Card>
           <p className="mb-3 text-sm text-muted">Paste your license or contract. We’ll read it and fill in the terms for you — you review every one before anything is sent.</p>
-          <textarea className={`${input} min-h-48 py-2`} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Licensee may use the dataset in commercial reports worldwide until 31 Dec 2027. Raw data may not be redistributed. Licensor receives 20% of the gross sale price." />
+          <textarea className={`${input} min-h-48 py-2`} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. The publisher may use the dataset in reports sold worldwide until 31 Dec 2027. The original data may not be shared. The contributor receives 20% of each sale." />
           <ErrorNote error={extract.error} />
           <div className="mt-4 flex flex-wrap gap-2">
             <Button loading={extract.isPending} disabled={text.trim().length < 20} onClick={() => extract.mutate()}>
@@ -493,6 +496,13 @@ export function OfferLicensePage() {
   );
 }
 
+/** What the PayPal email is for, depending on who you are. */
+const PAYPAL_HELP: Record<string, string> = {
+  contributor: 'Your share of every sale and AI answer is sent here with PayPal. Without it, publishers can’t include your sources in reports they sell.',
+  publisher: 'Only contributors are paid at this address. Your sales are paid into the PayPal business account TracePay is connected to, so you can leave this empty.',
+  buyer: 'You don’t need this to buy: you pay with your own PayPal account at checkout. This email is only used to send money to contributors.',
+};
+
 export function ProfilePage() {
   const qc = useQueryClient();
   const { authMethod } = useSession();
@@ -536,7 +546,7 @@ export function ProfilePage() {
             <label className="block space-y-1.5 text-sm">
               <span className="font-medium">PayPal email for receiving payments</span>
               <input className={`${input} h-10`} type="email" value={form.paypalEmail} onChange={(e) => setForm({ ...form, paypalEmail: e.target.value })} placeholder="you@example.com" />
-              <span className="text-xs text-muted">Royalties are sent here with PayPal. Without it, publishers can’t include your sources in reports they sell.</span>
+              <span className="text-xs text-muted">{PAYPAL_HELP[q.data!.user.role] ?? PAYPAL_HELP.contributor}</span>
             </label>
             {payeeChanges && (
               <label className="block space-y-1.5 text-sm">

@@ -1,3 +1,4 @@
+import { formatMoney } from '@tracepay/shared';
 import type { LicenseTerms, PreflightReport } from '@tracepay/shared';
 import type { Tx } from '../../db';
 import type { ArtifactContent } from '../generation/generation.service';
@@ -145,9 +146,9 @@ export async function getProvenance(tx: Tx, artifactId: string): Promise<Provena
       nodes.push({
         id: lineNode,
         kind: 'settlement_line',
-        label: `${line.kind === 'publisher_residual' ? 'Publisher' : 'Royalty'} ${(line.amountCents / 100).toFixed(2)}`,
+        label: `${line.kind === 'publisher_residual' ? 'Publisher keeps' : 'Contributor’s share'} ${formatMoney(line.amountCents)}`,
         evidence: 'contractual',
-        data: { lineId: line.id, recipientId: line.recipientId, amountCents: line.amountCents, formula: line.formula, payable: line.payable, note: line.note, licenseId: line.licenseGrantId },
+        data: { lineId: line.id, lineKind: line.kind, recipientId: line.recipientId, amountCents: line.amountCents, formula: line.formula, payable: line.payable, note: line.note, licenseId: line.licenseGrantId },
       });
       edge(saleNode, lineNode, 'allocated_to', 'contractual');
       if (line.assetVersionId) edge(`source:${line.assetVersionId}`, lineNode, 'allocated_to', 'contractual');
@@ -156,7 +157,7 @@ export async function getProvenance(tx: Tx, artifactId: string): Promise<Provena
         nodes.push({
           id: payoutNode,
           kind: 'payout',
-          label: `Payout ${line.payoutItem.status}`,
+          label: 'PayPal payout',
           evidence: 'verified',
           data: { status: line.payoutItem.status, receiver: line.payoutItem.receiver, paypalItemId: line.payoutItem.paypalItemId, transactionId: line.payoutItem.transactionId },
         });

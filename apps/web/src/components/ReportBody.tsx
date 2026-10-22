@@ -34,7 +34,9 @@ export function ReportBody({ artifact }: { artifact: ArtifactFull }) {
                   key={i}
                   onClick={() => setOpen(active ? null : { sectionKey: s.key, handle })}
                   className={`mx-0.5 rounded px-1 align-baseline text-xs font-medium ${active ? 'bg-ai text-white' : 'bg-ai-soft text-ai hover:bg-violet-200'}`}
-                  title="Show the cited source passage"
+                  title="Show the passage this cites"
+                  aria-label={`Citation ${handle}: show the passage`}
+                  aria-expanded={active}
                 >
                   {handle}
                 </button>
@@ -50,7 +52,6 @@ export function ReportBody({ artifact }: { artifact: ArtifactFull }) {
                   <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-ai">
                     <Badge tone="ai">{open.handle}</Badge>
                     <span className="font-medium">{sourceTitle.get(c.assetVersionId)}</span>
-                    <span className="mono text-muted">{c.chunkId}</span>
                   </div>
                   {passageByChunk.get(c.chunkId) ?? 'Loading passage…'}
                 </blockquote>
@@ -76,8 +77,8 @@ export function ReportBody({ artifact }: { artifact: ArtifactFull }) {
           {artifact.content.sources.map((s) => (
             <li key={s.assetVersionId} className="flex flex-wrap items-center gap-2">
               <span>{s.assetTitle}</span>
-              <span className="text-xs text-muted">v{s.version}</span>
-              {s.cited ? <Badge tone="pass">cited</Badge> : <Badge>retrieved, not cited</Badge>}
+              <span className="text-xs text-muted">version {s.version}</span>
+              {s.cited ? <Badge tone="pass">Cited</Badge> : <Badge>Read, but not cited</Badge>}
             </li>
           ))}
         </ul>

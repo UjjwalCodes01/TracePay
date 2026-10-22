@@ -1,3 +1,4 @@
+import { describeTerritories, formatDay, LICENSE_STATUS_LABELS } from '@tracepay/shared';
 import type { ResolvedSource } from '../catalog/catalog.service';
 
 /**
@@ -30,7 +31,7 @@ export function checkAnswerRights(sources: ResolvedSource[], asOf: string): { el
   for (const s of sources) {
     const l = s.license;
     if (!l) {
-      exclude(s, 'no_license', s.licenseProblem ? `Its license can't be read: ${s.licenseProblem}` : 'No license for this library.');
+      exclude(s, 'no_license', s.licenseProblem ? `This source ${s.licenseProblem}` : 'It isn’t licensed to this library.');
       continue;
     }
     if (l.status === 'revoked') {
@@ -38,12 +39,12 @@ export function checkAnswerRights(sources: ResolvedSource[], asOf: string): { el
       continue;
     }
     if (l.status !== 'approved') {
-      exclude(s, 'not_approved', `The license is ${l.status}, not approved.`);
+      exclude(s, 'not_approved', `The license is ${(LICENSE_STATUS_LABELS[l.status] ?? l.status).toLowerCase()}, not approved.`);
       continue;
     }
     const t = l.terms;
     if (asOf < t.validFrom || (t.validUntil !== null && asOf > t.validUntil)) {
-      exclude(s, 'out_of_term', t.validUntil !== null && asOf > t.validUntil ? `The license expired on ${t.validUntil}.` : `The license starts on ${t.validFrom}.`);
+      exclude(s, 'out_of_term', t.validUntil !== null && asOf > t.validUntil ? `The license ended on ${formatDay(t.validUntil)}.` : `The license starts on ${formatDay(t.validFrom)}.`);
       continue;
     }
     if (!t.aiAnswers?.allowed) {
@@ -52,11 +53,11 @@ export function checkAnswerRights(sources: ResolvedSource[], asOf: string): { el
     }
     // Answers are a paid service, available anywhere.
     if (!t.commercialUse) {
-      exclude(s, 'not_commercial', 'The license doesn’t allow commercial use.');
+      exclude(s, 'not_commercial', 'The license doesn’t allow use in anything that is sold.');
       continue;
     }
     if (t.territories !== null) {
-      exclude(s, 'territory', `Licensed only in ${t.territories.join(', ')}; answers are served worldwide.`);
+      exclude(s, 'territory', `It may be used only in ${describeTerritories(t.territories)}, and answers are available everywhere.`);
       continue;
     }
     if (t.aiAnswers.centsPerCitation > 0 && !s.payeeEmail) {

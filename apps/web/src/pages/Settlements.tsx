@@ -3,26 +3,27 @@ import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import { AgGridReact } from 'ag-grid-react';
 import clsx from 'clsx';
 import { CheckCheck, RefreshCw, Send } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { describeFormula } from '@tracepay/shared';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { RoyaltyLedger } from '../components/RoyaltyLedger';
-import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, StatusBadge } from '../components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, StatusBadge, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatMoney } from '../lib/format';
 import { gridTheme } from '../lib/grid';
 import { useSession } from '../lib/session';
 import type { SettlementLine, SettlementRun } from '../lib/types';
 
-type Row = SettlementLine & { recipientName: string; isTotal?: boolean };
+type Row = SettlementLine & { recipientName: string; sourceTitle?: string | null; isTotal?: boolean };
 /** The API adds each recipient's name to the lines. */
-type NamedRun = Omit<SettlementRun, 'lines'> & { lines: Array<SettlementLine & { recipientName?: string | null }> };
+type NamedRun = Omit<SettlementRun, 'lines'> & { lines: Array<SettlementLine & { recipientName?: string | null; sourceTitle?: string | null }> };
 
 /** Each step from what actually happened, not from the overall status (an exception can come at any point). */
 const STEPS: Array<{ label: string; done: (r: SettlementRun) => boolean }> = [
-  { label: 'Captured & calculated', done: (r) => r.lines.length > 0 && !r.failureReason },
-  { label: 'Publisher approved', done: (r) => Boolean(r.approvedAt) },
-  { label: 'Payouts submitted', done: (r) => r.batches.some((b) => b.paypalBatchId) },
-  { label: 'All payouts succeeded', done: (r) => r.status === 'completed' },
+  { label: 'Paid, shares worked out', done: (r) => r.lines.length > 0 && !r.failureReason },
+  { label: 'You approved the split', done: (r) => Boolean(r.approvedAt) },
+  { label: 'Payouts sent to PayPal', done: (r) => r.batches.some((b) => b.paypalBatchId) },
+  { label: 'Everyone paid', done: (r) => r.status === 'completed' },
 ];
 
 /** Why a sale whose payment didn't stand has no more payouts, in plain words. */
@@ -38,6 +39,23 @@ function readableReason(reason: string): string | null {
   const t = reason.trim();
   return /^[[{]/.test(t) || t.length > 300 ? null : t;
 }
+
+/** The exact calculation behind a share, for the hover tooltip: the proof, kept reachable. */
+function calculationTooltip(row: Row): string {
+  if (row.isTotal) return `Exact: ${row.formula}`;
+  const parts = [`Exact: ${row.formula}`];
+  if (row.licenseGrantId) parts.push(`License ${row.licenseGrantId}`);
+  if (row.kind === 'publisher_residual') parts.push('What’s left after contributors’ shares stays with you. You pay PayPal’s fees.');
+  else if (row.note) parts.push(row.note);
+  return parts.join(' · ');
+}
+
+const Details = ({ children }: { children: ReactNode }) => (
+  <details className="mt-3 text-xs text-muted">
+    <summary className="cursor-pointer select-none hover:text-ink">Technical details</summary>
+    <div className="mt-2">{children}</div>
+  </details>
+);
 
 export function SettlementsPage() {
   const qc = useQueryClient();
@@ -68,12 +86,25 @@ export function SettlementsPage() {
           p.data?.isTotal ? <strong>Total</strong> : (
             <span className="flex items-center gap-2">
               {p.value}
-              {p.data?.kind === 'publisher_residual' && <Badge tone="info">merchant</Badge>}
+              {p.data?.kind === 'publisher_residual' && <Badge tone="info">You</Badge>}
             </span>
           ),
       },
-      { headerName: 'License', field: 'licenseGrantId', width: 150, valueFormatter: (p) => p.value ?? '—', cellClass: 'mono' },
-      { headerName: 'Calculation', field: 'formula', flex: 1.8, minWidth: 220, cellClass: 'mono', tooltip: (p) => p.data?.note ?? undefined },
+      {
+        headerName: 'For',
+        colId: 'source',
+        flex: 1.4,
+        minWidth: 180,
+        valueGetter: (p) => (p.data?.isTotal ? '' : p.data?.kind === 'publisher_residual' ? 'The rest of the sale' : (p.data?.sourceTitle ?? 'A licensed source')),
+      },
+      {
+        headerName: 'How it was worked out',
+        colId: 'share',
+        flex: 1.8,
+        minWidth: 220,
+        valueGetter: (p) => (p.data ? describeFormula(p.data.formula) : ''),
+        tooltipValueGetter: (p) => (p.data ? calculationTooltip(p.data) : undefined),
+      },
       {
         headerName: 'Amount',
         field: 'amountCents',
@@ -83,20 +114,20 @@ export function SettlementsPage() {
         cellClass: (p) => clsx('tabular-nums', p.data?.isTotal && 'font-semibold'),
       },
       {
-        headerName: 'Payable',
+        headerName: 'How it’s paid',
         field: 'payable',
-        width: 110,
+        width: 140,
         cellRenderer: (p: ICellRendererParams<Row>) =>
-          p.data?.isTotal ? null : p.value ? <Badge tone="pass">payout</Badge> : <Badge>{p.data?.kind === 'publisher_residual' ? 'retained' : 'not owed'}</Badge>,
+          p.data?.isTotal ? null : p.value ? <Badge tone="pass">PayPal payout</Badge> : <Badge>{p.data?.kind === 'publisher_residual' ? 'Kept by you' : 'Not owed'}</Badge>,
       },
       {
-        headerName: 'PayPal payout',
-        width: 160,
+        headerName: 'Payout status',
+        width: 170,
         valueGetter: (p) => p.data?.payoutItem?.status ?? null,
         cellRenderer: (p: ICellRendererParams<Row>) => (p.value ? <StatusBadge status={p.value} /> : p.data?.isTotal ? null : <span className="text-muted">—</span>),
       },
-      { headerName: 'Payee', field: 'payeeEmail', flex: 1.2, minWidth: 180, valueFormatter: (p) => p.value ?? '—' },
-      { headerName: 'PayPal item', width: 160, valueGetter: (p) => p.data?.payoutItem?.paypalItemId ?? '', cellClass: 'mono' },
+      { headerName: 'PayPal email', field: 'payeeEmail', flex: 1.2, minWidth: 180, valueFormatter: (p) => (p.data?.isTotal ? '' : (p.value ?? '—')) },
+      { headerName: 'PayPal payout ID', width: 170, valueGetter: (p) => p.data?.payoutItem?.paypalItemId ?? '', cellClass: 'mono' },
     ],
     [],
   );
@@ -106,8 +137,8 @@ export function SettlementsPage() {
   if (!run) {
     return (
       <>
-        <PageHeader title="Pay Contributors" />
-        <Empty>No settlements yet. A settlement is calculated automatically when a PayPal capture is verified.</Empty>
+        <PageHeader title="Pay contributors" />
+        <Empty>No sales to split yet. When a buyer pays for one of your reports with PayPal, the contributors’ shares are worked out here automatically, and nothing is paid until you approve.</Empty>
       </>
     );
   }
@@ -124,8 +155,8 @@ export function SettlementsPage() {
   return (
     <>
       <PageHeader
-        title="Pay Contributors"
-        subtitle="Each verified PayPal sale is split under the license terms in force at the moment of sale. Nothing is paid until you approve, and a payout only counts as paid when PayPal confirms it."
+        title="Pay contributors"
+        subtitle="Each PayPal sale is split under the license terms in force when it was sold. Nothing is paid until you approve, and a payout only counts as paid when PayPal confirms it."
       />
       <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Card title="Sales">
@@ -159,7 +190,7 @@ export function SettlementsPage() {
               <div className="flex flex-wrap gap-2">
                 {run.status === 'calculated' && (
                   <Button size="sm" loading={act.isPending} onClick={() => act.mutate({ action: 'approve', id: run.id })}>
-                    <CheckCheck className="size-4" /> Approve settlement
+                    <CheckCheck className="size-4" /> Approve payment split
                   </Button>
                 )}
                 {(run.status === 'approved' || (run.status === 'payout_submitted' && latest && !latest.paypalBatchId && latest.status !== 'AWAITING_CONFIRMATION')) && (
@@ -174,7 +205,7 @@ export function SettlementsPage() {
                 )}
                 {run.status === 'exception' && run.failureReason && run.batches.length === 0 && (
                   <Button size="sm" loading={act.isPending} onClick={() => act.mutate({ action: 'recalculate', id: run.id })}>
-                    <RefreshCw className="size-4" /> Recalculate
+                    <RefreshCw className="size-4" /> Work out again
                   </Button>
                 )}
                 {latest?.paypalBatchId && (
@@ -202,7 +233,7 @@ export function SettlementsPage() {
                   : run.failureReason
                     ? (
                         <>
-                          The contributor shares couldn’t be calculated{readableReason(run.failureReason) ? `: ${readableReason(run.failureReason)}` : '.'} Fix the cause (usually a contributor’s missing PayPal email), then recalculate.
+                          The contributors’ shares couldn’t be worked out{readableReason(run.failureReason) ? `: ${readableReason(run.failureReason)}` : '.'} Fix the cause (usually a contributor’s missing PayPal email), then choose “Work out again”.
                           {!readableReason(run.failureReason) && (
                             <details className="mt-1 text-xs">
                               <summary className="cursor-pointer">Technical details</summary>
@@ -212,13 +243,13 @@ export function SettlementsPage() {
                         </>
                       )
                     : latest && ['DENIED', 'CANCELED'].includes(latest.status)
-                      ? 'PayPal declined this payout batch. Check your PayPal account, then retry.'
-                      : 'Some payouts failed or came back from PayPal. Ask the contributor to check their PayPal email in their profile, then retry the failed payouts.'}
+                      ? 'PayPal declined this group of payouts, so nothing was paid. Check your PayPal account, then try again.'
+                      : 'Some payouts failed or came back from PayPal. Ask the contributor to check the PayPal email in their profile, then use “Retry failed payouts”.'}
               </div>
             )}
             {latest?.status === 'AWAITING_CONFIRMATION' && (
               <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                PayPal already received these payouts (an earlier response was lost). Nothing was paid twice; the status will update automatically when PayPal confirms.
+                PayPal already has these payouts (its earlier reply was lost). Nothing was paid twice; the status updates by itself when PayPal confirms.
               </div>
             )}
             <ErrorNote error={act.error} />
@@ -232,36 +263,57 @@ export function SettlementsPage() {
                 tooltipShowDelay={200}
               />
             </div>
-            <p className="mt-3 text-xs text-muted">{run.roundingRule}</p>
+            <p className="mt-3 text-xs text-muted">Each contributor’s share is rounded down to the cent; anything left over stays with you. Hover a share to see the exact calculation.</p>
           </Card>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <Card title="PayPal sale (verified)">
+            <Card title="The buyer’s payment">
+              <p className="mb-3 text-sm">
+                {payment?.capturedCents != null
+                  ? `PayPal confirmed a payment of ${formatMoney(payment.capturedCents)}. The split above is worked out from that amount, not from what the checkout asked for.`
+                  : 'PayPal hasn’t confirmed a payment for this sale.'}
+              </p>
               <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
-                <dt className="text-muted">Order</dt><dd><Hash value={payment?.orderId} n={20} /></dd>
-                <dt className="text-muted">Capture</dt><dd><Hash value={payment?.captureId} n={20} /></dd>
-                <dt className="text-muted">Capture status</dt><dd>{payment?.captureStatus}</dd>
-                <dt className="text-muted">Captured</dt><dd>{payment?.capturedCents != null ? formatMoney(payment.capturedCents) : '—'}</dd>
-                <dt className="text-muted">PayPal fee</dt><dd>{payment?.paypalFeeCents != null ? `${formatMoney(payment.paypalFeeCents)} (borne by publisher)` : '—'}</dd>
+                <dt className="text-muted">Paid</dt><dd>{payment?.capturedCents != null ? formatMoney(payment.capturedCents) : '—'}</dd>
+                <dt className="text-muted">PayPal status</dt><dd>{payment?.captureStatus ? statusLabel(payment.captureStatus) : '—'}</dd>
+                <dt className="text-muted">PayPal fee</dt><dd>{payment?.paypalFeeCents != null ? `${formatMoney(payment.paypalFeeCents)} (paid by you)` : '—'}</dd>
               </dl>
+              {payment && (
+                <Details>
+                  <dl className="grid grid-cols-[9rem_1fr] gap-y-1.5">
+                    <dt>PayPal order ID</dt><dd><Hash value={payment.orderId} n={20} /></dd>
+                    <dt>PayPal payment ID</dt><dd><Hash value={payment.captureId} n={20} /></dd>
+                    <dt>PayPal status</dt><dd className="mono">{payment.captureStatus ?? '—'}</dd>
+                  </dl>
+                </Details>
+              )}
             </Card>
-            <Card title={run.batches.length > 1 ? `Payout attempts (${run.batches.length})` : 'Payout batch'}>
+            <Card title={run.batches.length > 1 ? `Payouts (${run.batches.length} attempts)` : 'Payouts'}>
               {run.batches.length ? (
                 <div className="space-y-4">
                   {run.batches.map((b) => (
                     <dl key={b.attempt} className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
-                      <dt className="text-muted">Attempt</dt><dd>{b.attempt}{b.attempt > 1 && ' (retry of failed payouts)'}</dd>
-                      <dt className="text-muted">sender_batch_id</dt><dd><Hash value={b.senderBatchId} n={24} /></dd>
-                      <dt className="text-muted">PayPal batch</dt><dd><Hash value={b.paypalBatchId} n={20} /></dd>
-                      <dt className="text-muted">Batch status</dt><dd><StatusBadge status={b.status} /></dd>
-                      <dt className="text-muted">Last checked</dt><dd>{b.lastCheckedAt ? new Date(b.lastCheckedAt).toLocaleTimeString() : '—'}</dd>
+                      <dt className="text-muted">Attempt</dt><dd>{b.attempt}{b.attempt > 1 && ' (sending failed payouts again)'}</dd>
+                      <dt className="text-muted">Status</dt><dd><StatusBadge status={b.status} /></dd>
+                      <dt className="text-muted">Last checked</dt><dd>{b.lastCheckedAt ? new Date(b.lastCheckedAt).toLocaleTimeString() : 'Not yet'}</dd>
                     </dl>
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-muted">No payout batch yet. The batch id is fixed before submission, so a retry can never pay twice.</p>
+                <p className="text-sm text-muted">No payouts sent yet. Each payout has a fixed reference, so sending again can never pay twice.</p>
               )}
-              <p className="mt-3 text-xs text-muted">Terms snapshot <Hash value={run.snapshotHash} /></p>
+              <Details>
+                <dl className="grid grid-cols-[9rem_1fr] gap-y-1.5">
+                  {run.batches.map((b) => (
+                    <div key={b.attempt} className="contents">
+                      <dt>Attempt {b.attempt} reference</dt><dd><Hash value={b.senderBatchId} n={24} /></dd>
+                      <dt>PayPal batch ID</dt><dd><Hash value={b.paypalBatchId} n={20} /></dd>
+                    </div>
+                  ))}
+                  <dt>License terms used</dt><dd><Hash value={run.snapshotHash} /> (fingerprint of the terms frozen at the sale)</dd>
+                  <dt>Rounding</dt><dd>{run.roundingRule || '—'}</dd>
+                </dl>
+              </Details>
             </Card>
           </div>
         </div>

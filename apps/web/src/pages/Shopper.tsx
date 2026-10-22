@@ -5,7 +5,7 @@ import { Bot, CheckCircle2, CircleSlash, Search, ShieldCheck, ShoppingCart, Squa
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
-import { Badge, Button, Card, ErrorNote, PageHeader, Spinner } from '../components/ui';
+import { Badge, Button, Card, ErrorNote, PageHeader, Spinner, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -41,6 +41,7 @@ const STATUS: Record<ShopperRun['status'], { label: string; tone: 'info' | 'warn
   completed: { label: 'Done', tone: 'pass' },
   failed: { label: 'Stopped', tone: 'block' },
 };
+const statusOf = (s: string) => STATUS[s as ShopperRun['status']] ?? { label: statusLabel(s), tone: 'info' as const };
 
 /**
  * The buyer's Shopping Assistant (agentic commerce): an AI that searches the store,
@@ -68,7 +69,7 @@ export function ShopperPage() {
   return (
     <>
       <PageHeader
-        title="Shopping Assistant"
+        title="Shopping assistant"
         subtitle="Tell the assistant what you need and how much you want to spend. It finds a report, checks that every source is licensed, and asks before you pay — you approve the payment in PayPal."
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -133,7 +134,7 @@ export function ShopperPage() {
                     >
                       <span className="line-clamp-2 min-w-0">{r.goal}</span>
                       <span className="shrink-0 text-right">
-                        <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+                        <Badge tone={statusOf(r.status).tone}>{statusOf(r.status).label}</Badge>
                         <span className="mt-0.5 block text-xs font-normal text-muted">{timeAgo(r.createdAt)}</span>
                       </span>
                     </button>
@@ -193,7 +194,7 @@ function RunView({ runId }: { runId: string }) {
     <Card
       title={
         <span className="flex items-center gap-2">
-          <Badge tone={STATUS[run.status].tone}>{STATUS[run.status].label}</Badge>
+          <Badge tone={statusOf(run.status).tone}>{statusOf(run.status).label}</Badge>
           <span className="text-sm font-normal text-muted">Budget {formatMoney(run.policy.budgetCents)}</span>
         </span>
       }

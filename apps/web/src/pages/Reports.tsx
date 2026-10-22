@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, GitBranch, ScrollText } from 'lucide-react';
 import { Link } from 'react-router';
-import { Badge, Button, Empty, ErrorNote, PageHeader, Spinner } from '../components/ui';
+import { Badge, Button, Empty, ErrorNote, PageHeader, Spinner, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatMoney, timeAgo } from '../lib/format';
 import type { ArtifactPreview } from '../lib/types';
@@ -31,7 +31,7 @@ export function ReportsPage() {
 
   return (
     <>
-      <PageHeader title="My Reports" subtitle="Reports you’ve created. Before every sale TracePay re-checks that each source’s license still allows it." />
+      <PageHeader title="My reports" subtitle="Reports you’ve created. Before every sale TracePay re-checks that each source’s license still allows it." />
       <ErrorNote error={act.error} />
       {reports.length === 0 ? (
         <Empty>
@@ -40,7 +40,7 @@ export function ReportsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {reports.map((a) => {
-            const st = STATUS[a.status as keyof typeof STATUS] ?? { label: a.status, tone: 'neutral' as const };
+            const st = STATUS[a.status as keyof typeof STATUS] ?? { label: statusLabel(a.status), tone: 'neutral' as const };
             return (
               <article key={a.id} className="flex flex-col rounded-xl border border-line bg-white p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -51,7 +51,7 @@ export function ReportsPage() {
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <Badge tone={st.tone}>{st.label}</Badge>
-                  {a.fromFixture ? <Badge tone="warn">Demo AI output</Badge> : <Badge tone="ai">Written by Gemini</Badge>}
+                  {a.fromFixture ? <Badge tone="warn">Written without AI</Badge> : <Badge tone="ai">Written with AI</Badge>}
                   <Badge>{timeAgo(a.createdAt)}</Badge>
                 </div>
                 {a.status === 'withdrawn' && a.withdrawnReason && (
@@ -62,10 +62,10 @@ export function ReportsPage() {
                 {a.summary && <p className="mt-3 line-clamp-3 flex-1 text-sm text-muted">{a.summary}</p>}
                 <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
                   <Link to={`/reports/${a.id}/provenance`} className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline">
-                    <GitBranch className="size-4" /> Provenance
+                    <GitBranch className="size-4" /> Where it came from
                   </Link>
                   <Link to={`/reports/${a.id}/receipt`} className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline">
-                    <ScrollText className="size-4" /> Audit receipt
+                    <ScrollText className="size-4" /> Receipt
                   </Link>
                   <span className="flex-1" />
                   {a.status === 'listed' && (

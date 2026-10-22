@@ -8,9 +8,20 @@ import type {
   RuleOutcome,
   RuleResult,
 } from '@tracepay/shared';
-import { formatBps, formatMoney } from '@tracepay/shared';
+import { describeTerritories, describeTerritory, formatBps, formatDay, formatMoney, joinWords, PURPOSE_LABELS } from '@tracepay/shared';
 
 export const POLICY_VERSION = 'tracepay-policy/1';
+
+/** "X's license is …" for each license that isn't approved. */
+const STATUS_PHRASES: Partial<Record<LicenseStatus, string>> = {
+  requested: 'only requested so far',
+  draft: 'still a draft',
+  offered: 'offered but not accepted yet',
+  declined: 'declined',
+  withdrawn: 'withdrawn',
+  revoked: 'revoked',
+  superseded: 'replaced by a newer version',
+};
 
 /** One selected source as the compiler sees it: a pinned asset version and its grant. */
 export interface CompilerSource {
@@ -48,9 +59,9 @@ export function runPreflight({ intent, sources, asOf }: PreflightInput): Preflig
 
   // ---- build-level structure -------------------------------------------------
   if (sources.length === 0) {
-    add('SOURCES_PRESENT', 'fail', 'Select at least one licensed source.');
+    add('SOURCES_PRESENT', 'fail', 'Choose at least one licensed source.');
   } else {
-    add('SOURCES_PRESENT', 'pass', `${sources.length} source(s) selected.`);
+    add('SOURCES_PRESENT', 'pass', `${sources.length} source${sources.length === 1 ? '' : 's'} chosen.`);
   }
 
   const seen = new Map<string, string>();
@@ -59,11 +70,11 @@ export function runPreflight({ intent, sources, asOf }: PreflightInput): Preflig
     const prior = seen.get(s.assetId);
     if (prior !== undefined) {
       duplicate = true;
-      add('NO_DUPLICATE_ASSETS', 'fail', `"${s.assetTitle}" is selected more than once; pin a single version.`, s.assetVersionId);
+      add('NO_DUPLICATE_ASSETS', 'fail', `"${s.assetTitle}" is chosen more than once. Keep one version of it.`, s.assetVersionId);
     }
     seen.set(s.assetId, s.assetVersionId);
   }
-  if (!duplicate && sources.length > 0) add('NO_DUPLICATE_ASSETS', 'pass', 'Each asset is pinned to one version.');
+  if (!duplicate && sources.length > 0) add('NO_DUPLICATE_ASSETS', 'pass', 'Each source is used once.');
 
   // ---- per-source rules ------------------------------------------------------
   for (const s of sources) {
@@ -71,77 +82,77 @@ export function runPreflight({ intent, sources, asOf }: PreflightInput): Preflig
     const name = `"${s.assetTitle}"`;
 
     if (!s.license) {
-      add('LICENSE_PRESENT', 'fail', s.licenseProblem ? `${name} ${s.licenseProblem}` : `${name} has no license grant for this publisher.`, id);
+      add('LICENSE_PRESENT', 'fail', s.licenseProblem ? `${name} ${s.licenseProblem}` : `${name} isn’t licensed to you.`, id);
       continue;
     }
-    add('LICENSE_PRESENT', 'pass', `${name} has license ${s.license.id}.`, id);
+    add('LICENSE_PRESENT', 'pass', `${name} is licensed to you.`, id);
 
     const t = s.license.terms;
 
     if (s.license.status !== 'approved') {
-      add('LICENSE_APPROVED', 'fail', `${name}'s license is ${s.license.status}; only approved terms are enforceable.`, id);
+      add('LICENSE_APPROVED', 'fail', `${name}’s license is ${STATUS_PHRASES[s.license.status] ?? s.license.status}. Only a license both sides have agreed to can be used.`, id);
     } else {
-      add('LICENSE_APPROVED', 'pass', `${name}'s terms are approved.`, id);
+      add('LICENSE_APPROVED', 'pass', `${name}’s license is agreed by both sides.`, id);
     }
 
     if (asOf < t.validFrom) {
-      add('LICENSE_IN_TERM', 'fail', `${name}'s license starts on ${t.validFrom}.`, id);
+      add('LICENSE_IN_TERM', 'fail', `${name}’s license starts on ${formatDay(t.validFrom)}.`, id);
     } else if (t.validUntil !== null && asOf > t.validUntil) {
-      add('LICENSE_IN_TERM', 'fail', `${name}'s license expired on ${t.validUntil}.`, id);
+      add('LICENSE_IN_TERM', 'fail', `${name}’s license ended on ${formatDay(t.validUntil)}.`, id);
     } else {
-      add('LICENSE_IN_TERM', 'pass', `${name}'s license is in term on ${asOf}.`, id);
+      add('LICENSE_IN_TERM', 'pass', `${name}’s license is current.`, id);
     }
 
     if (!t.allowedPurposes.includes(intent.purpose)) {
-      add('PURPOSE_ALLOWED', 'fail', `${name} is licensed for ${t.allowedPurposes.join(', ')} only, not ${intent.purpose}.`, id);
+      add('PURPOSE_ALLOWED', 'fail', `${name} may be used only for ${joinWords(t.allowedPurposes.map((p) => PURPOSE_LABELS[p]))}, not ${PURPOSE_LABELS[intent.purpose]}.`, id);
     } else {
-      add('PURPOSE_ALLOWED', 'pass', `${name} permits ${intent.purpose}.`, id);
+      add('PURPOSE_ALLOWED', 'pass', `${name} may be used for ${PURPOSE_LABELS[intent.purpose]}.`, id);
     }
 
     if (intent.distribution === 'sale') {
-      if (!t.commercialUse) add('COMMERCIAL_USE', 'fail', `${name} does not permit commercial use.`, id);
-      else add('COMMERCIAL_USE', 'pass', `${name} permits commercial use.`, id);
+      if (!t.commercialUse) add('COMMERCIAL_USE', 'fail', `${name} may not be used in anything that is sold.`, id);
+      else add('COMMERCIAL_USE', 'pass', `${name} may be used commercially.`, id);
     } else {
-      add('COMMERCIAL_USE', 'skip', 'Not distributed for sale.', id);
+      add('COMMERCIAL_USE', 'skip', 'The report isn’t for sale.', id);
     }
 
     if (t.derivativeReports === 'prohibited') {
-      add('DERIVATIVE_ALLOWED', 'fail', `${name} prohibits derivative reports.`, id);
+      add('DERIVATIVE_ALLOWED', 'fail', `${name} may not be used to write reports.`, id);
     } else {
-      add('DERIVATIVE_ALLOWED', 'pass', `${name} permits derivative reports.`, id);
+      add('DERIVATIVE_ALLOWED', 'pass', `${name} may be used to write reports.`, id);
     }
 
     if (intent.includesRawData) {
-      if (!t.rawRedistribution) add('RAW_REDISTRIBUTION', 'fail', `${name} prohibits redistributing its raw content.`, id);
-      else add('RAW_REDISTRIBUTION', 'pass', `${name} permits raw redistribution.`, id);
+      if (!t.rawRedistribution) add('RAW_REDISTRIBUTION', 'fail', `${name} doesn’t allow its original data to be shared.`, id);
+      else add('RAW_REDISTRIBUTION', 'pass', `${name} allows its original data to be shared.`, id);
     } else {
-      add('RAW_REDISTRIBUTION', 'skip', 'Deliverable does not expose raw source content.', id);
+      add('RAW_REDISTRIBUTION', 'skip', 'The report doesn’t include original source data.', id);
     }
 
     if (t.territories !== null && !t.territories.includes(intent.territory)) {
-      add('TERRITORY', 'fail', `${name} is licensed for ${t.territories.join(', ')}, not ${intent.territory}.`, id);
+      add('TERRITORY', 'fail', `${name} may be used only in ${describeTerritories(t.territories)}, not ${describeTerritory(intent.territory)}.`, id);
     } else {
-      add('TERRITORY', 'pass', `${name} is licensed for ${intent.territory}.`, id);
+      add('TERRITORY', 'pass', `${name} may be used in ${describeTerritory(intent.territory)}.`, id);
     }
 
     if (t.currency !== intent.currency) {
-      add('CURRENCY_MATCH', 'fail', `${name}'s terms are in ${t.currency}, the sale is in ${intent.currency}.`, id);
+      add('CURRENCY_MATCH', 'fail', `${name}’s license is in ${t.currency}, but the sale is in ${intent.currency}.`, id);
     } else {
-      add('CURRENCY_MATCH', 'pass', `Terms and sale are both in ${intent.currency}.`, id);
+      add('CURRENCY_MATCH', 'pass', `The license and the sale are both in ${intent.currency}.`, id);
     }
 
     if (t.economics.kind !== 'none' && !s.payeeEmail) {
-      add('PAYEE_DEFINED', 'fail', `${name} is owed money but has no PayPal payee on file.`, id);
+      add('PAYEE_DEFINED', 'fail', `${name} is owed a share, but its contributor hasn’t added a PayPal email yet.`, id);
     } else {
       add('PAYEE_DEFINED', t.economics.kind === 'none' ? 'skip' : 'pass',
-        t.economics.kind === 'none' ? 'No payment owed.' : `Payee on file for ${s.contributorName}.`, id);
+        t.economics.kind === 'none' ? 'Nothing is owed.' : `${s.contributorName} can be paid with PayPal.`, id);
     }
 
     if (t.derivativeReports === 'allowed_with_attribution' && t.attributionText) {
       obligations.push({ assetVersionId: id, assetTitle: s.assetTitle, text: t.attributionText });
-      add('ATTRIBUTION', 'obligation', `Output must credit: "${t.attributionText}".`, id);
+      add('ATTRIBUTION', 'obligation', `The report must credit: "${t.attributionText}".`, id);
     } else {
-      add('ATTRIBUTION', 'skip', 'No attribution required.', id);
+      add('ATTRIBUTION', 'skip', 'No credit line needed.', id);
     }
   }
 
@@ -153,21 +164,21 @@ export function runPreflight({ intent, sources, asOf }: PreflightInput): Preflig
   const maxContributorCents = percentCents + fixedFeesCents;
 
   if (totalBps > 10_000) {
-    add('ECON_TOTAL_BPS', 'fail', `Percentage royalties total ${formatBps(totalBps)}, above 100%. Terms are rejected, not normalized.`);
+    add('ECON_TOTAL_BPS', 'fail', `Contributors’ percentage shares add up to ${formatBps(totalBps)}, more than 100%. Fix the licenses; TracePay never scales shares down.`);
   } else {
-    add('ECON_TOTAL_BPS', 'pass', `Percentage royalties total ${formatBps(totalBps)}.`);
+    add('ECON_TOTAL_BPS', 'pass', `Contributors’ percentage shares add up to ${formatBps(totalBps)}.`);
   }
 
   if (intent.distribution === 'sale') {
     if (maxContributorCents > intent.priceCents) {
       add('ECON_PRICE_COVERS', 'fail',
-        `Contributor obligations (${formatMoney(maxContributorCents)}) exceed the ${formatMoney(intent.priceCents)} price.`);
+        `Contributors could be owed ${formatMoney(maxContributorCents)}, more than the ${formatMoney(intent.priceCents)} price.`);
     } else {
       add('ECON_PRICE_COVERS', 'pass',
-        `Price ${formatMoney(intent.priceCents)} covers up to ${formatMoney(maxContributorCents)} of contributor obligations.`);
+        `The ${formatMoney(intent.priceCents)} price covers the most contributors could be owed (${formatMoney(maxContributorCents)}).`);
     }
   } else {
-    add('ECON_PRICE_COVERS', 'skip', 'Not distributed for sale.');
+    add('ECON_PRICE_COVERS', 'skip', 'The report isn’t for sale.');
   }
 
   return {

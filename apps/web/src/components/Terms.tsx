@@ -1,5 +1,5 @@
 import type { LicenseTerms } from '@tracepay/shared';
-import { formatBps, formatMoney } from '@tracepay/shared';
+import { describeTerritories, formatBps, formatDay, formatMoney } from '@tracepay/shared';
 import clsx from 'clsx';
 import { Check, Quote, X } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -35,7 +35,7 @@ export interface Extraction {
 }
 
 export function paymentLabel(e: LicenseTerms['economics']): string {
-  if (e.kind === 'percent_of_gross') return `${formatBps(e.bps)} of every sale`;
+  if (e.kind === 'percent_of_gross') return `${formatBps(e.bps)} of each sale`;
   if (e.kind === 'fixed_per_sale') return `${formatMoney(e.amountCents)} per report sold`;
   return 'No payment';
 }
@@ -53,7 +53,7 @@ export function TermsSummary({ terms, compact }: { terms: LicenseTerms; compact?
             ? <>Reports must credit: “{terms.attributionText}”</>
             : 'New reports based on it are allowed',
     },
-    { ok: terms.rawRedistribution, text: terms.rawRedistribution ? 'Raw data may be republished' : 'Raw data can’t be republished' },
+    { ok: terms.rawRedistribution, text: terms.rawRedistribution ? 'Its original data may be shared' : 'Its original data can’t be shared' },
     { ok: null, text: <>Payment: <strong>{paymentLabel(terms.economics)}</strong>{terms.economics.kind !== 'none' && (terms.payableOn === 'cited_in_output' ? ', only when a report actually cites it' : ', whenever a report uses it')}</> },
     {
       ok: !!terms.aiAnswers?.allowed,
@@ -65,8 +65,8 @@ export function TermsSummary({ terms, compact }: { terms: LicenseTerms; compact?
         'AI answers can’t use it'
       ),
     },
-    { ok: null, text: terms.territories ? `Only in: ${terms.territories.join(', ')}` : 'Anywhere in the world' },
-    { ok: null, text: terms.validUntil ? `Valid from ${terms.validFrom} until ${terms.validUntil}` : `Valid from ${terms.validFrom}, no end date` },
+    { ok: null, text: terms.territories ? `Only in ${describeTerritories(terms.territories)}` : 'Anywhere in the world' },
+    { ok: null, text: terms.validUntil ? `Valid from ${formatDay(terms.validFrom)} until ${formatDay(terms.validUntil)}` : `Valid from ${formatDay(terms.validFrom)}, no end date` },
   ];
   return (
     <ul className={clsx('space-y-1.5', compact ? 'text-xs' : 'text-sm')}>
@@ -175,7 +175,7 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
           </select>
           {terms.economics.kind === 'percent_of_gross' && (
             <label className="flex items-center gap-1 text-sm">
-              <input type="number" min={0} max={100} step={0.5} aria-label="Share of every sale, in percent" className={clsx(field, 'w-24')} value={terms.economics.bps / 100} onChange={(e) => set('economics', { kind: 'percent_of_gross', bps: Math.round(Number(e.target.value) * 100) })} />%
+              <input type="number" min={0} max={100} step={0.5} aria-label="Share of each sale, in percent" className={clsx(field, 'w-24')} value={terms.economics.bps / 100} onChange={(e) => set('economics', { kind: 'percent_of_gross', bps: Math.round(Number(e.target.value) * 100) })} />%
             </label>
           )}
           {terms.economics.kind === 'fixed_per_sale' && (
@@ -228,7 +228,7 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
         )}
       </EditorRow>
 
-      <EditorRow label="Can the raw data be republished?" evidence={ev('rawRedistribution')}>
+      <EditorRow label="Can its original data be shared as is?" evidence={ev('rawRedistribution')}>
         <select className={field} value={terms.rawRedistribution ? 'yes' : 'no'} onChange={(e) => set('rawRedistribution', e.target.value === 'yes')}>
           <option value="no">No</option>
           <option value="yes">Yes</option>

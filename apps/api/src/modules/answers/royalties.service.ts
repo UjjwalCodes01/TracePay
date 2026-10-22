@@ -120,7 +120,7 @@ export async function sendRoyaltyPayout(db: Db, paypal: PayPalGateway, libraryId
     }
     // One batch holds at most a page of items, so it can always be read back in full.
     const payable = [...groups].filter(([, g]) => g.total >= minimum).slice(0, PAYOUT_PAGE_SIZE);
-    if (payable.length === 0) throw new SettlementStateError('Nothing is ready to pay yet: no author has reached the payout minimum, or their earnings are still clearing.');
+    if (payable.length === 0) throw new SettlementStateError('Nothing is ready to pay yet: no contributor has reached the payout minimum, or their earnings are still clearing.');
 
     const batchKey = randomBytes(8).toString('hex');
     const payout = await tx.royaltyPayout.create({

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calculateSettlement, SettlementError, type FrozenTerm } from '../src/modules/settlements/engine';
+import { describeFormula } from '@tracepay/shared';
 
 const term = (id: string, overrides: Partial<FrozenTerm> = {}): FrozenTerm => ({
   licenseId: `lic_${id}`,
@@ -86,5 +87,30 @@ describe('settlement engine', () => {
   it('never marks the publisher residual as a payout', () => {
     const r = settle([term('a')]);
     expect(r.lines.at(-1)).toMatchObject({ kind: 'publisher_residual', payable: false });
+  });
+});
+
+describe('formulas in plain words', () => {
+  it('describes every formula the engine writes', () => {
+    const r = calculateSettlement({
+      verifiedGrossCents: 2000,
+      currency: 'USD',
+      publisherId: 'pub',
+      terms: [
+        { licenseId: 'a', assetVersionId: 'a', assetTitle: 'A', contributorId: 'ca', payeeEmail: 'a@x', economics: { kind: 'percent_of_gross', bps: 2500 }, payableOn: 'included_in_build', citedInOutput: true },
+        { licenseId: 'b', assetVersionId: 'b', assetTitle: 'B', contributorId: 'cb', payeeEmail: 'b@x', economics: { kind: 'fixed_per_sale', amountCents: 200 }, payableOn: 'included_in_build', citedInOutput: true },
+        { licenseId: 'c', assetVersionId: 'c', assetTitle: 'C', contributorId: 'cc', payeeEmail: 'c@x', economics: { kind: 'percent_of_gross', bps: 1000 }, payableOn: 'cited_in_output', citedInOutput: false },
+        { licenseId: 'd', assetVersionId: 'd', assetTitle: 'D', contributorId: 'cd', payeeEmail: null, economics: { kind: 'none' }, payableOn: 'included_in_build', citedInOutput: true },
+      ],
+    });
+    expect(r.lines.map((l) => describeFormula(l.formula))).toEqual([
+      '25% of $20.00',
+      '$2.00 for each sale',
+      'Nothing: the license pays only when the report cites it, and it didn’t',
+      'Nothing: the license has no payment',
+      'What’s left of $20.00 after contributors’ shares',
+    ]);
+    // Every engine formula has a plain description (none falls through unchanged).
+    for (const l of r.lines) expect(describeFormula(l.formula)).not.toBe(l.formula);
   });
 });

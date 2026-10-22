@@ -193,7 +193,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
       const app = testApp(paypal);
       await request(app).get('/api/catalog').set(atlas).expect(200);
       const pre = await request(app).post('/api/builds/preflight').set(atlas).send({ intent, assetVersionIds: [A] }).expect(201);
-      expect(pre.body.report.results.find((r: { ruleId: string }) => r.ruleId === 'LICENSE_PRESENT').message).toMatch(/no longer pass validation/);
+      expect(pre.body.report.results.find((r: { ruleId: string }) => r.ruleId === 'LICENSE_PRESENT').message).toMatch(/can no longer be read/);
     });
   });
 

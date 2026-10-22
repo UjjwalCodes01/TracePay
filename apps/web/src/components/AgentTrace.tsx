@@ -1,23 +1,44 @@
+import { RULE_LABELS, type RuleId } from '@tracepay/shared';
 import clsx from 'clsx';
 import { AlertTriangle, Bot, CheckCircle2, Hand, Loader2, Wrench } from 'lucide-react';
 import { Link } from 'react-router';
 import type { AgentRun, AgentStep } from '../lib/types';
+import { formatMoney } from '../lib/format';
 import { Badge, Button, StatusBadge } from './ui';
 
 const TOOL_LABEL: Record<string, string> = {
-  find_approved_sources: 'Find approved sources',
-  run_license_preflight: 'Run license preflight',
-  find_compatible_replacement: 'Find compatible replacement',
-  propose_replacement: 'Propose replacement',
-  generate_report: 'Generate report',
-  validate_provenance: 'Validate provenance',
-  prepare_sale: 'Prepare sale',
+  find_approved_sources: 'Look up licensed sources',
+  run_license_preflight: 'Check the licenses',
+  find_compatible_replacement: 'Look for a source that fits the licenses',
+  propose_replacement: 'Suggest a replacement source',
+  generate_report: 'Write the report',
+  validate_provenance: 'Check where each fact came from',
+  prepare_sale: 'Get it ready to sell',
 };
+
+/** Why a step was refused, in plain words; the exact code stays in a tooltip. */
+const ERROR_LABEL: Record<string, string> = {
+  GUARDRAIL: 'Not allowed',
+  NOT_FOUND: 'Not found',
+  BAD_INPUT: 'Couldn’t do that',
+  TOOL_FAILED: 'This step failed',
+  UNKNOWN_TOOL: 'Not something it can do',
+};
+
+/** The API describes payment for the model ("25% of gross"); people read "of each sale". */
+const plainEconomics = (e: string) => (e === 'none' ? 'no payment' : e.replace(/ of gross$/, ' of each sale'));
 
 function ResultSummary({ step, titles }: { step: AgentStep; titles: Record<string, string> }) {
   const o = step.output ?? {};
   const t = (id: unknown) => titles[String(id)] ?? String(id);
-  if (o.error) return <span className="text-block">{String(o.error)}: {String(o.message)}</span>;
+  if (o.error) {
+    const code = String(o.error);
+    return (
+      <span className="text-block" title={code}>
+        {ERROR_LABEL[code] ?? 'This step failed'}{o.message ? `: ${withTitles(String(o.message), titles)}` : ''}
+      </span>
+    );
+  }
   switch (step.tool) {
     case 'run_license_preflight': {
       const failed = (o.failedRules as Array<{ ruleId: string; assetVersionId: string | null; message: string }>) ?? [];
@@ -26,7 +47,7 @@ function ResultSummary({ step, titles }: { step: AgentStep; titles: Record<strin
           <StatusBadge status={String(o.verdict)} />
           {failed.map((f, i) => (
             <div key={i} className="text-block">
-              <span className="mono">{f.ruleId}</span> — {f.message}
+              <span className="font-medium" title={f.ruleId}>{RULE_LABELS[f.ruleId as RuleId] ?? f.ruleId}</span> — {f.message}
             </div>
           ))}
         </div>
@@ -38,7 +59,7 @@ function ResultSummary({ step, titles }: { step: AgentStep; titles: Record<strin
         <ul className="space-y-0.5">
           {c.map((x) => (
             <li key={x.assetVersionId} className={x.compatible ? 'text-pass' : 'text-muted line-through'}>
-              {x.compatible ? '✓' : '✗'} {x.title} {x.economics && <span className="text-muted no-underline">· {x.economics}</span>}
+              {x.compatible ? '✓' : '✗'} {x.title} {x.economics && <span className="text-muted no-underline">· {plainEconomics(x.economics)}</span>}
               {!x.compatible && x.reasons[0] && <span className="ml-1 text-xs">({x.reasons[0]})</span>}
             </li>
           ))}
@@ -46,31 +67,46 @@ function ResultSummary({ step, titles }: { step: AgentStep; titles: Record<strin
       );
     }
     case 'propose_replacement':
-      return o.approved ? <span className="text-pass">Approved by {String(o.by)}</span> : <span className="text-block">{String(o.message ?? 'Declined')}</span>;
+      return o.approved ? (
+        <span className="text-pass">{o.by === 'policy' ? 'Approved automatically, as you allowed' : 'Approved by you'}</span>
+      ) : (
+        <span className="text-block">{o.by === 'publisher' ? 'You declined this replacement.' : String(o.message ?? 'Declined')}</span>
+      );
     case 'generate_report':
       return o.artifactId ? (
         <span>
-          Report generated · citations {o.citationsValid ? 'valid' : 'invalid'} · {o.fromFixture ? 'fixture writer' : String(o.model)}{' '}
+          Report written · citations {o.citationsValid ? 'check out' : 'don’t check out'} · {o.fromFixture ? 'written without AI' : `written by ${String(o.model)}`}{' '}
           <Link className="font-medium text-brand underline" to={`/reports/${String(o.artifactId)}`}>
             open
           </Link>
         </span>
       ) : (
-        <span className="text-block">Rejected: {(o.citationErrors as string[])?.join(' ')}</span>
+        <span className="text-block">Draft rejected: {((o.citationErrors as string[] | undefined) ?? []).join(' ') || 'its citations didn’t check out.'}</span>
       );
     case 'validate_provenance':
       return (
         <span>
-          {String(o.citations)} citations · cited: {(o.citedAssetVersionIds as string[]).map(t).join(', ')}
-          {(o.retrievedNotCitedAssetVersionIds as string[]).length > 0 && ` · retrieved but not cited: ${(o.retrievedNotCitedAssetVersionIds as string[]).map(t).join(', ')}`}
+          {Number(o.citations ?? 0)} citation{Number(o.citations) === 1 ? '' : 's'} · cites: {((o.citedAssetVersionIds as string[] | undefined) ?? []).map(t).join(', ') || 'none'}
+          {((o.retrievedNotCitedAssetVersionIds as string[] | undefined) ?? []).length > 0 &&
+            ` · read but not cited: ${(o.retrievedNotCitedAssetVersionIds as string[]).map(t).join(', ')}`}
         </span>
       );
     case 'prepare_sale':
-      return <span>Listed: {o.listed ? 'yes' : 'no'} · ${(Number(o.priceCents) / 100).toFixed(2)} via {String(o.checkout)}</span>;
+      return (
+        <span>
+          {o.listed ? 'For sale' : 'Not for sale yet'}
+          {Number.isFinite(Number(o.priceCents)) && ` · ${formatMoney(Number(o.priceCents))}`} · paid with PayPal (sandbox)
+        </span>
+      );
     case 'find_approved_sources':
-      return <span>{(o.sources as unknown[]).length} sources in catalog</span>;
+      return <span>{((o.sources as unknown[] | undefined) ?? []).length} licensed sources found</span>;
     default:
-      return <pre className="mono whitespace-pre-wrap">{JSON.stringify(o)}</pre>;
+      return (
+        <details>
+          <summary className="cursor-pointer text-muted">Technical details</summary>
+          <pre className="mono mt-1 whitespace-pre-wrap">{JSON.stringify(o, null, 2)}</pre>
+        </details>
+      );
   }
 }
 
@@ -107,13 +143,13 @@ export function AgentTrace({
   const steps = run.steps.filter((s) => s.kind !== 'approval_request');
   const artifactId = run.builds.find((b) => b.artifact)?.artifact?.id;
   // run.model is "<planner>:<model>", e.g. "gemini:gemini-flash-latest" or "rule-based:rule-based-planner/1".
-  const planner = run.model.startsWith('gemini') ? `Gemini (${run.model.slice(run.model.indexOf(':') + 1)})` : 'Rule-based planner (no AI model configured)';
+  const planner = run.model.startsWith('gemini') ? `Planned by Gemini (${run.model.slice(run.model.indexOf(':') + 1)})` : 'Planned by fixed rules (no AI model configured)';
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm">
-          <Bot className="size-4" /> Publisher Agent
+          <Bot className="size-4" /> Research assistant
           <Badge tone={run.model.startsWith('gemini') ? 'ai' : 'warn'}>{planner}</Badge>
         </div>
         <div className="flex items-center gap-2">
@@ -135,7 +171,9 @@ export function AgentTrace({
             ) : s.kind === 'tool_call' ? (
               <div className="flex items-center gap-2 text-slate-700">
                 <Wrench className="size-3.5 shrink-0 text-muted" />
-                <span className="shrink-0 whitespace-nowrap font-medium">{TOOL_LABEL[s.tool ?? ''] ?? s.tool}</span>
+                <span className="shrink-0 whitespace-nowrap font-medium" title={s.tool ?? undefined}>
+                  {TOOL_LABEL[s.tool ?? ''] ?? (s.tool ?? 'Step').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())}
+                </span>
                 <span className="truncate text-muted">{argsSummary(s, titles)}</span>
               </div>
             ) : s.kind === 'tool_result' ? (
@@ -144,7 +182,7 @@ export function AgentTrace({
               </div>
             ) : (
               <p className="flex items-center gap-1.5 text-block">
-                <AlertTriangle className="size-4" /> {String(s.output?.message ?? 'Error')}
+                <AlertTriangle className="size-4" /> {withTitles(String(s.output?.message ?? 'The assistant stopped at this step.'), titles)}
               </p>
             )}
           </li>
@@ -159,7 +197,7 @@ export function AgentTrace({
       {run.status === 'awaiting_approval' && run.pending && (
         <div className="rounded-xl border border-contract/40 bg-contract-soft p-4">
           <div className="flex items-center gap-2 font-medium text-contract">
-            <Hand className="size-4" /> The agent needs your approval
+            <Hand className="size-4" /> The assistant needs your approval
           </div>
           <p className="mt-2 text-sm">
             Replace <strong>{titles[run.pending.blockedAssetVersionId] ?? run.pending.blockedAssetVersionId}</strong> with{' '}
@@ -179,7 +217,7 @@ export function AgentTrace({
 
       {run.status === 'completed' && artifactId && (
         <Link to={`/reports/${artifactId}`} className="flex items-center gap-2 rounded-lg bg-verified-soft px-4 py-3 text-sm font-medium text-verified">
-          <CheckCircle2 className="size-4" /> Report ready — open it
+          <CheckCircle2 className="size-4" /> The report is ready. Open it
         </Link>
       )}
     </div>

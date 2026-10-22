@@ -27,8 +27,8 @@ export async function explainPreflight(report: PreflightReport, useModel: boolea
   if (report.verdict === 'pass') {
     return {
       verdict: 'pass',
-      headline: 'Every selected source is licensed for this deliverable.',
-      explanation: report.obligations.length ? `Attribution required: ${report.obligations.map((o) => `"${o.text}"`).join('; ')}.` : 'No attribution obligations.',
+      headline: 'Every source you chose is licensed for this report.',
+      explanation: report.obligations.length ? `The report must credit: ${report.obligations.map((o) => `"${o.text}"`).join('; ')}.` : 'No credit lines are needed.',
       suggestedFix: null,
       source: 'rules',
     };
@@ -36,9 +36,9 @@ export async function explainPreflight(report: PreflightReport, useModel: boolea
 
   const fallback: Explanation = {
     verdict: 'block',
-    headline: `Blocked by ${failed.length} license rule${failed.length === 1 ? '' : 's'}.`,
+    headline: `Stopped by ${failed.length} license check${failed.length === 1 ? '' : 's'}.`,
     explanation: failed.map((f) => f.message).join(' '),
-    suggestedFix: 'Replace the blocked source with one whose license permits this use, or change the intended use.',
+    suggestedFix: 'Swap the blocked source for one whose license allows this use, or change how the report will be used.',
     source: 'rules',
   };
   if (!useModel) return fallback;
@@ -46,8 +46,9 @@ export async function explainPreflight(report: PreflightReport, useModel: boolea
   try {
     const { data } = await generateStructured({
       system:
-        'You explain license-compiler decisions to a publisher in plain language. The decision is final and already made; ' +
-        'do not question or soften it. Use only the facts given. Keep the explanation to two sentences and the fix to one.',
+        'You explain license-check decisions to a publisher in plain, everyday language. The decision is final and already made; ' +
+        'do not question or soften it. Use only the facts given. Don’t mention rule codes, IDs or legal jargon. ' +
+        'Keep the explanation to two sentences and the fix to one.',
       prompt: `Verdict: BLOCK\nFailed rules:\n${failed.map((f) => `- ${f.ruleId}: ${f.message}`).join('\n')}`,
       schema: ExplanationSchema,
     });

@@ -1,5 +1,5 @@
 import type { Economics, LicenseTerms } from './licensing';
-import { assertCents, formatMoney } from './money';
+import { assertCents, formatBps, formatMoney } from './money';
 
 export const ROUNDING_RULE =
   'Each contributor share is floored to the cent; any remainder stays with the publisher.';
@@ -150,4 +150,22 @@ export function calculateSettlement(input: SettlementInput): SettlementResult {
     publisherResidualCents,
     roundingRule: ROUNDING_RULE,
   };
+}
+
+/**
+ * A settlement line's formula in plain words, for people reading a receipt or a
+ * payout list ("25% of $20.00"). The exact formula stays on the line for auditors.
+ * Kept next to the engine that writes the formulas, so the two can't drift apart.
+ */
+export function describeFormula(formula: string): string {
+  const pct = /^floor\((\d+)¢ × (\d+) \/ 10000\) = (\d+)¢$/.exec(formula);
+  if (pct) return `${formatBps(Number(pct[2]))} of ${formatMoney(Number(pct[1]))}`;
+  const fixed = /^fixed (\d+)¢ per sale$/.exec(formula);
+  if (fixed) return `${formatMoney(Number(fixed[1]))} for each sale`;
+  const rest = /^(\d+)¢ − (\d+)¢ = (\d+)¢$/.exec(formula);
+  if (rest) return `What’s left of ${formatMoney(Number(rest[1]))} after contributors’ shares`;
+  if (formula === '0 (not cited)') return 'Nothing: the license pays only when the report cites it, and it didn’t';
+  if (formula === 'no payment term') return 'Nothing: the license has no payment';
+  if (formula.startsWith('= verified capture')) return 'The sale, as PayPal confirmed it';
+  return formula;
 }

@@ -7,7 +7,7 @@ import { NeedsAttention } from '../components/NeedsAttention';
 import { ErrorNote, Hash, Spinner, useDocumentTitle } from '../components/ui';
 import { describeEvent, type ActivityTone } from '../lib/activity';
 import { api } from '../lib/api';
-import { formatMoney, timeAgo } from '../lib/format';
+import { eventLabel, formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
 import type { Dashboard } from '../lib/types';
 
@@ -155,7 +155,7 @@ export function DashboardPage() {
               <span className="block font-medium">AI answers from your library</span>
               <span className="block text-sm text-muted">
                 {royalties.data.answers === 1 ? '1 answer' : `${royalties.data.answers} answers`} ·{' '}
-                {formatMoney(royalties.data.accrued.reduce((n, a) => n + a.amountCents, 0))} owed to authors
+                {formatMoney(royalties.data.accrued.reduce((n, a) => n + a.amountCents, 0))} owed to contributors
               </span>
             </span>
           </span>
@@ -204,19 +204,19 @@ export function DashboardPage() {
                     : `Audit log check FAILED: event #${chain.data.brokenAtSeq} was modified.`}
             </div>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-3">
-              <Tech label="Builds passed preflight" value={d.buildsPassed} />
-              <Tech label="Builds blocked by license rules" value={d.buildsBlocked} />
-              <Tech label="Reports generated" value={d.artifacts} />
-              <Tech label="Verified PayPal captures" value={d.verifiedSales} />
-              <Tech label="PayPal payouts succeeded" value={d.payoutsCompleted} />
-              <Tech label="Settlement exceptions" value={d.exceptions} />
+              <Tech label="Reports that passed the license check" value={d.buildsPassed} />
+              <Tech label="Reports stopped by the license check" value={d.buildsBlocked} />
+              <Tech label="Reports written" value={d.artifacts} />
+              <Tech label="Sales PayPal confirmed" value={d.verifiedSales} />
+              <Tech label="Payouts PayPal delivered" value={d.payoutsCompleted} />
+              <Tech label="Payments that need a look" value={d.exceptions} />
             </dl>
             <ol className="divide-y divide-line">
               {d.recentEvents.map((e) => (
                 <li key={e.seq} className="flex items-center justify-between gap-3 py-1.5">
                   <span>
                     <span className="mono mr-2 text-muted">#{e.seq}</span>
-                    <span className="mono">{e.eventType}</span>
+                    <span title={e.eventType}>{eventLabel(e.eventType)}</span>
                   </span>
                   <Hash value={e.hash} n={12} />
                 </li>

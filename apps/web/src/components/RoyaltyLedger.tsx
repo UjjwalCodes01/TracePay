@@ -3,6 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import type { AgCartesianChartOptions } from 'ag-charts-community';
 import { AgCharts } from 'ag-charts-react';
 import { Download, Search } from 'lucide-react';
+import { describeFormula } from '@tracepay/shared';
 import { useMemo, useState } from 'react';
 import { formatMoney, localDate, localMidnight } from '../lib/format';
 import { chartTheme, SERIES_COLORS } from '../lib/charts';
@@ -50,7 +51,7 @@ const TONE: Record<string, 'pass' | 'warn' | 'block' | 'neutral' | 'info'> = {
 };
 
 /**
- * Every royalty line of every sale in one place: search it, filter any column,
+ * Every contributor's share of every sale in one place: search it, filter any column,
  * export it for your accountant. Payout cells flash when PayPal reports a change.
  */
 export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<string, string> }) {
@@ -84,7 +85,18 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
       { headerName: 'Report', field: 'report', flex: 1.4, minWidth: 200, filter: 'agTextColumnFilter' },
       { headerName: 'Recipient', field: 'recipient', flex: 1, minWidth: 160, filter: 'agTextColumnFilter' },
       { headerName: 'Role', field: 'role', width: 150, filter: 'agTextColumnFilter' },
-      { headerName: 'Calculation', field: 'formula', flex: 1.4, minWidth: 200, cellClass: 'mono', filter: 'agTextColumnFilter' },
+      {
+        headerName: 'How it was worked out',
+        colId: 'share',
+        flex: 1.4,
+        minWidth: 220,
+        valueGetter: (p) => (p.data && !p.data.isTotal ? describeFormula(p.data.formula) : ''),
+        // The exact calculation, as recorded, on hover.
+        tooltipValueGetter: (p) => (p.data?.formula ? p.data.formula : undefined),
+        filter: 'agTextColumnFilter',
+      },
+      // Exported with the CSV, not shown.
+      { headerName: 'Exact calculation', field: 'formula', hide: true },
       {
         headerName: 'Amount',
         field: 'amountCents',
@@ -104,7 +116,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
         enableCellChangeFlash: true,
         cellRenderer: (p: { value: string; data?: LedgerRow }) => (p.data?.isTotal ? null : <Badge tone={TONE[p.value] ?? 'neutral'}>{p.value}</Badge>),
       },
-      { headerName: 'PayPal transaction', field: 'paypalTransaction', width: 180, cellClass: 'mono', valueFormatter: (p) => p.value ?? '—', filter: 'agTextColumnFilter' },
+      { headerName: 'PayPal payout ID', field: 'paypalTransaction', width: 180, cellClass: 'mono', valueFormatter: (p) => (p.data?.isTotal ? '' : (p.value ?? '—')), filter: 'agTextColumnFilter' },
     ],
     [],
   );
@@ -121,7 +133,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
       sums.set(node.data.recipient, (sums.get(node.data.recipient) ?? 0) + node.data.amountCents);
     });
     setByRecipient([...sums].map(([recipient, c]) => ({ recipient, amount: c / 100 })).sort((a, b) => b.amount - a.amount));
-    setTotal({ id: 'total', date: '', report: `${n} ${n === 1 ? 'line' : 'lines'}`, recipient: '', role: '', formula: '', amountCents: cents, payout: '', saleId: '', paypalTransaction: null, isTotal: true });
+    setTotal({ id: 'total', date: '', report: `${n} ${n === 1 ? 'share' : 'shares'}`, recipient: '', role: '', formula: '', amountCents: cents, payout: '', saleId: '', paypalTransaction: null, isTotal: true });
   };
 
   const chart = useMemo<AgCartesianChartOptions>(
@@ -156,13 +168,13 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
 
   return (
     <Card
-      title="Royalty ledger — every sale"
+      title="Contributors’ shares — every sale"
       action={
         <div className="flex flex-wrap items-center gap-2">
           <label className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted" />
             <input
-              aria-label="Search the ledger"
+              aria-label="Search contributors’ shares"
               placeholder="Search…"
               value={search}
               onChange={(e) => {
@@ -176,14 +188,14 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
             size="sm"
             variant="secondary"
             disabled={!gridApi}
-            onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-royalties-${localDate(new Date())}.csv`, skipPinnedBottom: false })}
+            onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-royalties-${localDate(new Date())}.csv`, skipPinnedBottom: false, allColumns: true })}
           >
             <Download className="size-3.5" /> Export CSV
           </Button>
         </div>
       }
     >
-      <p className="mb-3 text-sm text-muted">Who was owed what from each sale, and whether PayPal has paid it. Filter any column; the total follows your filters.</p>
+      <p className="mb-3 text-sm text-muted">Who was owed what from each sale, and whether PayPal has paid it. Filter any column; the total follows your filters. Hover a share to see the exact calculation.</p>
       <div className="h-[420px]">
         <AgGridReact<LedgerRow>
           theme={gridTheme}
@@ -191,6 +203,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
           getRowId={(p) => p.data.id}
           columnDefs={columns}
           defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }}
+          tooltipShowDelay={200}
           pinnedBottomRowData={total ? [total] : []}
           onGridReady={(e) => {
             setGridApi(e.api);

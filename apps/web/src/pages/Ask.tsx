@@ -115,7 +115,7 @@ export function AskPage() {
     <>
       <PageHeader
         title="Ask the library"
-        subtitle="Answers from licensed sources only. Every passage an answer relies on pays its author, automatically, through PayPal — and you never pay more than your limit."
+        subtitle="Answers from licensed sources only. Every passage an answer relies on pays the contributor who wrote it, automatically, through PayPal — and you never pay more than your limit."
       />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-6">
@@ -322,7 +322,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs text-muted">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Author</th>
+                  <th className="px-3 py-2 font-medium">Contributor</th>
                   <th className="hidden px-3 py-2 font-medium sm:table-cell">Source</th>
                   <th className="px-3 py-2 text-right font-medium">Passages used</th>
                   <th className="px-3 py-2 text-right font-medium">Amount</th>
@@ -367,7 +367,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
               {[
                 a.notPaid.unsupported && `${a.notPaid.unsupported} didn’t support its sentence`,
                 a.notPaid.repeated && `${a.notPaid.repeated} repeated a passage already paid`,
-                a.notPaid.overCap && `${a.notPaid.overCap} over the per-source cap`,
+                a.notPaid.overCap && `${a.notPaid.overCap} over the limit of paid passages per source`,
               ]
                 .filter(Boolean)
                 .join(', ')}
@@ -412,7 +412,7 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
       <div className="flex flex-wrap items-center gap-2">
         <FileSignature className="size-4" aria-hidden />
         <span className="font-medium">Signed receipt</span>
-        <span className="text-muted">— who was paid, under which license terms, signed with Ed25519.</span>
+        <span className="text-muted" title="Signed with Ed25519">— who was paid and under which license terms, digitally signed so anyone can check it wasn’t changed.</span>
         <span className="ml-auto flex items-center gap-2" aria-live="polite">
           {verify.data &&
             (verify.data.valid ? (
@@ -589,7 +589,7 @@ function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Cred
               {credits.entries.slice(0, 6).map((e) => (
                 <li key={e.id} className="flex justify-between gap-2">
                   <span className="text-muted">
-                    {ENTRY_LABEL[e.kind] ?? e.kind} · {timeAgo(e.createdAt)}
+                    {ENTRY_LABEL[e.kind] ?? e.kind.replace(/_/g, ' ').replace(/^./, (ch) => ch.toUpperCase())} · {timeAgo(e.createdAt)}
                   </span>
                   <span className={clsx('tabular-nums', e.amountCents > 0 && 'text-pass')}>
                     {e.amountCents > 0 ? '+' : '−'}

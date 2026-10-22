@@ -105,7 +105,7 @@ export class FixtureReportWriter implements ReportWriter {
         {
           key: 'summary',
           heading: 'Summary',
-          body: `${input.intent.title}: ${picks.length} findings drawn from ${bySource.size} licensed sources. (Fixture output — no AI model configured.)`,
+          body: `${input.intent.title}: ${picks.length} findings from ${bySource.size} licensed sources. (Written without AI: each finding is a key sentence from its source.)`,
           requiresCitation: false,
         },
         ...picks.map((p, i) => ({
@@ -117,7 +117,7 @@ export class FixtureReportWriter implements ReportWriter {
         {
           key: 'outlook',
           heading: 'Outlook',
-          body: 'The findings above are drawn verbatim-extractively from licensed sources; a live model run synthesises them into an outlook.',
+          body: 'Each finding above is a key sentence taken from a licensed source. When AI is turned on, TracePay writes an outlook that connects them.',
           requiresCitation: false,
         },
       ],

@@ -1,4 +1,4 @@
-import { formatMoney } from './format';
+import { eventLabel, formatMoney } from './format';
 
 export type ActivityTone = 'good' | 'bad' | 'waiting' | 'neutral';
 
@@ -37,7 +37,7 @@ export function describeEvent(eventType: string, payload: Record<string, unknown
     case 'artifact.generated':
       return { text: 'A new report was created and put up for sale.', tone: 'good' };
     case 'answer.answered':
-      return { text: `An AI answer from your library paid its authors (${money(payload.chargedCents) ?? ''} charged).`.replace(' ()', ''), tone: 'good' };
+      return { text: `An AI answer from your library paid its contributors (${money(payload.chargedCents) ?? ''} charged).`.replace(' ()', ''), tone: 'good' };
     case 'answer.not_covered':
       return { text: 'A question wasn’t covered by your licensed sources, so it was free.', tone: 'neutral' };
     case 'answer.failed':
@@ -113,6 +113,6 @@ export function describeEvent(eventType: string, payload: Record<string, unknown
     case 'license.revoked':
       return { text: 'A contributor revoked a license. New reports can’t use that source.', tone: 'bad' };
     default:
-      return { text: eventType.replace(/[._]/g, ' '), tone: 'neutral' };
+      return { text: `${eventLabel(eventType)}.`, tone: 'neutral' };
   }
 }

@@ -169,7 +169,7 @@ export async function resolveSources(tx: Tx, publisherId: string, assetVersionId
       payeeEmail: v.asset.owner.paypalEmail,
       termsHash: g?.termsHash ?? null,
       license: g && terms ? { id: g.id, status: g.status as LicenseStatus, terms } : null,
-      ...(g && !terms ? { licenseProblem: 'has license terms that no longer pass validation; ask the contributor to send the terms again.' } : {}),
+      ...(g && !terms ? { licenseProblem: 'has license terms that can no longer be read. Ask the contributor to send them again.' } : {}),
     };
   });
 }

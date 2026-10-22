@@ -204,7 +204,7 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
 
   return (
     <Card
-      title="Price & royalty simulator"
+      title="Try a price: who gets what"
       action={
         <Button
           size="sm"
@@ -223,7 +223,7 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
       }
     >
       <p className="mb-3 text-sm text-muted">
-        Try prices before you build. Each row is settled with the exact rules a real sale uses, so you see what each contributor is paid and what you keep. Click a price to edit it.
+        Try prices before you write the report. Each row is worked out with the exact rules a real sale uses, so you see what each contributor is paid and what you keep. Click a price to change it.
       </p>
       <label className="mb-3 flex items-center gap-2 text-sm">
         <input type="checkbox" checked={assumeCited} onChange={(e) => setAssumeCited(e.target.checked)} />

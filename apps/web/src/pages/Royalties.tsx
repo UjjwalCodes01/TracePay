@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Send } from 'lucide-react';
-import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, Stat } from '../components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, Stat, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatMoney, timeAgo } from '../lib/format';
 
@@ -38,10 +38,10 @@ const STATUS: Record<string, { text: string; tone: 'pass' | 'warn' | 'block' | '
   REFUNDED: { text: 'Taken back by PayPal — back in the next payout', tone: 'block' },
   REVERSED: { text: 'Reversed — back in the next payout', tone: 'block' },
 };
-const label = (s: string) => STATUS[s] ?? { text: s, tone: 'neutral' as const };
+const label = (s: string) => STATUS[s] ?? { text: statusLabel(s), tone: 'neutral' as const };
 
 /**
- * Royalties from pay-per-citation answers. Each answer credits the authors of the
+ * Royalties from pay-per-citation answers. Each answer credits the contributors of the
  * passages it relied on; here the library owner pays what has built up, through
  * PayPal Payouts, and follows each payment to the end.
  */
@@ -62,12 +62,12 @@ export function RoyaltiesPage() {
     <>
       <PageHeader
         title="Answer royalties"
-        subtitle="Every AI answer from your library pays the authors of the passages it relied on. Their earnings build up here; send them with PayPal in one batch."
+        subtitle="Every AI answer from your library pays the contributors whose passages it relied on. Their earnings build up here; pay them all with PayPal in one go."
       />
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Answers sold" value={s.answers} />
         <Stat label="Paid by askers" value={formatMoney(s.revenueCents)} />
-        <Stat label="Owed to authors" value={formatMoney(owed)} />
+        <Stat label="Owed to contributors" value={formatMoney(owed)} />
         <Stat label="Library fees (yours)" value={formatMoney(s.feesCents)} tone="pass" />
       </div>
 
@@ -81,13 +81,13 @@ export function RoyaltiesPage() {
       >
         <ErrorNote error={send.error} />
         {s.accrued.length === 0 ? (
-          <Empty>Nothing owed right now. When buyers or their AI agents ask questions, the authors they rely on earn here.</Empty>
+          <Empty>Nothing owed right now. When buyers or their AI agents ask questions, the contributors whose work they rely on earn here.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-muted">
                 <tr>
-                  <th className="pb-2 font-medium">Author</th>
+                  <th className="pb-2 font-medium">Contributor</th>
                   <th className="hidden pb-2 text-right font-medium sm:table-cell">Answers</th>
                   <th className="hidden pb-2 text-right font-medium sm:table-cell">Passages cited</th>
                   <th className="pb-2 text-right font-medium">Owed</th>
@@ -109,7 +109,7 @@ export function RoyaltiesPage() {
                     <td className="hidden py-2 text-right tabular-nums sm:table-cell">{a.citations}</td>
                     <td className="py-2 text-right font-medium tabular-nums">{formatMoney(a.amountCents)}</td>
                     <td className="py-2 pl-4">
-                      {a.payable ? <Badge tone="pass">Ready</Badge> : !a.hasPayee ? <Badge tone="warn">No PayPal account</Badge> : <Badge>Below {formatMoney(s.minimumCents)}</Badge>}
+                      {a.payable ? <Badge tone="pass">Ready</Badge> : !a.hasPayee ? <Badge tone="warn">No PayPal email yet</Badge> : <Badge>Under the {formatMoney(s.minimumCents)} minimum</Badge>}
                     </td>
                   </tr>
                 ))}
@@ -118,7 +118,7 @@ export function RoyaltiesPage() {
           </div>
         )}
         <p className="mt-3 text-xs text-muted">
-          Each batch has a fixed PayPal batch id before it is sent, so a retry can never pay twice. A payment that fails goes back into the pool for the next batch.
+          Each payout gets a fixed reference before it is sent, so sending again can never pay twice. A payment that fails is added back to what’s owed and goes out with the next payout.
         </p>
       </Card>
 
@@ -132,7 +132,6 @@ export function RoyaltiesPage() {
                   <span className="font-semibold tabular-nums">{formatMoney(p.totalCents)}</span>
                   <Badge tone={label(p.status).tone}>{label(p.status).text}</Badge>
                   <span className="text-muted">{timeAgo(p.createdAt)}</span>
-                  {p.paypalBatchId && <Hash value={p.paypalBatchId} n={16} />}
                   <span className="ml-auto flex gap-2">
                     {p.status === 'SUBMIT_FAILED' && (
                       <Button size="sm" loading={act.isPending && act.variables?.id === p.id} onClick={() => act.mutate({ id: p.id, action: 'resend' })}>
@@ -151,13 +150,31 @@ export function RoyaltiesPage() {
                     <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                       <span>{i.name}</span>
                       <span className="flex items-center gap-2">
-                        {i.transactionId && <Hash value={i.transactionId} n={12} />}
                         <Badge tone={label(i.status).tone}>{label(i.status).text}</Badge>
                         <span className="w-16 text-right tabular-nums">{formatMoney(i.amountCents)}</span>
                       </span>
                     </li>
                   ))}
                 </ul>
+                {(p.paypalBatchId || p.items.some((i) => i.transactionId)) && (
+                  <details className="mt-2 text-xs text-muted">
+                    <summary className="cursor-pointer select-none hover:text-ink">Technical details</summary>
+                    <dl className="mt-2 grid grid-cols-[9rem_1fr] gap-y-1.5">
+                      {p.paypalBatchId && (
+                        <>
+                          <dt>PayPal batch ID</dt>
+                          <dd><Hash value={p.paypalBatchId} n={20} /></dd>
+                        </>
+                      )}
+                      {p.items.filter((i) => i.transactionId).map((i) => (
+                        <div key={i.id} className="contents">
+                          <dt>{i.name}</dt>
+                          <dd><Hash value={i.transactionId} n={20} /> (PayPal payout ID)</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </details>
+                )}
               </div>
             ))}
           </div>

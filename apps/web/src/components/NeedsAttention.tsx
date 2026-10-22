@@ -134,7 +134,7 @@ function IssueRow({ issue, onResolved }: { issue: Issue; onResolved: () => void 
             aria-label="What did you do to handle this?"
             minLength={3}
             maxLength={500}
-            placeholder="What did you do? e.g. “Settled with the contributors directly.”"
+            placeholder="What did you do? e.g. “Paid the contributors directly.”"
             className="h-9 min-w-64 flex-1 rounded-lg border border-line px-3 text-sm"
             value={note}
             onChange={(e) => setNote(e.target.value)}

@@ -87,7 +87,7 @@ const CATALOG: Record<string, EventSpec> = {
   'agent.completed': { type: 'agent_run.completed', object: 'agent_run', description: 'An agent run finished.' },
   'agent.failed': { type: 'agent_run.failed', object: 'agent_run', description: 'An agent run failed.' },
 
-  'answer.answered': { type: 'answer.answered', object: 'answer', fields: ['chargedCents'], description: 'Your library answered a question and paid the authors of the passages it relied on.' },
+  'answer.answered': { type: 'answer.answered', object: 'answer', fields: ['chargedCents'], description: 'Your library answered a question and paid the contributors of the passages it relied on.' },
   'answer.not_covered': { type: 'answer.not_covered', object: 'answer', description: 'Your library couldn’t answer a question from licensed sources; the asker wasn’t charged.' },
   'answer.failed': { type: 'answer.failed', object: 'answer', description: 'An answer was rejected or interrupted; the asker wasn’t charged.' },
 
