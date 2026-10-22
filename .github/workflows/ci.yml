@@ -42,7 +42,11 @@ jobs:
         run: npm audit --audit-level=high
       - name: Typecheck
         run: npm run typecheck -w @tracepay/api && npm run typecheck -w @tracepay/web && npm run typecheck -w @tracepay/mcp
-      - name: Unit + integration tests (real Postgres, in-memory PayPal fake)
-        run: npm run test:integration -w @tracepay/api
+      - name: Unit + integration tests with a coverage floor (real Postgres + Redis, in-memory PayPal fake)
+        run: npm run test:coverage -w @tracepay/api
+      - name: The database schema matches its migrations
+        run: npm run db:check-drift -w @tracepay/api
       - name: Build
         run: npm run build -w @tracepay/api && npm run build -w @tracepay/web
+      - name: Browser tests of the web app (every page and role, phones, accessibility, the paid-answer flow)
+        run: npm run test:e2e -w @tracepay/api

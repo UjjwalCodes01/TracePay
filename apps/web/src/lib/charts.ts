@@ -16,7 +16,7 @@ export const KEPT_COLOR = '#94a3b8';
 export const chartTheme: AgChartTheme = {
   baseTheme: 'ag-default',
   params: {
-    fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
+    fontFamily: "'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif",
     fontSize: 12,
     backgroundColor: 'transparent',
     foregroundColor: '#0f172a',

@@ -5,6 +5,10 @@ import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { Layout } from './components/Layout';
 import { RouteError } from './components/RouteError';
 import { Spinner } from './components/ui';
+// Self-hosted fonts: no request to Google, so no visitor IPs shared and no outside dependency.
+import '@fontsource-variable/inter';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
 import './index.css';
 import { SessionProvider, useSession } from './lib/session';
 import { ArtifactPage } from './pages/ArtifactPage';

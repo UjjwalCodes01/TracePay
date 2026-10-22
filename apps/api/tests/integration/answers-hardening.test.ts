@@ -172,6 +172,51 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation hardening (integ
     expect((await db().creditTopUp.findUniqueOrThrow({ where: { id: started.body.topUpId } })).status).toBe('payment_failed');
   });
 
+  it('follows a pending top-up capture until PayPal completes it — or declines it', async () => {
+    const a = app();
+    for (const outcome of ['COMPLETED', 'DECLINED'] as const) {
+      const started = await request(a).post('/api/credits/top-ups').set(buyer).send({ amountCents: 500 }).expect(201);
+      paypal.approve(started.body.orderId);
+      paypal.nextCaptureOverrides = { status: 'PENDING' };
+      expect((await request(a).post(`/api/credits/top-ups/${started.body.topUpId}/capture`).set(buyer).expect(200)).body.status).toBe('pending_payment');
+      const before = (await db().creditAccount.findUniqueOrThrow({ where: { ownerId: 'user_buyer' } })).balanceCents;
+      paypal.settlePendingCapture(started.body.orderId, outcome);
+      await checkTopUp(db(), paypal, started.body.topUpId);
+      const t = await db().creditTopUp.findUniqueOrThrow({ where: { id: started.body.topUpId } });
+      expect(t.status).toBe(outcome === 'COMPLETED' ? 'captured' : 'payment_failed');
+      expect(t.nextCheckAt).toBeNull();
+      expect((await ledgerConsistent()).balanceCents).toBe(before + (outcome === 'COMPLETED' ? 500 : 0));
+    }
+  });
+
+  it('waits out a checkout PayPal briefly can’t find, and closes it once it is truly gone', async () => {
+    const a = app();
+    const started = await request(a).post('/api/credits/top-ups').set(buyer).send({ amountCents: 500 }).expect(201);
+    paypal.expireOrder(started.body.orderId);
+    expect(await checkTopUp(db(), paypal, started.body.topUpId)).toMatch(/not found yet/);
+    await db().creditTopUp.update({ where: { id: started.body.topUpId }, data: { createdAt: new Date(Date.now() - 4 * 60 * MIN) } });
+    expect(await checkTopUp(db(), paypal, started.body.topUpId)).toMatch(/closed/);
+  });
+
+  it('never captures an approval outside the window, and backs off while PayPal is down', async () => {
+    const a = app();
+    const started = await request(a).post('/api/credits/top-ups').set(buyer).send({ amountCents: 500 }).expect(201);
+    paypal.approve(started.body.orderId);
+    await db().creditTopUp.update({ where: { id: started.body.topUpId }, data: { createdAt: new Date(Date.now() - 3 * 60 * MIN) } });
+    expect(await checkTopUp(db(), paypal, started.body.topUpId)).toMatch(/outside the capture window/);
+    expect(paypal.calls.captureOrder).toBe(0);
+
+    const realGetOrder = paypal.getOrder.bind(paypal);
+    paypal.getOrder = async () => {
+      throw new PayPalApiError(503, 'orders.get', { name: 'SERVICE_UNAVAILABLE' }, 'dbg');
+    };
+    expect(await checkTopUp(db(), paypal, started.body.topUpId)).toMatch(/will retry/);
+    const t = await db().creditTopUp.findUniqueOrThrow({ where: { id: started.body.topUpId } });
+    expect(t.status).toBe('pending_payment');
+    expect(t.nextCheckAt!.getTime()).toBeGreaterThan(Date.now());
+    paypal.getOrder = realGetOrder;
+  });
+
   it('adds up partial refunds of a top-up, once each, and claws back unpaid royalties', async () => {
     const a = app();
     const t = await topUp(a, 500);

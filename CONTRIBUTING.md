@@ -25,8 +25,9 @@ npm run dev:api & npm run dev:web
 
 ```bash
 npm run typecheck -w @tracepay/api && npm run typecheck -w @tracepay/web && npm run typecheck -w @tracepay/mcp
-npm run test:integration -w @tracepay/api      # real Postgres + Redis, fake PayPal
+npm run test:coverage -w @tracepay/api         # real Postgres + Redis, fake PayPal, coverage floor
 npm run build -w @tracepay/web
+npm run test:e2e -w @tracepay/api              # the web app in a browser (needs Chrome/Chromium/Firefox)
 ```
 
 - Money paths need tests for the failure cases (lost responses, retries, races), not just the happy path.

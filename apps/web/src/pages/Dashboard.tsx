@@ -126,7 +126,7 @@ export function DashboardPage() {
               key={s.title}
               className={clsx(
                 'rounded-xl border bg-white p-4',
-                s.done ? 'border-green-200' : i === currentStep ? 'border-ink ring-1 ring-ink' : 'border-line opacity-70',
+                s.done ? 'border-green-200' : i === currentStep ? 'border-ink ring-1 ring-ink' : 'border-line bg-slate-50',
               )}
             >
               <div className="flex items-center justify-between">

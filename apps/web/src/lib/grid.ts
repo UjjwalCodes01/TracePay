@@ -38,7 +38,7 @@ ModuleRegistry.registerModules([
 ]);
 
 export const gridTheme = themeQuartz.withParams({
-  fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
+  fontFamily: "'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif",
   fontSize: 13,
   headerFontWeight: 600,
   headerBackgroundColor: '#f8fafc',
