@@ -107,7 +107,8 @@ const MCP_CONFIG = `{
       "args": ["/path/to/TracePay/packages/mcp/src/server.ts"],
       "env": {
         "TRACEPAY_API_KEY": "tp_… (create one below)",
-        "TRACEPAY_MAX_PRICE_CENTS": "5000"
+        "TRACEPAY_MAX_PRICE_CENTS": "5000",
+        "TRACEPAY_MAX_ANSWER_CENTS": "50"
       }
     }
   }
@@ -136,7 +137,7 @@ function McpCard() {
         </Button>
       </div>
       <p className="mt-4 text-sm text-muted">
-        Then ask it something like “Find me a report on developer tools under $25.” It can search, check that every source is licensed, and prepare the checkout — then it gives
+        Then ask it something like “Ask the TracePay library how fast AI coding assistant spend is growing” — each answer pays the authors it relies on from your credit — or “Find me a report on developer tools under $25.” It can search, check that every source is licensed, and prepare the checkout — then it gives
         you a PayPal link to approve. It can never pay on its own, and it won’t start a purchase over the price cap you set (in cents).
       </p>
     </Card>

@@ -11,6 +11,7 @@
  *   TRACEPAY_API_KEY          a buyer account's API key (Developers page)       required
  *   TRACEPAY_API_URL          default https://trace-pay-umber.vercel.app/api/v1
  *   TRACEPAY_MAX_PRICE_CENTS  the most one purchase may cost, default 5000 ($50)
+ *   TRACEPAY_MAX_ANSWER_CENTS the most one answer may cost, default 50 ($0.50)
  *
  * Runs on Node 24+ directly (TypeScript type stripping): node packages/mcp/src/server.ts
  */
@@ -230,6 +231,139 @@ server.registerTool(
       const c = await api<Checkout>('GET', `/checkouts/${encodeURIComponent(checkout_id)}`);
       return result(`${c.status}: ${c.next_step}${c.approve_url ? `\nApprove link: ${c.approve_url}` : ''}`, { checkout: c });
     } catch (err) {
+      return failure(err);
+    }
+  },
+);
+
+// ---- Pay-per-citation answers -------------------------------------------------------------
+
+interface Answer {
+  id: string;
+  status: string;
+  text: string | null;
+  library: { id: string; name: string };
+  paid: Array<{ source_title: string; contributor: string; citations: number; cents_per_citation: number; amount_cents: number }>;
+  not_paid: { unsupported: number; repeated: number; over_cap: number };
+  excluded: Array<{ source_title: string; reason: string }>;
+  fee_cents: number;
+  charged_cents: number;
+  failure_reason: string | null;
+  from_fixture: boolean;
+  citations: Array<{ handle: string; source_title: string | null; paid: boolean }>;
+}
+
+/** The most one answer may cost, unless the call asks for less. */
+const MAX_ANSWER_CENTS = Number(process.env.TRACEPAY_MAX_ANSWER_CENTS || 50);
+
+server.registerTool(
+  'ask_library',
+  {
+    title: 'Ask a licensed library (pays its authors)',
+    description:
+      'Answer a question using ONLY sources licensed for AI answers. The user’s prepaid credit pays a small fee plus each author’s rate for every passage the answer verifiably relies on — never more than max_price_cents. Cite the answer’s sources when you relay it.',
+    inputSchema: {
+      question: z.string().min(8).max(500),
+      library_id: z.string().max(64).optional().describe('From list_libraries; defaults to the largest library.'),
+      max_price_cents: z.number().int().min(1).max(500).optional().describe('The most this answer may cost, in cents.'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  },
+  async ({ question, library_id, max_price_cents }) => {
+    try {
+      const libraryId = library_id ?? (await api<{ data: Array<{ id: string }> }>('GET', '/libraries')).data[0]?.id;
+      if (!libraryId) return failure(new ApiError(404, 'no_library', 'No library is licensed for AI answers yet.'));
+      const limit = Math.min(max_price_cents ?? MAX_ANSWER_CENTS, MAX_ANSWER_CENTS);
+      const a = await api<Answer>('POST', '/answers', { library_id: libraryId, question, max_price_cents: limit });
+      const sources = new Map(a.citations.filter((c) => c.source_title).map((c) => [c.handle, c.source_title]));
+      const lines = [
+        a.status === 'answered' ? (a.text ?? '') : (a.failure_reason ?? a.text ?? 'No licensed source covers this question.'),
+        '',
+        sources.size ? `Sources: ${[...sources].map(([h, t]) => `[${h}] ${t}`).join('; ')}` : '',
+        a.paid.length
+          ? `Paid ${money(a.charged_cents)}: ${a.paid.map((p) => `${p.contributor} ${money(p.amount_cents)} (${p.citations} passage${p.citations === 1 ? '' : 's'})`).join(', ')}, plus a ${money(a.fee_cents)} fee.`
+          : `Charged ${money(a.charged_cents)}.`,
+        a.excluded.length ? `Not used: ${a.excluded.map((e) => `${e.source_title} (${e.reason})`).join('; ')}` : '',
+        a.from_fixture ? '(No AI model is configured on this TracePay server: an extractive stand-in wrote this answer.)' : '',
+      ].filter(Boolean);
+      return result(lines.join('\n'), { answer: a });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'insufficient_credit') {
+        return failure(new ApiError(402, 'insufficient_credit', `${err.message} Use top_up_credits to get a PayPal link for the user.`));
+      }
+      return failure(err);
+    }
+  },
+);
+
+server.registerTool(
+  'list_libraries',
+  {
+    title: 'Libraries that answer questions',
+    description: 'Publishers whose licensed libraries can answer questions, with how many sources are licensed for AI.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  async () => {
+    try {
+      const libs = await api<{ data: Array<{ id: string; name: string; sources_licensed_for_ai: number }> }>('GET', '/libraries');
+      return result(libs.data.map((l) => `- ${l.name} (id: ${l.id}) — ${l.sources_licensed_for_ai} sources licensed for AI`).join('\n') || 'No libraries yet.', { libraries: libs.data });
+    } catch (err) {
+      return failure(err);
+    }
+  },
+);
+
+server.registerTool(
+  'credit_balance',
+  {
+    title: 'Answer credit',
+    description: 'The user’s prepaid credit for answers, and recent charges.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  async () => {
+    try {
+      const c = await api<{ balance_cents: number; available_cents: number; entries: Array<{ kind: string; amount_cents: number }> }>('GET', '/credits');
+      return result(`Available: ${money(c.available_cents)} (balance ${money(c.balance_cents)}).`, { credits: c });
+    } catch (err) {
+      return failure(err);
+    }
+  },
+);
+
+server.registerTool(
+  'top_up_credits',
+  {
+    title: 'Buy answer credit with PayPal',
+    description: 'Creates a PayPal checkout for answer credit and returns a link. YOU CANNOT PAY: show the link to the user, then call complete_top_up once they have approved.',
+    inputSchema: { amount_cents: z.number().int().min(100).max(10_000).describe('e.g. 500 for $5.00') },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  },
+  async ({ amount_cents }) => {
+    try {
+      const t = await api<{ id: string; approve_url: string | null }>('POST', '/credit_top_ups', { amount_cents });
+      return result(`Ask the user to approve ${money(amount_cents)} at PayPal (sandbox):\n${t.approve_url}\n\nThen call complete_top_up with top_up_id "${t.id}".`, { top_up: t });
+    } catch (err) {
+      return failure(err);
+    }
+  },
+);
+
+server.registerTool(
+  'complete_top_up',
+  {
+    title: 'Complete a credit top-up the user approved',
+    description: 'After the user approved the PayPal payment: TracePay captures and verifies it, then adds the credit. Safe to call again.',
+    inputSchema: { top_up_id: z.string().min(1).max(64) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ top_up_id }) => {
+    try {
+      const t = await api<{ status: string; amount_cents: number }>('POST', `/credit_top_ups/${encodeURIComponent(top_up_id)}/capture`, {});
+      return result(t.status === 'captured' ? `Added ${money(t.amount_cents)} of answer credit.` : `Top-up is ${t.status}.`, { top_up: t });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'invalid_state') return failure(new ApiError(409, 'not_approved', 'The user hasn’t approved the payment at PayPal yet.'));
       return failure(err);
     }
   },

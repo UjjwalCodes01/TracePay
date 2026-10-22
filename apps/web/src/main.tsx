@@ -45,6 +45,8 @@ const router = createBrowserRouter([
       { path: 'reports/:id/provenance', lazy: async () => ({ Component: (await import('./pages/Provenance')).ProvenancePage }) },
       { path: 'reports/:id/receipt', element: <ReceiptPage /> },
       { path: 'settlements', lazy: async () => ({ Component: (await import('./pages/Settlements')).SettlementsPage }) },
+      { path: 'royalties', lazy: async () => ({ Component: (await import('./pages/Royalties')).RoyaltiesPage }) },
+      { path: 'ask', lazy: async () => ({ Component: (await import('./pages/Ask')).AskPage }) },
       { path: 'assistant', lazy: async () => ({ Component: (await import('./pages/Shopper')).ShopperPage }) },
       { path: 'store', element: <StorePage /> },
       { path: 'store/:id', element: <StoreItemPage /> },

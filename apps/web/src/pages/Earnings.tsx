@@ -97,6 +97,8 @@ export function EarningsPage() {
         )}
       </Card>
 
+      <AnswerEarnings />
+
       <Card title="My licenses" className="mt-6">
         <ul className="divide-y divide-line text-sm">
           {licenses.map((l) => {
@@ -114,5 +116,52 @@ export function EarningsPage() {
         </ul>
       </Card>
     </>
+  );
+}
+
+interface AnswerEarningsData {
+  paidCents: number;
+  owedCents: number;
+  citations: number;
+  credits: Array<{ id: string; createdAt: string; library: string; assetTitle: string; citations: number; centsPerCitation: number; amountCents: number; status: 'accrued' | 'in_payout' | 'paid'; payoutStatus: string | null }>;
+}
+
+const CREDIT_TEXT: Record<AnswerEarningsData['credits'][number]['status'], { text: string; tone: 'pass' | 'info' | 'neutral' }> = {
+  accrued: { text: 'Earned — paid in the next payout', tone: 'neutral' },
+  in_payout: { text: 'On its way via PayPal', tone: 'info' },
+  paid: { text: 'Paid', tone: 'pass' },
+};
+
+/** Pay-per-citation: what AI answers that relied on your work have earned you. */
+function AnswerEarnings() {
+  const q = useQuery({ queryKey: ['answer-earnings'], queryFn: () => api<AnswerEarningsData>('/contributor/answer-earnings') });
+  if (!q.data) return null;
+  const d = q.data;
+  return (
+    <Card title="From AI answers — paid per cited passage" className="mt-6">
+      <div className="mb-4 grid grid-cols-3 gap-3">
+        <Stat label="Paid to you" value={formatMoney(d.paidCents)} tone="pass" />
+        <Stat label="Owed" value={formatMoney(d.owedCents)} />
+        <Stat label="Passages cited" value={d.citations} />
+      </div>
+      {d.credits.length === 0 ? (
+        <Empty>No AI answer has cited your work yet. Allow AI answers in your license terms to start earning per citation.</Empty>
+      ) : (
+        <ul className="divide-y divide-line text-sm">
+          {d.credits.slice(0, 15).map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span>
+                <span className="font-medium">{c.assetTitle}</span>
+                <span className="text-muted"> · {c.citations} passage{c.citations === 1 ? '' : 's'} × {formatMoney(c.centsPerCitation)} · {c.library}</span>
+              </span>
+              <span className="flex items-center gap-2">
+                <Badge tone={CREDIT_TEXT[c.status].tone}>{CREDIT_TEXT[c.status].text}</Badge>
+                <span className="w-14 text-right font-medium tabular-nums">{formatMoney(c.amountCents)}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

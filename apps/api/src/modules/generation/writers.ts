@@ -189,7 +189,13 @@ export class FixtureAnswerWriter implements AnswerWriter {
   readonly name = 'fixture';
 
   async answer(input: AnswerInput): Promise<AnswerOutput> {
-    const picks = input.passages.slice(0, 3);
+    // The best passage of each source in turn, so an answer draws on (and pays) several authors.
+    const bySource = new Map<string, AnswerInput['passages']>();
+    for (const p of input.passages) bySource.set(p.sourceTitle, [...(bySource.get(p.sourceTitle) ?? []), p]);
+    const picks: AnswerInput['passages'] = [];
+    for (let round = 0; picks.length < Math.min(4, input.passages.length); round++) {
+      for (const list of bySource.values()) if (list[round] && picks.length < 4) picks.push(list[round]!);
+    }
     if (picks.length === 0) return { covered: false, text: 'No licensed source covers this question.', model: 'fixture/extractive-v1', fromFixture: true };
     return {
       covered: true,

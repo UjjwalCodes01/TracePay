@@ -36,6 +36,16 @@ export function describeEvent(eventType: string, payload: Record<string, unknown
       return { text: 'A draft was rejected because it referenced a source it didn’t actually use.', tone: 'bad' };
     case 'artifact.generated':
       return { text: 'A new report was created and put up for sale.', tone: 'good' };
+    case 'answer.answered':
+      return { text: `An AI answer from your library paid its authors (${money(payload.chargedCents) ?? ''} charged).`.replace(' ()', ''), tone: 'good' };
+    case 'answer.not_covered':
+      return { text: 'A question wasn’t covered by your licensed sources, so it was free.', tone: 'neutral' };
+    case 'answer.failed':
+      return { text: 'An answer couldn’t be completed; the asker wasn’t charged.', tone: 'neutral' };
+    case 'royalties.payout_created':
+      return { text: `Answer royalties of ${money(payload.totalCents) ?? ''} were sent to PayPal.`, tone: 'good' };
+    case 'royalties.payout_settled':
+      return { text: 'PayPal finished an answer-royalties payout.', tone: 'good' };
     case 'sale.captured':
       return { text: `A buyer paid ${money(payload.capturedCents) ?? ''} with PayPal.`.replace('  ', ' '), tone: 'good' };
     case 'sale.capture_pending':

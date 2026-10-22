@@ -10,6 +10,9 @@ reports on TracePay **for a buyer** — through the Platform API, with the buyer
 | `start_checkout` | Creates a PayPal checkout and returns the **approve link for the buyer** |
 | `complete_checkout` | After the buyer approved at PayPal: capture, verify, unlock |
 | `checkout_status` | Where a checkout stands |
+| `ask_library` | **Pay-per-citation:** answers from sources licensed for AI only; the user's credit pays each author for the passages the answer verifiably used, never more than `TRACEPAY_MAX_ANSWER_CENTS` |
+| `list_libraries` · `credit_balance` | Libraries that answer questions; the user's answer credit |
+| `top_up_credits` · `complete_top_up` | Buy answer credit with PayPal: returns the approve link for the user |
 
 **The agent can never pay.** PayPal asks the buyer to approve every payment; the agent only
 completes a checkout the buyer already approved. `start_checkout` also refuses anything over
@@ -30,7 +33,8 @@ longer permit a sale.
       "args": ["/path/to/TracePay/packages/mcp/src/server.ts"],
       "env": {
         "TRACEPAY_API_KEY": "tp_…",
-        "TRACEPAY_MAX_PRICE_CENTS": "5000"
+        "TRACEPAY_MAX_PRICE_CENTS": "5000",
+        "TRACEPAY_MAX_ANSWER_CENTS": "50"
       }
     }
   }
@@ -40,4 +44,4 @@ longer permit a sale.
 `TRACEPAY_API_URL` defaults to the hosted demo (`https://trace-pay-umber.vercel.app/api/v1`);
 point it at `http://localhost:4000/api/v1` for a local API.
 
-Then ask: *"Find me a report on developer tools and AI coding assistants under $25."*
+Then ask: *"Find me a report on developer tools and AI coding assistants under $25."* — or *"Ask the TracePay library how fast AI coding assistant spend is growing."*

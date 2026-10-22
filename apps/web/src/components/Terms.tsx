@@ -16,7 +16,8 @@ export type TermField =
   | 'payableOn'
   | 'territories'
   | 'validFrom'
-  | 'validUntil';
+  | 'validUntil'
+  | 'aiAnswers';
 
 export interface FieldEvidence {
   field: TermField;
@@ -54,6 +55,16 @@ export function TermsSummary({ terms, compact }: { terms: LicenseTerms; compact?
     },
     { ok: terms.rawRedistribution, text: terms.rawRedistribution ? 'Raw data may be republished' : 'Raw data can’t be republished' },
     { ok: null, text: <>Payment: <strong>{paymentLabel(terms.economics)}</strong>{terms.economics.kind !== 'none' && (terms.payableOn === 'cited_in_output' ? ', only when a report actually cites it' : ', whenever a report uses it')}</> },
+    {
+      ok: !!terms.aiAnswers?.allowed,
+      text: terms.aiAnswers?.allowed ? (
+        <>
+          AI answers may cite it: <strong>{formatMoney(terms.aiAnswers.centsPerCitation)} per cited passage</strong>
+        </>
+      ) : (
+        'AI answers can’t use it'
+      ),
+    },
     { ok: null, text: terms.territories ? `Only in: ${terms.territories.join(', ')}` : 'Anywhere in the world' },
     { ok: null, text: terms.validUntil ? `Valid from ${terms.validFrom} until ${terms.validUntil}` : `Valid from ${terms.validFrom}, no end date` },
   ];
@@ -192,6 +203,31 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
         </select>
       </EditorRow>
 
+      <EditorRow label="Can AI answers use it? (paid per cited passage)" evidence={ev('aiAnswers')}>
+        <select
+          className={field}
+          value={terms.aiAnswers?.allowed ? 'yes' : 'no'}
+          onChange={(e) => set('aiAnswers', e.target.value === 'yes' ? { allowed: true, centsPerCitation: terms.aiAnswers?.centsPerCitation || 2 } : { allowed: false, centsPerCitation: 0 })}
+        >
+          <option value="no">No</option>
+          <option value="yes">Yes, paid for every passage an answer relies on</option>
+        </select>
+        {terms.aiAnswers?.allowed && (
+          <label className="mt-2 flex items-center gap-2 text-sm">
+            <DraftInput
+              inputMode="decimal"
+              className={clsx(field, 'w-24')}
+              value={(terms.aiAnswers.centsPerCitation / 100).toFixed(2)}
+              onCommit={(text) => {
+                const cents = parseDollars(text);
+                if (cents !== null && cents <= 500) set('aiAnswers', { allowed: true, centsPerCitation: cents });
+              }}
+            />
+            per cited passage (USD)
+          </label>
+        )}
+      </EditorRow>
+
       <EditorRow label="Can the raw data be republished?" evidence={ev('rawRedistribution')}>
         <select className={field} value={terms.rawRedistribution ? 'yes' : 'no'} onChange={(e) => set('rawRedistribution', e.target.value === 'yes')}>
           <option value="no">No</option>
@@ -232,6 +268,7 @@ export const DEFAULT_TERMS = (today: string): LicenseTerms => ({
   validUntil: null,
   attributionText: null,
   economics: { kind: 'percent_of_gross', bps: 1000 },
+  aiAnswers: { allowed: true, centsPerCitation: 2 },
   payableOn: 'included_in_build',
   currency: 'USD',
 });
