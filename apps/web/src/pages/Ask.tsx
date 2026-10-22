@@ -157,13 +157,14 @@ export function AskPage() {
                 onChange={(e) => setQuestion(e.target.value)}
               />
               <div className="flex flex-wrap gap-2">
-                {SUGGESTIONS.map((s) => (
+                {SUGGESTIONS.filter((s) => s !== question.trim()).map((s) => (
                   <button key={s} type="button" onClick={() => setQuestion(s)} className="rounded-full border border-line px-3 py-1 text-left text-xs text-muted hover:border-ink hover:text-ink">
                     {s.length > 60 ? `${s.slice(0, 58)}…` : s}
                   </button>
                 ))}
               </div>
-              <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <div className="flex flex-wrap items-end gap-3">
                 <label className="text-sm">
                   <span className="mb-1 block font-medium">Most this answer may cost</span>
                   <DraftInput
@@ -181,9 +182,10 @@ export function AskPage() {
                 <Button type="submit" loading={ask.isPending} disabled={!library}>
                   <Sparkles className="size-4" aria-hidden /> Ask
                 </Button>
-                <span id="max-price-hint" className="pb-2 text-xs text-muted">
+                </div>
+                <p id="max-price-hint" className="mt-1.5 text-xs text-muted">
                   {formatMoney(MIN_PRICE_CENTS)}–{formatMoney(MAX_PRICE_CENTS)}. Checked before the AI runs: the answer is planned to fit your limit.
-                </span>
+                </p>
               </div>
               <ErrorNote error={ask.error} />
             </form>
@@ -209,14 +211,19 @@ export function AskPage() {
 
         <div className="min-w-0 space-y-6">
           {/* A successful top-up clears a stale "top up to continue" error. */}
-          <CreditCard credits={credits.data ?? null} loading={credits.isLoading} loadError={credits.error} onToppedUp={() => ask.reset()} />
+          <CreditCard credits={credits.data ?? null} loading={credits.isPending && !credits.error} loadError={credits.data ? null : credits.error} onToppedUp={() => ask.reset()} />
           <IntegrityCard />
           {history.data && history.data.answers.length > 0 && (
             <Card title="Your questions">
               <ul className="divide-y divide-line text-sm">
                 {history.data.answers.slice(0, 8).map((a) => (
                   <li key={a.id}>
-                    <button type="button" onClick={() => setOpenId(a.id)} className={clsx('flex w-full items-start justify-between gap-3 py-2 text-left', a.id === shown && 'font-medium')}>
+                    <button
+                      type="button"
+                      onClick={() => setOpenId(a.id)}
+                      aria-pressed={a.id === shown}
+                      className={clsx('flex w-full items-start justify-between gap-3 py-2 text-left', a.id === shown && 'font-medium')}
+                    >
                       <span className="min-w-0">
                         <span className="line-clamp-2">{a.question}</span>
                         <Badge tone={STATUS_BADGE[a.status]?.tone ?? 'neutral'} className="mt-1">
@@ -247,9 +254,9 @@ function AnswerCard({ answerId }: { answerId: string }) {
     refetchInterval: (query) => (query.state.data?.answer.status === 'answering' ? 2000 : false),
   });
   const [openChip, setOpenChip] = useState<number | null>(null);
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const a = q.data!.answer;
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
+  const a = q.data.answer;
   // A source keeps its colour across the text, the chips and the table.
   const order = [...new Set(a.citations.map((c) => c.assetVersionId).filter((x): x is string => !!x))];
   const color = (id: string | null) => (id ? SOURCE_COLORS[order.indexOf(id) % SOURCE_COLORS.length]! : UNKNOWN_COLOR);
@@ -266,7 +273,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
         <span className="flex flex-wrap items-center gap-2">
           <Badge tone={badge.tone}>{badge.text}</Badge>
           <span className="text-sm font-normal text-muted">{a.library.name}</span>
-          {a.model && a.model !== 'none' && <Badge tone={a.fromFixture ? 'warn' : 'ai'}>{a.fromFixture ? 'Written without AI (no model configured)' : `Gemini (${a.model})`}</Badge>}
+          {a.model && a.model !== 'none' && <Badge tone={a.fromFixture ? 'warn' : 'ai'}>{a.fromFixture ? 'Written without AI (no AI model configured)' : `Written with AI (${a.model})`}</Badge>}
         </span>
       }
     >
@@ -324,7 +331,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
                 <tr>
                   <th className="px-3 py-2 font-medium">Contributor</th>
                   <th className="hidden px-3 py-2 font-medium sm:table-cell">Source</th>
-                  <th className="px-3 py-2 text-right font-medium">Passages used</th>
+                  <th className="hidden px-3 py-2 text-right font-medium sm:table-cell">Passages used</th>
                   <th className="px-3 py-2 text-right font-medium">Amount</th>
                 </tr>
               </thead>
@@ -337,9 +344,12 @@ function AnswerCard({ answerId }: { answerId: string }) {
                         <span className="mr-2 inline-block size-2.5 rounded-sm align-middle" style={{ background: color(p.assetVersionId) }} aria-hidden />
                         {p.contributor}
                         {cited.length > 0 && <span className="block text-xs text-muted">Cited as {cited.join(', ')}</span>}
+                        <span className="block text-xs text-muted tabular-nums sm:hidden">
+                          {p.citations} × {formatMoney(p.centsPerCitation)}
+                        </span>
                       </td>
                       <td className="hidden px-3 py-2 text-muted sm:table-cell">{p.title}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
+                      <td className="hidden px-3 py-2 text-right tabular-nums sm:table-cell">
                         {p.citations} × {formatMoney(p.centsPerCitation)}
                       </td>
                       <td className="px-3 py-2 text-right font-medium tabular-nums">{formatMoney(p.amountCents)}</td>
@@ -347,15 +357,13 @@ function AnswerCard({ answerId }: { answerId: string }) {
                   );
                 })}
                 <tr className="text-muted">
-                  <td className="px-3 py-2" colSpan={3}>
-                    Library fee ({a.library.name})
-                  </td>
+                  <td className="px-3 py-2">Library fee ({a.library.name})</td>
+                  <td className="hidden sm:table-cell" colSpan={2} />
                   <td className="px-3 py-2 text-right tabular-nums">{formatMoney(a.feeCents)}</td>
                 </tr>
                 <tr className="bg-slate-50 font-semibold">
-                  <td className="px-3 py-2" colSpan={3}>
-                    Total (your limit was {formatMoney(a.maxPriceCents)})
-                  </td>
+                  <td className="px-3 py-2">Total (your limit was {formatMoney(a.maxPriceCents)})</td>
+                  <td className="hidden sm:table-cell" colSpan={2} />
                   <td className="px-3 py-2 text-right tabular-nums">{formatMoney(a.chargedCents)}</td>
                 </tr>
               </tbody>
@@ -412,8 +420,7 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
       <div className="flex flex-wrap items-center gap-2">
         <FileSignature className="size-4" aria-hidden />
         <span className="font-medium">Signed receipt</span>
-        <span className="text-muted" title="Signed with Ed25519">— who was paid and under which license terms, digitally signed so anyone can check it wasn’t changed.</span>
-        <span className="ml-auto flex items-center gap-2" aria-live="polite">
+        <span className="ml-auto flex flex-wrap items-center gap-2" aria-live="polite">
           {verify.data &&
             (verify.data.valid ? (
               <Badge tone="pass">
@@ -425,11 +432,14 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
           <Button size="sm" variant="secondary" loading={verify.isPending} onClick={() => verify.mutate()}>
             Verify
           </Button>
-          <Button size="sm" variant="ghost" onClick={download}>
+          <Button size="sm" variant="secondary" onClick={download}>
             Download
           </Button>
         </span>
       </div>
+      <p className="mt-1 text-muted" title="Signed with Ed25519">
+        Who was paid and under which license terms, digitally signed so anyone can check it wasn’t changed.
+      </p>
       {verify.error ? (
         <div className="mt-2">
           <ErrorNote error={verify.error} />
@@ -509,7 +519,7 @@ function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Cred
             {credits && credits.balanceCents < 0 ? ` · ${formatMoney(-credits.balanceCents)} owed after a refunded top-up` : ''}. A typical answer costs a few cents.
           </p>
           <fieldset className="mt-4" disabled={paying}>
-            <legend className="sr-only">Top-up amount</legend>
+            <legend className="mb-1.5 text-xs font-medium text-muted">Choose how much to add, then pay with PayPal</legend>
             <div className="flex gap-2">
               {[500, 1000, 2000].map((c) => (
                 <button
@@ -520,9 +530,12 @@ function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Cred
                     setAmount(c);
                     setNotice(null);
                   }}
-                  className={clsx('h-9 flex-1 rounded-lg border text-sm font-medium disabled:opacity-50', amount === c ? 'border-ink bg-ink text-white' : 'border-line hover:bg-slate-50')}
+                  className={clsx(
+                    'h-9 flex-1 rounded-lg border text-sm font-medium disabled:opacity-50',
+                    amount === c ? 'border-ink bg-slate-50 text-ink ring-1 ring-ink' : 'border-line text-muted hover:bg-slate-50 hover:text-ink',
+                  )}
                 >
-                  {formatMoney(c)}
+                  Add {formatMoney(c).replace(/\.00$/, '')}
                 </button>
               ))}
             </div>
@@ -613,7 +626,7 @@ function IntegrityCard() {
       {icon} Can the AI overcharge you?
     </span>
   );
-  if (q.isLoading) {
+  if (q.isPending && !q.error) {
     return (
       <Card title={title(<ShieldCheck className="size-4" aria-hidden />)}>
         <Spinner label="Running the attacks…" />
@@ -647,16 +660,19 @@ function IntegrityCard() {
           <span>Control: an honest answer is {control.caught ? 'paid correctly' : 'not paid correctly'}.</span>
         </p>
       )}
-      <ul className="mt-3 space-y-1.5 text-xs">
-        {attacks.map((t) => (
-          <li key={t.id} className="flex items-start gap-2">
-            {t.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" aria-label="Caught" /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" aria-label="Not caught" />}
-            <span>
-              {t.attack} <span className="text-muted">→ {t.expected}</span>
-            </span>
-          </li>
-        ))}
-      </ul>
+      <details className="mt-3 text-xs">
+        <summary className="cursor-pointer select-none font-medium text-muted hover:text-ink">See the {attacks.length} attacks</summary>
+        <ul className="mt-2 space-y-1.5">
+          {attacks.map((t) => (
+            <li key={t.id} className="flex items-start gap-2">
+              {t.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" aria-label="Caught" /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" aria-label="Not caught" />}
+              <span>
+                {t.attack} <span className="text-muted">→ {t.expected}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
     </Card>
   );
 }

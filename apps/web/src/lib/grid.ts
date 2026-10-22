@@ -29,7 +29,7 @@ ModuleRegistry.registerModules([
   NumberFilterModule, // agNumberColumnFilter
   DateFilterModule, // agDateColumnFilter
   QuickFilterModule, // quickFilterText (search boxes)
-  TooltipModule, // tooltipField / headerTooltip
+  TooltipModule, // tooltip / headerTooltip
   PinnedRowModule, // pinnedBottomRowData (totals)
   RowSelectionModule, // registry row selection
   CsvExportModule, // exportDataAsCsv

@@ -4,7 +4,7 @@ import { ArrowLeft, Bell, FileUp, Plus, Sparkles, Upload, Wand2 } from 'lucide-r
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { DEFAULT_TERMS, TermsEditor, TermsSummary, type Extraction } from '../components/Terms';
-import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, statusLabel } from '../components/ui';
+import { Badge, Button, buttonClass, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -88,9 +88,11 @@ export function MySourcesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-assets'] }),
   });
 
-  if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
-  const assets = q.data!.assets;
+  if (!q.data) return <Spinner />;
+  const assets = q.data.assets;
+  // One action at a time on a given license or source: no double clicks.
+  const busy = (id: string) => act.isPending && act.variables?.id === id;
   const requests = assets.flatMap((a) => latestPerPublisher(a.licenses).filter((g) => g.status === 'requested').map((g) => ({ asset: a, grant: g })));
 
   return (
@@ -99,7 +101,7 @@ export function MySourcesPage() {
         title="My sources"
         subtitle="The data and research you license to report publishers. You decide the terms; you’re paid automatically every time a report that uses your work sells."
         action={
-          <Link to="/sources/new" className="inline-flex h-10 items-center gap-2 rounded-lg bg-ink px-4 text-sm font-medium text-white hover:bg-slate-800">
+          <Link to="/sources/new" className={buttonClass()}>
             <Plus className="size-4" /> Add a source
           </Link>
         }
@@ -110,7 +112,7 @@ export function MySourcesPage() {
           <span>
             <strong>Add your PayPal email to get paid.</strong> Until you do, publishers can’t sell reports that use your sources.
           </span>
-          <Link to="/profile" className="inline-flex h-9 items-center rounded-lg bg-amber-900 px-3 font-medium text-white">
+          <Link to="/profile" className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg bg-amber-900 px-3 font-medium text-white">
             Add PayPal email
           </Link>
         </div>
@@ -128,11 +130,11 @@ export function MySourcesPage() {
                   {grant.requestMessage && <p className="text-sm text-slate-700">“{grant.requestMessage}”</p>}
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Link to={`/sources/${asset.id}/offer?to=${encodeURIComponent(grant.licensee.email)}`} className="inline-flex h-9 items-center rounded-lg bg-ink px-3 text-sm font-medium text-white">
+              <div className="flex flex-wrap gap-2">
+                <Link to={`/sources/${asset.id}/offer?to=${encodeURIComponent(grant.licensee.email)}`} className={buttonClass({ size: 'sm' })}>
                   Set your terms
                 </Link>
-                <Button size="sm" variant="secondary" onClick={() => act.mutate({ id: grant.id, action: 'decline-request' })}>
+                <Button size="sm" variant="secondary" loading={busy(grant.id)} disabled={act.isPending} onClick={() => act.mutate({ id: grant.id, action: 'decline-request' })}>
                   Decline
                 </Button>
               </div>
@@ -140,7 +142,7 @@ export function MySourcesPage() {
           ))}
         </div>
       )}
-      <ErrorNote error={act.error} />
+      <ErrorNote error={act.error ?? archive.error} />
 
       {assets.length === 0 ? (
         <Empty>
@@ -155,8 +157,8 @@ export function MySourcesPage() {
               <Card
                 key={a.id}
                 title={
-                  <span className="flex flex-wrap items-center gap-2">
-                    {a.title}
+                  <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="min-w-0 break-words">{a.title}</span>
                     <Badge>{KINDS.find((k) => k.value === a.kind)?.label ?? statusLabel(a.kind)}</Badge>
                     {a.archivedAt && <Badge tone="neutral">Hidden from marketplace</Badge>}
                     <span className="text-xs font-normal text-muted">
@@ -165,14 +167,20 @@ export function MySourcesPage() {
                   </span>
                 }
                 action={
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => archive.mutate({ id: a.id, archived: !a.archivedAt })}>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={archive.isPending && archive.variables?.id === a.id}
+                      disabled={archive.isPending}
+                      onClick={() => archive.mutate({ id: a.id, archived: !a.archivedAt })}
+                    >
                       {a.archivedAt ? 'Show in marketplace' : 'Hide from marketplace'}
                     </Button>
-                    <Link to={`/sources/${a.id}/version`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-sm hover:bg-slate-50">
+                    <Link to={`/sources/${a.id}/version`} className={buttonClass({ variant: 'secondary', size: 'sm' })}>
                       <Upload className="size-3.5" /> New version
                     </Link>
-                    <Link to={`/sources/${a.id}/offer`} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-ink px-3 text-sm font-medium text-white hover:bg-slate-800">
+                    <Link to={`/sources/${a.id}/offer`} className={buttonClass({ size: 'sm' })}>
                       Offer a license
                     </Link>
                   </div>
@@ -186,8 +194,8 @@ export function MySourcesPage() {
                     {rels.map(({ current: g, newer }) => {
                       const s = STATUS_TEXT[g.status] ?? { text: () => statusLabel(g.status), tone: 'neutral' as const };
                       return (
-                        <li key={g.id} className="grid gap-3 p-4 md:grid-cols-[1fr_1.4fr_auto] md:items-start">
-                          <div>
+                        <li key={g.id} className="grid min-w-0 grid-cols-1 gap-3 p-4 md:grid-cols-[1fr_1.4fr_auto] md:items-start">
+                          <div className="min-w-0">
                             <div className="font-medium">{g.licensee.name}</div>
                             <Badge tone={s.tone}>{s.text(g)}</Badge>
                             <div className="mt-1 text-xs text-muted">Terms version {g.version} · {timeAgo(g.updatedAt)}</div>
@@ -196,28 +204,30 @@ export function MySourcesPage() {
                                 <span className="text-muted">Newer terms (version {newer.version}):</span>
                                 <Badge tone={STATUS_TEXT[newer.status]?.tone ?? 'neutral'}>{STATUS_TEXT[newer.status]?.text(newer) ?? statusLabel(newer.status)}</Badge>
                                 {newer.status === 'offered' && (
-                                  <Button size="sm" variant="ghost" loading={act.isPending && act.variables?.id === newer.id} onClick={() => act.mutate({ id: newer.id, action: 'withdraw' })}>
+                                  <Button size="sm" variant="ghost" loading={busy(newer.id)} disabled={act.isPending} onClick={() => act.mutate({ id: newer.id, action: 'withdraw' })}>
                                     Withdraw
                                   </Button>
                                 )}
                               </div>
                             )}
                           </div>
-                          <div>{g.terms && <TermsSummary terms={g.terms} compact />}</div>
-                          <div className="flex gap-2 md:flex-col">
+                          <div className="min-w-0">{g.terms && <TermsSummary terms={g.terms} compact />}</div>
+                          <div className="flex flex-wrap gap-2 md:flex-col">
                             {g.status === 'offered' && (
-                              <Button size="sm" variant="secondary" onClick={() => act.mutate({ id: g.id, action: 'withdraw' })}>
+                              <Button size="sm" variant="secondary" loading={busy(g.id)} disabled={act.isPending} onClick={() => act.mutate({ id: g.id, action: 'withdraw' })}>
                                 Withdraw offer
                               </Button>
                             )}
                             {g.status === 'approved' && (
                               <>
-                                <Link to={`/sources/${a.id}/offer?to=${encodeURIComponent(g.licensee.email)}`} className="inline-flex h-8 items-center justify-center rounded-lg border border-line px-3 text-sm hover:bg-slate-50">
+                                <Link to={`/sources/${a.id}/offer?to=${encodeURIComponent(g.licensee.email)}`} className={buttonClass({ variant: 'secondary', size: 'sm' })}>
                                   Propose new terms
                                 </Link>
                                 <Button
                                   size="sm"
                                   variant="danger"
+                                  loading={busy(g.id)}
+                                  disabled={act.isPending}
                                   onClick={() =>
                                     confirm(`Revoke ${g.licensee.name}'s license? They won't be able to use this source in new reports. Reports already sold still pay you under the old terms.`) &&
                                     act.mutate({ id: g.id, action: 'revoke' })
@@ -250,10 +260,12 @@ export function MySourcesPage() {
   );
 }
 
-const input = 'w-full rounded-lg border border-line px-3 text-sm focus:border-ink focus:outline-none';
+const input = 'w-full min-w-0 rounded-lg border border-line px-3 text-sm focus:border-ink focus:outline-none disabled:bg-slate-50 disabled:text-muted';
 
 function readTextFile(e: ChangeEvent<HTMLInputElement>, onText: (t: string) => void, onError: (m: string) => void) {
   const file = e.target.files?.[0];
+  // Cleared at once, so choosing the same file again (say, after fixing it) still fires a change.
+  e.target.value = '';
   if (!file) return;
   if (!/\.(txt|md|markdown|csv)$/i.test(file.name)) return onError('Upload a .txt, .md or .csv file.');
   if (file.size > 400_000) return onError('That file is too large (max 400 KB of text).');
@@ -382,12 +394,17 @@ export function OfferLicensePage() {
   const [text, setText] = useState('');
   const [terms, setTerms] = useState<LicenseTerms>(DEFAULT_TERMS(today));
   const [draft, setDraft] = useState<Extraction | null>(null);
+  const [seededFrom, setSeededFrom] = useState<string | null>(null);
 
-  // Proposing new terms to an existing licensee starts from what they have today.
+  // Proposing new terms to an existing licensee starts from what they have today — once per license,
+  // so a background refresh never overwrites terms you've started editing.
   useEffect(() => {
     const current = asset?.licenses.find((g) => g.licensee.email === email && g.status === 'approved');
-    if (current?.terms && !draft) setTerms(current.terms);
-  }, [asset, email, draft]);
+    if (current?.terms && !draft && seededFrom !== current.id) {
+      setTerms(current.terms);
+      setSeededFrom(current.id);
+    }
+  }, [asset, email, draft, seededFrom]);
 
   const extract = useMutation({
     mutationFn: () => post<Extraction>('/licenses/extract', { text }),
@@ -412,8 +429,9 @@ export function OfferLicensePage() {
     },
   });
 
-  if (assets.isLoading) return <Spinner />;
-  if (!asset) return <ErrorNote error={new Error('Source not found.')} />;
+  if (assets.error) return <ErrorNote error={assets.error} />;
+  if (!assets.data) return <Spinner />;
+  if (!asset) return <ErrorNote error={new Error('Source not found. It may have been removed; go back to My sources.')} />;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -527,7 +545,7 @@ export function ProfilePage() {
   });
   if (q.isLoading || !form) return q.error ? <ErrorNote error={q.error} /> : <Spinner />;
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="max-w-xl">
       <PageHeader title="Profile" subtitle={q.data!.user.email} />
       <Card>
         {isDemo && <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">This is a shared demo profile, so it can’t be changed. Sign up for your own account to edit yours.</p>}
@@ -543,11 +561,17 @@ export function ProfilePage() {
               <span className="font-medium">Name</span>
               <input className={`${input} h-10`} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </label>
-            <label className="block space-y-1.5 text-sm">
-              <span className="font-medium">PayPal email for receiving payments</span>
-              <input className={`${input} h-10`} type="email" value={form.paypalEmail} onChange={(e) => setForm({ ...form, paypalEmail: e.target.value })} placeholder="you@example.com" />
-              <span className="text-xs text-muted">{PAYPAL_HELP[q.data!.user.role] ?? PAYPAL_HELP.contributor}</span>
-            </label>
+            {/* Only contributors are paid at this address; others see it only if they set one before. */}
+            {(q.data!.user.role === 'contributor' || q.data!.user.paypalEmail) && (
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium">PayPal email for receiving payments</span>
+                <input className={`${input} h-10`} type="email" value={form.paypalEmail} onChange={(e) => setForm({ ...form, paypalEmail: e.target.value })} placeholder="you@example.com" />
+                <span className="text-xs text-muted">{PAYPAL_HELP[q.data!.user.role] ?? PAYPAL_HELP.contributor}</span>
+              </label>
+            )}
+            {q.data!.user.role !== 'contributor' && !q.data!.user.paypalEmail && (
+              <p className="text-sm text-muted">{PAYPAL_HELP[q.data!.user.role] ?? ''}</p>
+            )}
             {payeeChanges && (
               <label className="block space-y-1.5 text-sm">
                 <span className="font-medium">Your password, to change where payments go</span>

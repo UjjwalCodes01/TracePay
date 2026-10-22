@@ -2,7 +2,7 @@ import { PayPalButtons, PayPalScriptProvider } from '@paypal/react-paypal-js';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Bot, CheckCircle2, CircleSlash, Search, ShieldCheck, ShoppingCart, Square } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner, statusLabel } from '../components/ui';
@@ -27,7 +27,7 @@ interface ShopperRun {
   policy: { budgetCents: number; maxPurchases: number };
   summary: string | null;
   createdAt: string;
-  pending: { artifactId: string; title: string; priceCents: number; currency: string; reason: string } | null;
+  pending: { artifactId: string; title: string; priceCents: number; currency: string; reason: string; payment?: 'paid' | 'processing' | null } | null;
   steps: Step[];
 }
 
@@ -130,6 +130,7 @@ export function ShopperPage() {
                     <button
                       type="button"
                       onClick={() => setRunId(r.id)}
+                      aria-pressed={r.id === current}
                       className={clsx('flex w-full items-start justify-between gap-3 py-2.5 text-left', r.id === current && 'font-medium')}
                     >
                       <span className="line-clamp-2 min-w-0">{r.goal}</span>
@@ -167,17 +168,21 @@ function RunView({ runId }: { runId: string }) {
   const q = useQuery({
     queryKey: ['shopper-run', runId],
     queryFn: () => api<{ run: ShopperRun }>(`/shopper/runs/${runId}`),
-    // Quick while it works, slow while it waits for you, not at all once it's over (or broken).
+    // Quick while it works, slow while it waits for you, not at all once it's over. A failed check
+    // (a busy or waking server) backs off and tries again rather than freezing the trace.
     refetchInterval: (query) => {
-      if (query.state.error) return false;
       const s = query.state.data?.run.status;
-      return s === 'running' ? 1000 : s === 'awaiting_approval' ? 5000 : false;
+      const base = s === 'running' ? 1000 : s === 'awaiting_approval' ? 5000 : query.state.data ? false : 5000;
+      if (base === false) return false;
+      const fails = query.state.fetchFailureCount;
+      return fails ? Math.min(30_000, base * 2 ** fails) : base;
     },
+    retry: 1,
   });
-  const refresh = () => {
+  const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: ['shopper-run', runId] });
     qc.invalidateQueries({ queryKey: ['shopper-runs'] });
-  };
+  }, [qc, runId]);
   const stop = useMutation({ mutationFn: () => post(`/shopper/runs/${runId}/cancel`), onSettled: refresh });
   // Keep the "Earlier requests" badges in step with this run.
   const status = q.data?.run.status;
@@ -185,9 +190,9 @@ function RunView({ runId }: { runId: string }) {
     if (status) qc.invalidateQueries({ queryKey: ['shopper-runs'] });
   }, [status, qc]);
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const run = q.data!.run;
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
+  const run = q.data.run;
   const busy = run.status === 'running' || run.status === 'awaiting_approval';
 
   return (
@@ -206,6 +211,7 @@ function RunView({ runId }: { runId: string }) {
         ) : undefined
       }
     >
+      {q.error && <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Couldn’t check for updates just now; trying again.</p>}
       <p className="mb-4 text-sm text-slate-700">“{run.goal}”</p>
       <ol className="space-y-2.5" aria-live="polite">
         {run.steps.map((s) => {
@@ -244,16 +250,28 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
   const { config } = useSession();
   const saleRef = useRef<string | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [processing, setProcessing] = useState(false);
+  // PayPal approved; the server is taking and checking the payment.
+  const [capturing, setCapturing] = useState(false);
   const shownRef = useRef(false);
+  // What PayPal has for this proposal (worked out by the server, since the proposal was made) —
+  // set after a reload, a lost reply or a payment PayPal finished later.
+  const paid = pending.payment === 'paid';
+  const processing = pending.payment === 'processing';
   const decide = useMutation({
     mutationFn: (approved: boolean) => post(`/shopper/runs/${runId}/decision`, { approved }),
-    onSuccess: onDone,
+    onSettled: onDone,
   });
+  // Once paid, the server carries the run on by itself as the page keeps checking it.
+  useEffect(() => {
+    if (!paid && !processing) return;
+    const t = setInterval(onDone, paid ? 2000 : 5000);
+    return () => clearInterval(t);
+  }, [paid, processing, onDone]);
+  const locked = capturing || paid || processing;
 
   return (
     <div className="mt-5 rounded-xl border-2 border-ink/80 p-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted">The assistant suggests</div>
+      <div className="text-xs font-medium text-muted">The assistant suggests</div>
       <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
         <Link to={`/store/${pending.artifactId}`} className="font-semibold hover:underline">
           {pending.title}
@@ -262,9 +280,20 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
       </div>
       <p className="mt-2 text-sm text-slate-700">{pending.reason}</p>
 
-      {processing ? (
-        <p className="mt-4 text-sm text-muted">PayPal is still processing your payment. The assistant carries on as soon as PayPal confirms it — you can come back later.</p>
-      ) : (
+      <div aria-live="polite">
+        {paid ? (
+          <p className="mt-4 flex items-start gap-2 text-sm font-medium text-pass">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden /> Payment received — the assistant is continuing.
+          </p>
+        ) : processing ? (
+          <p className="mt-4 text-sm text-muted">PayPal is still processing your payment. The assistant carries on as soon as PayPal confirms it — you can come back later.</p>
+        ) : capturing ? (
+          <div className="mt-4">
+            <Spinner label="Confirming your payment with PayPal…" />
+          </div>
+        ) : null}
+      </div>
+      {!locked && (
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
           {!config?.paypalClientId ? (
             <ErrorNote error={new Error('PayPal sandbox is not configured on the server.')} />
@@ -284,20 +313,24 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
                     // Our own message (e.g. "already owned", rate limit) — PayPal's generic onError mustn't replace it.
                     shownRef.current = true;
                     setError(e);
+                    qc.invalidateQueries({ queryKey: ['my-purchases'] });
                     throw e;
                   }
                 }}
                 onApprove={async () => {
+                  setCapturing(true);
                   try {
                     // The server captures and verifies the payment, then the assistant continues.
                     const r = await post<{ saleStatus: string }>(`/checkout/${saleRef.current}/capture`);
                     qc.invalidateQueries({ queryKey: ['artifacts'] });
-                    qc.invalidateQueries({ queryKey: ['my-purchases'] });
-                    if (r.saleStatus === 'pending_payment') setProcessing(true);
-                    else if (r.saleStatus === 'captured') decide.mutate(true);
-                    else setError(new Error('PayPal didn’t complete this payment, so nothing was charged.'));
+                    await qc.invalidateQueries({ queryKey: ['my-purchases'] });
+                    if (r.saleStatus === 'captured') decide.mutate(true);
+                    else if (r.saleStatus !== 'pending_payment') setError(new Error('PayPal didn’t complete this payment, so nothing was charged.'));
                   } catch (e) {
                     setError(e);
+                    qc.invalidateQueries({ queryKey: ['my-purchases'] });
+                  } finally {
+                    setCapturing(false);
                   }
                 }}
                 onCancel={() => setError(new Error('Payment cancelled. Nothing was charged.'))}
@@ -307,13 +340,14 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
               />
             </PayPalScriptProvider>
           )}
-          <Button variant="secondary" loading={decide.isPending && decide.variables === false} onClick={() => decide.mutate(false)}>
+          <Button variant="secondary" loading={decide.isPending && decide.variables === false} disabled={decide.isPending} onClick={() => decide.mutate(false)}>
             <CircleSlash className="size-4" /> No thanks
           </Button>
         </div>
       )}
-      {config?.sandboxBuyerHint && <p className="mt-2 text-xs text-muted">Test buyer: {config.sandboxBuyerHint}</p>}
-      <ErrorNote error={error ?? decide.error} />
+      {config?.sandboxBuyerHint && !locked && <p className="mt-2 text-xs text-muted">Test buyer: {config.sandboxBuyerHint}</p>}
+      {/* After a payment, a failed "yes" doesn't matter: the server resumes the run itself. */}
+      <ErrorNote error={error ?? (paid ? null : decide.error)} />
     </div>
   );
 }

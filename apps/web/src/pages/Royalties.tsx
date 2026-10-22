@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Send } from 'lucide-react';
-import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, Stat, statusLabel } from '../components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, Stat, statusLabel, statusTone, TechnicalDetails } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatMoney, timeAgo } from '../lib/format';
 
@@ -21,24 +21,9 @@ interface Summary {
   }>;
 }
 
-/** PayPal's payout statuses in plain words. */
-const STATUS: Record<string, { text: string; tone: 'pass' | 'warn' | 'block' | 'neutral' | 'info' }> = {
-  SUBMITTING: { text: 'Sending to PayPal', tone: 'info' },
-  SUBMIT_FAILED: { text: 'PayPal didn’t accept it — send again', tone: 'block' },
-  PENDING: { text: 'On its way', tone: 'info' },
-  PROCESSING: { text: 'On its way', tone: 'info' },
-  SUCCESS: { text: 'Paid', tone: 'pass' },
-  UNCLAIMED: { text: 'Waiting to be claimed', tone: 'warn' },
-  ONHOLD: { text: 'On hold at PayPal', tone: 'warn' },
-  FAILED: { text: 'Failed — back in the next payout', tone: 'block' },
-  RETURNED: { text: 'Returned — back in the next payout', tone: 'block' },
-  BLOCKED: { text: 'Blocked — back in the next payout', tone: 'block' },
-  DENIED: { text: 'Declined by PayPal — back in the next payout', tone: 'block' },
-  CANCELED: { text: 'Cancelled', tone: 'block' },
-  REFUNDED: { text: 'Taken back by PayPal — back in the next payout', tone: 'block' },
-  REVERSED: { text: 'Reversed — back in the next payout', tone: 'block' },
-};
-const label = (s: string) => STATUS[s] ?? { text: statusLabel(s), tone: 'neutral' as const };
+/** PayPal's payout statuses, named as on every other screen. */
+const label = (s: string) => ({ text: statusLabel(s), tone: statusTone(s) });
+const FAILED = ['FAILED', 'RETURNED', 'BLOCKED', 'DENIED', 'REFUNDED', 'REVERSED'];
 
 /**
  * Royalties from pay-per-citation answers. Each answer credits the contributors of the
@@ -52,9 +37,9 @@ export function RoyaltiesPage() {
   const send = useMutation({ mutationFn: () => post('/royalties/payouts'), onSettled: refresh });
   const act = useMutation({ mutationFn: ({ id, action }: { id: string; action: 'refresh' | 'resend' }) => post(`/royalties/payouts/${id}/${action}`), onSettled: refresh });
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const s = q.data!;
+  if (q.isPending) return <Spinner />;
+  if (!q.data) return <ErrorNote error={q.error ?? new Error('Royalties couldn’t be loaded. Try again in a moment.')} />;
+  const s = q.data;
   const owed = s.accrued.reduce((n, a) => n + a.amountCents, 0);
   const payable = s.accrued.filter((a) => a.payable);
 
@@ -68,7 +53,7 @@ export function RoyaltiesPage() {
         <Stat label="Answers sold" value={s.answers} />
         <Stat label="Paid by askers" value={formatMoney(s.revenueCents)} />
         <Stat label="Owed to contributors" value={formatMoney(owed)} />
-        <Stat label="Library fees (yours)" value={formatMoney(s.feesCents)} tone="pass" />
+        <Stat label="Library fees (yours)" value={formatMoney(s.feesCents)} tone={s.feesCents > 0 ? 'pass' : undefined} />
       </div>
 
       <Card
@@ -132,7 +117,7 @@ export function RoyaltiesPage() {
                   <span className="font-semibold tabular-nums">{formatMoney(p.totalCents)}</span>
                   <Badge tone={label(p.status).tone}>{label(p.status).text}</Badge>
                   <span className="text-muted">{timeAgo(p.createdAt)}</span>
-                  <span className="ml-auto flex gap-2">
+                  <span className="ml-auto flex flex-wrap gap-2">
                     {p.status === 'SUBMIT_FAILED' && (
                       <Button size="sm" loading={act.isPending && act.variables?.id === p.id} onClick={() => act.mutate({ id: p.id, action: 'resend' })}>
                         <Send className="size-3.5" /> Send again
@@ -156,10 +141,12 @@ export function RoyaltiesPage() {
                     </li>
                   ))}
                 </ul>
+                {p.items.some((i) => FAILED.includes(i.status)) && (
+                  <p className="mt-2 text-xs text-muted">Payments that didn’t go through are added back to what’s owed and go out with the next payout.</p>
+                )}
                 {(p.paypalBatchId || p.items.some((i) => i.transactionId)) && (
-                  <details className="mt-2 text-xs text-muted">
-                    <summary className="cursor-pointer select-none hover:text-ink">Technical details</summary>
-                    <dl className="mt-2 grid grid-cols-[9rem_1fr] gap-y-1.5">
+                  <TechnicalDetails className="text-xs text-muted">
+                    <dl className="grid grid-cols-[9rem_minmax(0,1fr)] gap-y-1.5">
                       {p.paypalBatchId && (
                         <>
                           <dt>PayPal batch ID</dt>
@@ -173,7 +160,7 @@ export function RoyaltiesPage() {
                         </div>
                       ))}
                     </dl>
-                  </details>
+                  </TechnicalDetails>
                 )}
               </div>
             ))}

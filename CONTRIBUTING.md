@@ -17,6 +17,7 @@ Node 24 (`.node-version`), Docker. Then:
 npm ci
 npm run db:up                                  # Postgres :5433, Redis :6380
 cp apps/api/.env.example apps/api/.env         # add PayPal sandbox keys
+npm run keys:generate -w @tracepay/api         # paste AUDIT_SIGNING_PRIVATE_KEY into apps/api/.env
 npm run db:deploy -w @tracepay/api && npm run db:seed -w @tracepay/api
 npm run dev:api & npm run dev:web
 ```

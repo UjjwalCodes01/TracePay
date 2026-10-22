@@ -38,6 +38,8 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
       agentPlanner: planner().name,
       vertexReady: config.vertexReady,
       demoMode: config.demoMode,
+      /** Every visitor shares the demo buyer: it may buy a report again, and its demo credit refills. */
+      demoSharedBuyer: !!config.demoSharedBuyer,
       sandboxBuyerHint: config.demoMode ? sandboxBuyerHint() : null,
     });
   });

@@ -252,14 +252,16 @@ export async function decidePurchase(db: Db, runId: string, buyerId: string, app
   const { pending, run } = await pausedRun(db, runId, buyerId, 'buyer');
   if (!('type' in pending) || pending.type !== 'purchase') throw new AgentStateError('This run is not waiting for a decision.');
   let decision: Record<string, unknown>;
+  // Only payments made since the assistant proposed this purchase count (a shared demo buyer may have bought it before).
+  const since = await proposedAt(db, runId);
   if (approved) {
     const sale = await db.sale.findFirst({
-      where: { artifactId: pending.artifactId, buyerId, status: 'captured' },
+      where: { artifactId: pending.artifactId, buyerId, status: 'captured', createdAt: { gte: since } },
       orderBy: { createdAt: 'desc' },
       include: { payment: { select: { captureId: true } } },
     });
     if (!sale) {
-      const processing = await db.sale.count({ where: { artifactId: pending.artifactId, buyerId, status: 'pending_payment', payment: { captureId: { not: null } } } });
+      const processing = await db.sale.count({ where: { artifactId: pending.artifactId, buyerId, status: 'pending_payment', createdAt: { gte: since }, payment: { captureId: { not: null } } } });
       throw new AgentStateError(
         processing ? 'PayPal is still processing this payment. The assistant continues once PayPal confirms it.' : 'The payment hasn’t been completed in PayPal yet.',
       );
@@ -278,12 +280,50 @@ export async function decidePurchase(db: Db, runId: string, buyerId: string, app
       remainingBudget: formatMoney(Math.max(0, policy.budgetCents - spentBefore - sale.amountCents)),
     };
   } else {
+    // A proposed report is never one the buyer already owned, so a payment for it means they bought it here:
+    // "No thanks" can't erase a purchase PayPal has taken (or is still taking).
+    const paid = await db.sale.count({ where: { artifactId: pending.artifactId, buyerId, createdAt: { gte: since }, OR: [{ status: 'captured' }, { status: 'pending_payment', payment: { captureId: { not: null } } }] } });
+    if (paid) throw new AgentStateError('You’ve already paid for this report, so it can’t be declined. The assistant continues once PayPal confirms the payment.');
     decision = { approved: false, purchased: false, by: 'buyer', message: 'The buyer decided not to buy this report.' };
   }
   await resume(db, runId, pending, 'propose_purchase', decision, {
     eventType: approved ? 'agent.purchase_approved' : 'agent.purchase_declined',
     payload: { artifactId: pending.artifactId, priceCents: pending.priceCents, saleId: decision.saleId ?? null, buyerId },
   });
+}
+
+/**
+ * Carries on a buyer's paused run once PayPal has taken the payment for the proposed report —
+ * however it got there (the page, a full-page PayPal return, reconciliation). True if it resumed.
+ */
+export async function resumePaidPurchase(db: Db, runId: string, buyerId: string): Promise<boolean> {
+  const run = await db.agentRun.findUnique({ where: { id: runId }, select: { publisherId: true, kind: true, status: true, pending: true } });
+  const pending = run?.pending as { type?: string; artifactId?: string } | null;
+  if (!run || run.kind !== 'buyer' || run.publisherId !== buyerId || run.status !== 'awaiting_approval' || pending?.type !== 'purchase' || !pending.artifactId) return false;
+  if (!(await db.sale.count({ where: { artifactId: pending.artifactId, buyerId, status: 'captured', createdAt: { gte: await proposedAt(db, runId) } } }))) return false;
+  try {
+    await decidePurchase(db, runId, buyerId, true);
+    return true;
+  } catch (err) {
+    if (err instanceof AgentStateError) return false; // someone else resumed it first
+    throw err;
+  }
+}
+
+/** Whether the buyer has paid for the purchase a run is waiting on, since it was proposed. */
+export async function proposalPayment(db: Db, runId: string, buyerId: string, artifactId: string): Promise<'paid' | 'processing' | null> {
+  const since = await proposedAt(db, runId);
+  const sales = await db.sale.findMany({
+    where: { artifactId, buyerId, createdAt: { gte: since }, OR: [{ status: 'captured' }, { status: 'pending_payment', payment: { captureId: { not: null } } }] },
+    select: { status: true },
+  });
+  return sales.some((s) => s.status === 'captured') ? 'paid' : sales.length ? 'processing' : null;
+}
+
+/** When the run asked for the decision it is waiting on. */
+async function proposedAt(db: Db, runId: string): Promise<Date> {
+  const step = await db.agentStep.findFirst({ where: { runId, kind: 'approval_request' }, orderBy: { ordinal: 'desc' }, select: { createdAt: true } });
+  return step?.createdAt ?? new Date(0);
 }
 
 async function pausedRun(db: Db, runId: string, ownerId: string, kind: 'publisher' | 'buyer') {

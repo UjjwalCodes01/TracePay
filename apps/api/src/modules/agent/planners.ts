@@ -1,3 +1,4 @@
+import { formatMoney } from '@tracepay/shared';
 import type { Content, Part } from '@google/genai';
 import { aiReady } from '../../config/env';
 import { AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS, vertex } from '../../integrations/ai/vertex';
@@ -128,40 +129,42 @@ export class RuleBasedPlanner implements AgentPlanner {
       for (const c of m.calls) if (c.name === 'propose_replacement') replacements[c.args.blockedAssetVersionId as string] = c.args.replacementAssetVersionId as string;
     }
 
-    if (!last) return call('run_license_preflight', { assetVersionIds: selection }, 'Checking the selected sources against the intended commercial use.');
+    if (!last) return call('run_license_preflight', { assetVersionIds: selection }, 'Running the license check on the chosen sources.');
     const r = last.response;
     if (r.error) return done(`Stopped: ${String(r.message)}`);
 
     switch (last.name) {
       case 'run_license_preflight': {
-        if (r.verdict === 'pass') return call('generate_report', { buildId: r.buildId }, 'Preflight passed. Generating the report from approved sources only.');
-        const failed = (r.failedRules as Array<{ assetVersionId: string | null }>).find((f) => f.assetVersionId && !(f.assetVersionId in replacements));
-        if (!failed?.assetVersionId) return done('Preflight is blocked by build-level terms that a source replacement cannot fix.');
-        return call('find_compatible_replacement', { blockedAssetVersionId: failed.assetVersionId }, `Preflight blocked ${failed.assetVersionId}. Looking for a compatible replacement.`);
+        if (r.verdict === 'pass') return call('generate_report', { buildId: r.buildId }, 'License check passed. Writing the report from licensed sources only.');
+        const failed = (r.failedRules as Array<{ assetVersionId: string | null; message: string }>).find((f) => f.assetVersionId && !(f.assetVersionId in replacements));
+        if (!failed?.assetVersionId) return done('The license check failed on terms that swapping a source can’t fix (for example, the price doesn’t cover what contributors are owed).');
+        // Rule messages name their source in quotes.
+        const name = /^"([^"]+)"/.exec(failed.message)?.[1];
+        return call('find_compatible_replacement', { blockedAssetVersionId: failed.assetVersionId }, `The license check stopped ${name ? `“${name}”` : 'a source'}: ${failed.message.replace(/^"[^"]+"\s*/, 'it ')} Looking for a licensed source that can replace it.`);
       }
       case 'find_compatible_replacement': {
         const best = (r.candidates as Array<{ assetVersionId: string; title: string; compatible: boolean; economics?: string }>).find((c) => c.compatible);
-        if (!best) return done(`No compatible replacement exists for ${String(r.blockedAssetVersionId)}. The publisher needs to license another source.`);
+        if (!best) return done(`No licensed source can replace ${r.blockedTitle ? `“${String(r.blockedTitle)}”` : 'the blocked source'}. License another source, or change how the report will be used.`);
         return call('propose_replacement', {
           blockedAssetVersionId: r.blockedAssetVersionId,
           replacementAssetVersionId: best.assetVersionId,
-          reason: `"${best.title}" permits commercial derivative reports (${best.economics ?? 'see terms'}).`,
+          reason: `“${best.title}” may be used in reports that are sold (${best.economics ?? 'see its terms'}).`,
         });
       }
       case 'propose_replacement': {
-        if (r.approved !== true) return done('The publisher declined the replacement, so the build stops here.');
+        if (r.approved !== true) return done('You declined the replacement, so the report wasn’t written.');
         const next = selection.map((id) => replacements[id] ?? id);
-        return call('run_license_preflight', { assetVersionIds: next }, 'Replacement approved. Re-running preflight.');
+        return call('run_license_preflight', { assetVersionIds: next }, 'Replacement approved. Running the license check again.');
       }
       case 'generate_report':
-        if (!r.artifactId) return done('Generation was rejected by the citation validator; no artifact was listed.');
+        if (!r.artifactId) return done('The draft was rejected because its citations didn’t check out, so nothing was put on sale.');
         return call('validate_provenance', { artifactId: r.artifactId });
       case 'validate_provenance': {
         const artifactId = [...results].reverse().find((x) => x.name === 'generate_report')?.response.artifactId;
         return call('prepare_sale', { artifactId });
       }
       case 'prepare_sale':
-        return done(`The report is listed at $${((r.priceCents as number) / 100).toFixed(2)} with verified provenance and ready for PayPal checkout.`);
+        return done(`The report is listed at ${formatMoney(r.priceCents as number)}, every claim traced to its source, and ready for PayPal checkout.`);
       default:
         return done('Finished.');
     }

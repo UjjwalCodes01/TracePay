@@ -1,8 +1,9 @@
 import type { LicenseTerms } from '@tracepay/shared';
-import { describeTerritories, formatBps, formatDay, formatMoney } from '@tracepay/shared';
+import { describeTerritories, formatDay, formatMoney } from '@tracepay/shared';
 import clsx from 'clsx';
 import { Check, Quote, X } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { economicsLabel } from '../lib/format';
 import { DraftInput, parseDollars } from './DraftInput';
 import { Badge } from './ui';
 
@@ -34,11 +35,8 @@ export interface Extraction {
   model: string;
 }
 
-export function paymentLabel(e: LicenseTerms['economics']): string {
-  if (e.kind === 'percent_of_gross') return `${formatBps(e.bps)} of each sale`;
-  if (e.kind === 'fixed_per_sale') return `${formatMoney(e.amountCents)} per report sold`;
-  return 'No payment';
-}
+/** The same words for a contributor's payment everywhere in the app. */
+export const paymentLabel = (e: LicenseTerms['economics']): string => economicsLabel(e);
 
 /** A license in plain sentences, for people who will never read JSON. */
 export function TermsSummary({ terms, compact }: { terms: LicenseTerms; compact?: boolean }) {
@@ -79,7 +77,7 @@ export function TermsSummary({ terms, compact }: { terms: LicenseTerms; compact?
           ) : (
             <X className="mt-0.5 size-4 shrink-0 text-block" />
           )}
-          <span>{r.text}</span>
+          <span className="min-w-0">{r.text}</span>
         </li>
       ))}
     </ul>
@@ -113,7 +111,7 @@ const field = 'h-10 w-full rounded-lg border border-line px-3 text-sm focus:bord
 // Top-level so React keeps the same component identity between renders (inputs keep focus).
 function EditorRow({ label, evidence, children }: { label: string; evidence: FieldEvidence | undefined; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-line p-4">
+    <div className="min-w-0 rounded-xl border border-line p-4">
       <div className="mb-2 text-sm font-medium">{label}</div>
       {children}
       <Evidence e={evidence} />
@@ -127,7 +125,7 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
   const ev = (f: TermField) => evidence.find((e) => e.field === f);
 
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
       <EditorRow label="Can it be used in reports that are sold?" evidence={ev('commercialUse')}>
         <select
           className={field}
@@ -154,9 +152,9 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
       </EditorRow>
 
       <EditorRow label="How are you paid?" evidence={ev('economics')}>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <select
-            className={field}
+            className={clsx(field, 'min-w-0 flex-1 basis-48')}
             value={terms.economics.kind}
             onChange={(e) =>
               set(

@@ -45,6 +45,8 @@ export interface AppDeps {
     vertexReady: boolean;
     /** Enables the X-Demo-User role switcher and demo reset. Off in production. */
     demoMode: boolean;
+    /** Many visitors share the demo buyer (only with demoMode): its credit refills and it may buy again. */
+    demoSharedBuyer?: boolean;
     cookieSecure: boolean;
     /** Requests per minute per IP across the API. */
     rateLimitPerMinute: number;

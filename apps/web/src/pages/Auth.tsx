@@ -1,27 +1,40 @@
 import { useMutation } from '@tanstack/react-query';
 import { ShoppingBag, Users, Wallet, Wand2 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router';
 import { Button, ErrorNote, useDocumentTitle } from '../components/ui';
 import { useSession } from '../lib/session';
 
+/** Where to go after signing in: the page that sent you here (a shared receipt, a PayPal return…), else your start page. */
+function useReturnTo(): string {
+  const from = (useLocation().state as { from?: unknown } | null)?.from;
+  // Only paths inside the app: never "//elsewhere.example".
+  return typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/login') ? from : '/';
+}
+
 function AuthShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   const { user } = useSession();
+  const returnTo = useReturnTo();
   // Already signed in (or acting as a demo role): nothing to do here.
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={returnTo} replace />;
   return (
     <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">
       <div className="w-full max-w-md">
-        <div className="mb-8 flex items-center justify-center gap-2">
-          <img src="/favicon.svg" alt="" className="size-8" />
-          <span className="text-xl font-semibold tracking-tight">TracePay</span>
+        <div className="mb-8 text-center">
+          <div className="flex items-center justify-center gap-2">
+            <img src="/favicon.svg" alt="" className="size-8" />
+            <span className="text-xl font-semibold tracking-tight">TracePay</span>
+          </div>
+          <p className="mx-auto mt-3 max-w-sm text-sm text-muted">
+            Sell AI-made reports and answers you’re allowed to sell, take payment with PayPal, and pay every contributor their share automatically.
+          </p>
         </div>
+        <DemoShortcut />
         <div className="rounded-2xl border border-line bg-white p-8 shadow-sm">
           <h1 className="text-xl font-semibold">{title}</h1>
           <p className="mt-1 text-sm text-muted">{subtitle}</p>
           <div className="mt-6">{children}</div>
         </div>
-        <DemoShortcut />
       </div>
     </div>
   );
@@ -29,8 +42,18 @@ function AuthShell({ title, subtitle, children }: { title: string; subtitle: str
 
 /** In demo mode, judges can skip accounts entirely and explore as a seeded role. */
 function DemoShortcut() {
-  const { config, users, switchUser } = useSession();
+  const { config, users, switchUser, loading } = useSession();
   const navigate = useNavigate();
+  const returnTo = useReturnTo();
+  // The server may be waking up: hold the demo's place rather than hiding the main way in.
+  if (!config && loading) {
+    return (
+      <div className="mb-6 rounded-2xl border border-line bg-white p-5" role="status">
+        <div className="text-sm font-medium">Starting the demo…</div>
+        <p className="mt-1 text-xs text-muted">The demo server sleeps when nobody is using it; waking it can take up to a minute.</p>
+      </div>
+    );
+  }
   if (!config?.demoMode || users.length === 0) return null;
   const pick = (role: string) => users.find((u) => u.role === role);
   const roles = [
@@ -39,11 +62,11 @@ function DemoShortcut() {
     { role: 'contributor', label: 'Contributor', icon: Wallet },
   ];
   return (
-    <div className="mt-6 rounded-2xl border border-dashed border-line bg-white p-5">
-      <div className="flex items-center gap-2 text-sm font-medium">
-        <Users className="size-4" /> Just exploring? Try the demo
+    <div className="mb-6 rounded-2xl border-2 border-ink bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 font-semibold">
+        <Users className="size-4" /> Try the demo — no account needed
       </div>
-      <p className="mt-1 text-xs text-muted">No account needed. Uses made-up data and PayPal test mode.</p>
+      <p className="mt-1 text-xs text-muted">Pick a role. Made-up data and PayPal test money; switch roles any time from the top bar.</p>
       <div className="mt-3 grid grid-cols-3 gap-2">
         {roles.map(({ role, label, icon: Icon }) => {
           const u = pick(role);
@@ -55,7 +78,7 @@ function DemoShortcut() {
                 if (!u) return;
                 // Wait for the new role to load, or the app still sees "signed out" and bounces back here.
                 await switchUser(u.id);
-                navigate('/');
+                navigate(returnTo);
               }}
               className="flex flex-col items-center gap-1.5 rounded-xl border border-line px-2 py-3 text-xs font-medium hover:border-ink disabled:opacity-40"
             >
@@ -75,9 +98,10 @@ export function SignInPage() {
   useDocumentTitle('Sign in');
   const { signIn } = useSession();
   const navigate = useNavigate();
+  const returnTo = useReturnTo();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const m = useMutation({ mutationFn: () => signIn(email, password), onSuccess: () => navigate('/') });
+  const m = useMutation({ mutationFn: () => signIn(email, password), onSuccess: () => navigate(returnTo) });
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -85,7 +109,7 @@ export function SignInPage() {
   };
 
   return (
-    <AuthShell title="Sign in" subtitle="Welcome back to TracePay.">
+    <AuthShell title="Sign in" subtitle="With your TracePay account.">
       <form onSubmit={submit} className="space-y-4">
         <label className="block space-y-1.5 text-sm">
           <span className="font-medium">Email</span>

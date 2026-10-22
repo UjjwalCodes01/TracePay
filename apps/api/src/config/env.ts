@@ -26,6 +26,12 @@ export const serverEnv = () =>
       PORT: z.coerce.number().int().default(4000),
       /** The hackathon role switcher. Never enable for real users. */
       DEMO_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+      /**
+       * With DEMO_MODE: many visitors share the demo buyer (a hosted demo), so its demo credit
+       * tops itself back up and it may buy a report again. Demo credit still only pays the demo's
+       * own contributors.
+       */
+      DEMO_SHARED_BUYER: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
       RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
       AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(20),
       WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),

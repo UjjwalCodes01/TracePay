@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AlertCircle, ArrowRight, CheckCircle2, Circle, Clock, FileText, HandCoins, MessageSquareQuote, PartyPopper, ShieldCheck, ShoppingCart, Users, Wallet } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { NeedsAttention } from '../components/NeedsAttention';
 import { ErrorNote, Hash, Spinner, useDocumentTitle } from '../components/ui';
 import { describeEvent, type ActivityTone } from '../lib/activity';
@@ -40,7 +40,7 @@ function nextStep(d: Dashboard, openIssues: number): NextStep {
   if (d.artifacts === 0)
     return { tone: 'action', title: 'Create your first report', text: 'Pick the sources you’ve licensed and describe the report. TracePay checks you’re allowed to sell it before anything is written.', cta: { to: '/studio', label: 'Create a report' } };
   if (d.verifiedSales === 0)
-    return { tone: 'waiting', title: 'Your report is ready to sell', text: 'It’s listed in the store. Tip: switch the demo role to “Buyer” at the top to try buying it with PayPal.', cta: d.latestArtifact ? { to: `/reports/${d.latestArtifact.id}`, label: 'View the report' } : undefined };
+    return { tone: 'waiting', title: 'Your report is ready to sell', text: 'It’s listed in the store, waiting for a buyer to pay with PayPal.', cta: d.latestArtifact ? { to: `/reports/${d.latestArtifact.id}`, label: 'View the report' } : undefined };
   return { tone: 'done', title: 'All caught up', text: 'Every contributor has been paid for every sale.', cta: { to: '/studio', label: 'Create another report' } };
 }
 
@@ -59,9 +59,10 @@ const TONE_ICON: Record<ActivityTone, ReactNode> = {
 };
 
 export function DashboardPage() {
-  const { user } = useSession();
+  const { user, authMethod, config } = useSession();
   const [technical, setTechnical] = useState(false);
-  const q = useQuery({ queryKey: ['dashboard'], queryFn: () => api<Dashboard>('/dashboard'), refetchInterval: 5000 });
+  // Every 15 s is plenty for a summary page (and lets an idle database sleep sooner).
+  const q = useQuery({ queryKey: ['dashboard'], queryFn: () => api<Dashboard>('/dashboard'), refetchInterval: 15_000 });
   const chain = useQuery({ queryKey: ['chain'], queryFn: () => api<{ ok: boolean; length?: number; brokenAtSeq?: number }>('/audit/verify-chain'), enabled: technical });
   const isPublisher = user?.role === 'publisher' || user?.role === 'admin';
   // Shared with the "Needs attention" panel (same query key: fetched once).
@@ -74,9 +75,10 @@ export function DashboardPage() {
   });
   useDocumentTitle('Home');
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const d = q.data!;
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
+  const d = q.data;
+  const demo = authMethod === 'demo' && !!config?.demoMode;
   const next = nextStep(d, recon.data?.open_issues ?? 0);
   const style = NEXT_STYLE[next.tone];
 
@@ -91,7 +93,7 @@ export function DashboardPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Welcome back{user ? `, ${user.name}` : ''}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{demo ? `You’re the demo publisher, ${user?.name ?? ''}` : `Welcome back${user ? `, ${user.name}` : ''}`}</h1>
         <p className="mt-1 text-muted">
           TracePay makes sure you’re allowed to sell the reports you create, collects payment with PayPal, and pays everyone whose work you used.
         </p>
@@ -113,6 +115,8 @@ export function DashboardPage() {
           </Link>
         )}
       </section>
+
+      {demo && <GuidedTour d={d} />}
 
       {/* Reconciliation with PayPal: anything that needs a person */}
       {isPublisher && <NeedsAttention />}
@@ -247,5 +251,67 @@ function Tech({ label, value }: { label: string; value: number }) {
       <dt className="text-muted">{label}</dt>
       <dd className="font-medium tabular-nums">{value}</dd>
     </div>
+  );
+}
+
+/**
+ * The demo's 3-minute path, one click per step — including the role switches, so nobody has to
+ * find the role menu to see the buyer's and contributor's side.
+ */
+function GuidedTour({ d }: { d: Dashboard }) {
+  const { users, switchUser } = useSession();
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState<number | null>(null);
+  const buyer = users.find((u) => u.role === 'buyer');
+  const contributor = users.find((u) => u.id === 'user_okafor') ?? users.find((u) => u.role === 'contributor');
+  const report = d.latestArtifact;
+  const steps: Array<{ title: string; text: string; done: boolean; go: (() => Promise<void> | void) | null; hint?: string }> = [
+    { title: 'Create a report', text: 'The license check stops a source that isn’t licensed for sale; the AI assistant finds a replacement and asks you.', done: d.artifacts > 0, go: () => navigate('/studio') },
+    {
+      title: 'Buy it with PayPal, as the buyer',
+      text: 'Pay in the PayPal sandbox; the server verifies the payment before the report unlocks.',
+      done: d.verifiedSales > 0,
+      go: report && buyer ? async () => { await switchUser(buyer.id); navigate(`/store/${report.id}`); } : null,
+      hint: 'Create a report first.',
+    },
+    { title: 'Pay the contributors', text: 'Approve the payment split; one PayPal Payouts batch pays everyone their share.', done: d.paidOutCents > 0, go: d.verifiedSales > 0 ? () => navigate('/settlements') : null, hint: 'Sell the report first.' },
+    { title: 'Check the signed receipt', text: 'One record from sources to license check to PayPal payment to payouts, with a signature anyone can verify.', done: false, go: report ? () => navigate(`/reports/${report.id}/receipt`) : null, hint: 'Create a report first.' },
+    { title: 'Ask a question that pays its sources', text: 'An AI answer pays each contributor for the passages it really used — and the live red team shows it can’t be gamed.', done: false, go: buyer ? async () => { await switchUser(buyer.id); navigate('/ask'); } : null },
+    { title: 'See a contributor’s earnings', text: 'What each sale and each AI answer paid them, and why.', done: false, go: contributor ? async () => { await switchUser(contributor.id); navigate('/earnings'); } : null },
+  ];
+  return (
+    <section aria-labelledby="tour" className="rounded-2xl border border-line bg-white p-5">
+      <h2 id="tour" className="font-semibold">Guided demo · about 3 minutes</h2>
+      <p className="mt-0.5 text-sm text-muted">Each step opens the right screen and switches role for you. PayPal sandbox only: no real money moves.</p>
+      <ol className="mt-4 grid gap-2 sm:grid-cols-2">
+        {steps.map((s, i) => (
+          <li key={s.title}>
+            <button
+              type="button"
+              disabled={!s.go || busy !== null}
+              title={!s.go ? s.hint : undefined}
+              onClick={async () => {
+                if (!s.go) return;
+                setBusy(i);
+                try {
+                  await s.go();
+                } finally {
+                  setBusy(null);
+                }
+              }}
+              className="flex h-full w-full items-start gap-3 rounded-xl border border-line p-3 text-left hover:border-ink disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-line"
+            >
+              <span className={clsx('mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold', s.done ? 'bg-verified-soft text-verified' : 'bg-slate-100 text-slate-700')}>
+                {s.done ? <CheckCircle2 className="size-4" aria-label="Done" /> : i + 1}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{s.title}</span>
+                <span className="block text-xs text-muted">{!s.go && s.hint ? s.hint : s.text}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }

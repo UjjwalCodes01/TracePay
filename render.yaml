@@ -14,11 +14,14 @@ services:
     plan: free
     # --include=dev: NODE_ENV=production (below) also applies to the build, and would
     # make npm skip the build tools (prisma, tsup, typescript).
-    buildCommand: npm ci --include=dev && npm run build -w @tracepay/api
-    # Apply migrations (over DATABASE_URL_UNPOOLED), then start. Seed the demo data once, from your
+    # Migrations (over DATABASE_URL_UNPOOLED) run once per deploy, in the build: a failing
+    # migration fails the build and the running version keeps serving, and waking a sleeping
+    # free instance doesn't pay for the Prisma CLI. Migrations are additive, so the version
+    # still serving keeps working against the new schema. Seed the demo data once, from your
     # machine or the Render shell: npm run db:seed -w @tracepay/api (it refuses to run
     # once real accounts exist).
-    startCommand: npm run db:deploy -w @tracepay/api && npm run start -w @tracepay/api
+    buildCommand: npm ci --include=dev && npm run build -w @tracepay/api && npm run db:deploy -w @tracepay/api
+    startCommand: npm run start -w @tracepay/api
     # Liveness only. /api/ready also queries the database; pointing Render's frequent
     # health checks at it would keep Neon's compute from ever suspending.
     healthCheckPath: /api/health
@@ -27,6 +30,10 @@ services:
         value: production # also makes session cookies Secure
       # Hackathon judging: keep the demo role switcher on. Set to "false" for real users.
       - key: DEMO_MODE
+        value: "true"
+      # Every judge shares the demo buyer: it may buy a report again and its demo credit
+      # refills, so each visitor can try PayPal checkout and AI answers. Remove for real users.
+      - key: DEMO_SHARED_BUYER
         value: "true"
       - key: RATE_LIMIT_PER_MINUTE
         value: "300"

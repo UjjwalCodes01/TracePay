@@ -53,7 +53,8 @@ export function ReportBody({ artifact }: { artifact: ArtifactFull }) {
                     <Badge tone="ai">{open.handle}</Badge>
                     <span className="font-medium">{sourceTitle.get(c.assetVersionId)}</span>
                   </div>
-                  {passageByChunk.get(c.chunkId) ?? 'Loading passage…'}
+                  {passageByChunk.get(c.chunkId) ??
+                    (graph.isError ? <span className="text-block">Couldn’t load this passage right now. Try again in a moment.</span> : graph.isPending ? 'Loading passage…' : 'This passage isn’t available.')}
                 </blockquote>
               );
             })()}

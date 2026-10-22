@@ -66,7 +66,9 @@ export function DevelopersPage() {
         />
         <div className="space-y-6">
           <McpCard />
-          <ApiKeysCard />
+          <div id="api-keys" className="scroll-mt-4">
+            <ApiKeysCard />
+          </div>
         </div>
       </>
     );
@@ -100,17 +102,19 @@ export function DevelopersPage() {
 
 // ---- AI agents (MCP) ---------------------------------------------------------------------
 
-const MCP_CONFIG = `{
+const REPO_URL = 'https://github.com/UjjwalCodes01/TracePay';
+
+const mcpConfig = (libraryId: string | null) => `{
   "mcpServers": {
     "tracepay": {
       "command": "node",
-      "args": ["/path/to/TracePay/packages/mcp/src/server.ts"],
+      "args": ["<folder you cloned into>/TracePay/packages/mcp/src/server.ts"],
       "env": {
-        "TRACEPAY_API_KEY": "tp_… (create one below)",
+        "TRACEPAY_API_KEY": "tp_… (your key)",
         "TRACEPAY_MAX_PRICE_CENTS": "5000",
         "TRACEPAY_MAX_ANSWER_CENTS": "50",
-        "TRACEPAY_MAX_SESSION_CENTS": "200",
-        "TRACEPAY_LIBRARY_ID": "user_atlas"
+        "TRACEPAY_MAX_SESSION_CENTS": "200"${libraryId ? `,
+        "TRACEPAY_LIBRARY_ID": "${libraryId}"` : ''}
       }
     }
   }
@@ -118,28 +122,56 @@ const MCP_CONFIG = `{
 
 function McpCard() {
   const [copied, setCopied] = useState(false);
+  // Which library answers your agent's questions: shown by name, set by its id.
+  const libraries = useQuery({ queryKey: ['libraries'], queryFn: () => api<{ libraries: Array<{ id: string; name: string }> }>('/libraries') });
+  const list = libraries.data?.libraries ?? [];
+  const config = mcpConfig(list[0]?.id ?? null);
   return (
     <Card title={<span className="inline-flex items-center gap-2"><Bot className="size-4" /> Use TracePay from your AI assistant</span>}>
       <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-sm text-slate-700">
-        <li>Create an API key below.</li>
         <li>
-          Download TracePay (needs Node 24) and run <code className="rounded bg-slate-100 px-1">npm install</code>.
+          <a href="#api-keys" className="font-medium text-brand hover:underline">Create an API key</a> (further down this page) and keep it somewhere safe: it’s shown once.
         </li>
-        <li>Add this to your assistant’s MCP settings (in Claude Desktop: Settings → Developer → Edit config), with your key and the real path:</li>
+        <li>
+          Download TracePay from{' '}
+          <a href={REPO_URL} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">GitHub</a>{' '}
+          (<code className="rounded bg-slate-100 px-1">git clone {REPO_URL}</code>, needs Node 24) and run <code className="rounded bg-slate-100 px-1">npm install</code> in that folder.
+        </li>
+        <li>Add this to your assistant’s MCP settings (in Claude Desktop: Settings → Developer → Edit config). Put in your key, and the folder you cloned TracePay into:</li>
       </ol>
       <div className="relative">
-        <pre className="overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">{MCP_CONFIG}</pre>
+        <pre className="overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">{config}</pre>
         <Button
           size="sm"
           variant="secondary"
           className="absolute right-2 top-2"
-          onClick={() => void navigator.clipboard?.writeText(MCP_CONFIG).then(() => setCopied(true))}
+          onClick={() => void navigator.clipboard?.writeText(config).then(() => setCopied(true), () => undefined)}
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} {copied ? 'Copied' : 'Copy'}
         </Button>
       </div>
+      {list.length > 0 && (
+        <p className="mt-3 text-sm text-muted">
+          <code className="rounded bg-slate-100 px-1">TRACEPAY_LIBRARY_ID</code> picks the library that answers questions:{' '}
+          {list.length === 1 ? (
+            <>
+              <strong className="text-ink">{list[0]!.name}</strong> (its id is filled in above).
+            </>
+          ) : (
+            <>
+              {list.map((l, i) => (
+                <span key={l.id}>
+                  {i > 0 && (i === list.length - 1 ? ' or ' : ', ')}
+                  <strong className="text-ink">{l.name}</strong> (<code className="mono">{l.id}</code>)
+                </span>
+              ))}
+              .
+            </>
+          )}
+        </p>
+      )}
       <p className="mt-4 text-sm text-muted">
-        Then ask it something like “Ask the TracePay library how fast AI coding assistant spend is growing” — each answer pays the authors it relies on from your credit — or “Find me a report on developer tools under $25.” It can search, check that every source is licensed, and prepare the checkout — then it gives
+        Then ask it something like “Ask the TracePay library how fast AI coding assistant spend is growing” — each answer pays the contributors it relies on from your credit — or “Find me a report on developer tools under $25.” It can search, check that every source is licensed, and prepare the checkout — then it gives
         you a PayPal link to approve. It can never pay on its own, and it won’t start a purchase over the price cap you set (in cents).
       </p>
     </Card>
@@ -320,10 +352,9 @@ const GROUPS: { label: string; prefix: string }[] = [
   { label: 'Reports', prefix: 'report.' },
   { label: 'Builds', prefix: 'build.' },
   { label: 'Licenses', prefix: 'license.' },
-  { label: 'Publisher Agent', prefix: 'agent_run.' },
+  { label: 'Research assistant', prefix: 'agent_run.' },
   { label: 'Checks with PayPal', prefix: 'reconciliation.' },
   { label: 'Answers (pay-per-citation)', prefix: 'answer.' },
-  { label: 'Answer royalties', prefix: 'royalties.' },
   { label: 'Answer royalties', prefix: 'royalty_payout.' },
 ];
 
@@ -365,7 +396,7 @@ function WebhooksCard() {
         !adding && <Empty>No endpoints yet. Add one to start receiving events.</Empty>
       ) : (
         <ul className="space-y-3">
-          {endpoints.data!.data.map((e) => (
+          {(endpoints.data?.data ?? []).map((e) => (
             <EndpointRow key={e.id} endpoint={e} onSecret={(value) => setSecret({ label: 'New signing secret', value })} onChange={refresh} />
           ))}
         </ul>
@@ -460,7 +491,7 @@ function EndpointRow({ endpoint: e, onSecret, onChange }: { endpoint: Endpoint; 
   return (
     <li className="rounded-lg border border-line">
       <div className="flex flex-wrap items-center gap-3 p-4">
-        <button type="button" className="text-muted" onClick={() => setOpen(!open)} aria-label={open ? 'Hide deliveries' : 'Show deliveries'}>
+        <button type="button" className="text-muted" onClick={() => setOpen(!open)} aria-expanded={open} aria-label={open ? 'Hide deliveries' : 'Show deliveries'}>
           {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
         </button>
         <div className="min-w-0 flex-1">
@@ -504,7 +535,7 @@ function EndpointRow({ endpoint: e, onSecret, onChange }: { endpoint: Endpoint; 
             <p className="text-sm text-muted">Nothing sent yet.</p>
           ) : (
             <ul className="divide-y divide-line text-sm">
-              {deliveries.data!.data.map((d) => (
+              {(deliveries.data?.data ?? []).map((d) => (
                 <li key={d.id} className="flex flex-wrap items-center gap-3 py-2">
                   <Badge tone={DELIVERY_TONE[d.status]}>{DELIVERY_LABEL[d.status]}</Badge>
                   <span className="mono text-xs">{d.event_type}</span>

@@ -130,6 +130,8 @@ model Asset {
 
   versions AssetVersion[]
   licenses LicenseGrant[]
+
+  @@index([ownerId])
 }
 
 /// An immutable, fingerprinted snapshot of an asset's content.
@@ -217,6 +219,7 @@ model LicenseGrant {
 
   @@unique([assetId, licenseeId, version])
   @@index([assetId, licenseeId, status])
+  @@index([licenseeId, status])
 }
 
 // ---------------------------------------------------------------- agent & builds
@@ -261,6 +264,8 @@ model AgentRun {
 
   steps  AgentStep[]
   builds BuildJob[]
+
+  @@index([publisherId, kind, status])
 }
 
 enum AgentStepKind {
@@ -314,6 +319,8 @@ model BuildJob {
   sources  BuildSource[]
   events   SourceEvent[]
   artifact Artifact?
+
+  @@index([publisherId, status])
 }
 
 /// A source pinned into a build, with the license terms frozen at that moment.
@@ -331,6 +338,7 @@ model BuildSource {
   payeeEmail     String?
 
   @@unique([buildJobId, assetVersionId])
+  @@index([assetVersionId])
 }
 
 enum SourceEventType {
@@ -406,24 +414,29 @@ enum SaleStatus {
 }
 
 model Sale {
-  id            String     @id @default(cuid())
-  artifactId    String
-  artifact      Artifact   @relation(fields: [artifactId], references: [id])
-  buyerId       String?
-  buyer         User?      @relation(fields: [buyerId], references: [id])
-  amountCents   Int
-  currency      String     @default("USD")
-  status        SaleStatus @default(pending_payment)
+  id             String     @id @default(cuid())
+  artifactId     String
+  artifact       Artifact   @relation(fields: [artifactId], references: [id])
+  buyerId        String?
+  buyer          User?      @relation(fields: [buyerId], references: [id])
+  amountCents    Int
+  currency       String     @default("USD")
+  status         SaleStatus @default(pending_payment)
   /// Rights re-checked when the buyer started checkout (licenses can be revoked or expire after a build).
-  rightsCheck   Json?
+  rightsCheck    Json?
   /// The license terms in force at the moment of sale; the settlement applies exactly these.
-  termsSnapshot Json?
-  snapshotHash  String?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  termsSnapshot  Json?
+  snapshotHash   String?
+  /// The buyer already owned the report and deliberately bought it again (a hosted demo's shared buyer).
+  repeatPurchase Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   payment    PayPalPayment?
   settlement SettlementRun?
+
+  @@index([artifactId, buyerId, status])
+  @@index([buyerId, status])
 }
 
 model PayPalPayment {
@@ -514,6 +527,8 @@ model SettlementLine {
   note           String?
 
   payoutItem PayoutItem?
+
+  @@index([runId])
 }
 
 model PayoutBatch {
@@ -560,6 +575,8 @@ model PayoutItem {
   /// Earlier attempts for this line (batch, receiver, final status), newest last.
   attempts         Json           @default("[]")
   updatedAt        DateTime       @updatedAt
+
+  @@index([batchId])
 }
 
 // ---------------------------------------------------------------- audit
@@ -582,6 +599,7 @@ model AuditEvent {
   @@index([artifactId])
   @@index([entityType, entityId])
   @@index([tenantId, seq])
+  @@index([eventType, seq])
 }
 
 // ---------------------------------------------------------------- platform API: outbound webhooks

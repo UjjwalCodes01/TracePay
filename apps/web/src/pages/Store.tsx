@@ -4,7 +4,7 @@ import { CheckCircle2, Clock, GitBranch, Lock, ScrollText, ShieldCheck, Sparkles
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ReportBody } from '../components/ReportBody';
-import { Badge, Card, Empty, ErrorNote, Hash, PageHeader, Spinner } from '../components/ui';
+import { Badge, buttonClass, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, TechnicalDetails } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -13,9 +13,11 @@ import type { ArtifactFull, ArtifactPreview } from '../lib/types';
 export function StorePage() {
   const { user } = useSession();
   const q = useQuery({ queryKey: ['artifacts'], queryFn: () => api<{ artifacts: ArtifactPreview[] }>('/artifacts') });
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const items = q.data!.artifacts;
+  const purchases = useQuery({ queryKey: ['my-purchases'], queryFn: () => api<{ sales: BuyerSale[] }>('/sales'), enabled: user?.role === 'buyer' });
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
+  const items = q.data.artifacts;
+  const owned = new Set((purchases.data?.sales ?? []).filter((s) => s.status === 'captured').map((s) => s.artifact.id));
 
   return (
     <>
@@ -24,7 +26,7 @@ export function StorePage() {
         subtitle="Research reports built only from licensed sources. Part of every purchase is paid to the people whose work it uses."
         action={
           user?.role === 'buyer' ? (
-            <Link to="/assistant" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-medium hover:bg-slate-50">
+            <Link to="/assistant" className={buttonClass({ variant: 'secondary' })}>
               <Sparkles className="size-4" /> Ask the shopping assistant
             </Link>
           ) : undefined
@@ -40,12 +42,12 @@ export function StorePage() {
                 <h2 className="font-semibold group-hover:underline">{a.title}</h2>
                 <span className="font-semibold tabular-nums">{formatMoney(a.priceCents)}</span>
               </div>
-              {a.summary && <p className="mt-2 line-clamp-3 text-sm text-muted">{a.summary}</p>}
+              {a.summary && <p className="mt-2 line-clamp-3 text-sm text-muted">{withoutTitle(a.summary, a.title)}</p>}
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <Badge tone="pass">
-                  <ShieldCheck className="size-3" /> Licensed sources
+                  <ShieldCheck className="size-3" /> {a.sources.length} licensed {a.sources.length === 1 ? 'source' : 'sources'}
                 </Badge>
-                <Badge>{a.sources.length} licensed {a.sources.length === 1 ? 'source' : 'sources'}</Badge>
+                {owned.has(a.id) && <Badge tone="info">Yours</Badge>}
               </div>
             </Link>
           ))}
@@ -54,6 +56,14 @@ export function StorePage() {
       {user?.role === 'buyer' && <MyPurchases />}
     </>
   );
+}
+
+/** Summaries often open with the report's own title ("Title: 5 findings…"); the card already shows it. */
+function withoutTitle(summary: string, title: string): string {
+  const prefix = `${title}:`;
+  if (!summary.startsWith(prefix)) return summary;
+  const rest = summary.slice(prefix.length).trim();
+  return rest ? rest.replace(/^./, (c) => c.toUpperCase()) : summary;
 }
 
 interface BuyerSale {
@@ -92,13 +102,18 @@ function MyPurchases() {
                 </Link>
                 <div className="text-xs text-muted">Bought {timeAgo(s.createdAt)}</div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span className="tabular-nums">{formatMoney(s.amountCents)}</span>
                 <Badge tone={state.tone}>{state.label}</Badge>
                 {s.status === 'captured' && (
-                  <Link to={`/reports/${s.artifact.id}/receipt`} className="text-brand hover:underline">
-                    Receipt
-                  </Link>
+                  <>
+                    <Link to={`/store/${s.artifact.id}`} className="text-brand hover:underline">
+                      Open
+                    </Link>
+                    <Link to={`/reports/${s.artifact.id}/receipt`} className="text-brand hover:underline">
+                      Receipt
+                    </Link>
+                  </>
                 )}
               </div>
             </li>
@@ -123,12 +138,15 @@ interface CaptureResult {
 export function StoreItemPage() {
   const { id } = useParams();
   const qc = useQueryClient();
-  const { config } = useSession();
+  const { config, user } = useSession();
   const saleRef = useRef<string | null>(null);
+  // PayPal approved; the server is taking and checking the payment. The buttons stay hidden meanwhile.
+  const [capturing, setCapturing] = useState(false);
   // Set when we already showed why checkout couldn't start, so PayPal's generic onError doesn't replace it.
   const shownRef = useRef(false);
   const [result, setResult] = useState<CaptureResult | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [buyAgain, setBuyAgain] = useState(false);
   // PayPal accepted the payment but is still holding it: keep checking until the report unlocks.
   const waiting = result?.saleStatus === 'pending_payment' || result?.saleStatus === 'exception';
   const q = useQuery({
@@ -147,10 +165,13 @@ export function StoreItemPage() {
     refresh();
   };
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const { artifact, full } = q.data!;
-  const showPay = !full && !waiting && result?.saleStatus !== 'captured';
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
+  const { artifact, full } = q.data;
+  const isBuyer = user?.role === 'buyer';
+  // A hosted demo's shared buyer may already own it (an earlier visitor bought it): let this visitor try the checkout too.
+  const canBuyAgain = full && isBuyer && !!config?.demoSharedBuyer;
+  const showPay = (!full || buyAgain) && !waiting && !capturing && result?.saleStatus !== 'captured';
 
   return (
     <>
@@ -189,15 +210,33 @@ export function StoreItemPage() {
             <div className="text-3xl font-semibold tabular-nums">{formatMoney(artifact.priceCents)}</div>
             {full && (
               <div className="mt-4 flex flex-wrap gap-2">
-                <Link to={`/reports/${artifact.id}/receipt`} className="inline-flex h-9 items-center gap-2 rounded-lg bg-ink px-3 text-sm font-medium text-white hover:bg-slate-800">
+                <Link to={`/reports/${artifact.id}/receipt`} className={buttonClass()}>
                   <ScrollText className="size-4" /> Receipt
                 </Link>
-                <Link to={`/reports/${artifact.id}/provenance`} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium hover:bg-slate-50">
+                <Link to={`/reports/${artifact.id}/provenance`} className={buttonClass({ variant: 'secondary' })}>
                   <GitBranch className="size-4" /> Where it came from
                 </Link>
               </div>
             )}
-            {showPay && (
+            {canBuyAgain && !buyAgain && !capturing && result?.saleStatus !== 'captured' && (
+              <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-muted">
+                Everyone trying this demo shares one buyer account, so this report may already be “yours”.{' '}
+                <button type="button" onClick={() => setBuyAgain(true)} className="font-medium text-brand hover:underline">
+                  Buy it again to try the PayPal checkout
+                </button>
+              </div>
+            )}
+            {capturing && (
+              <div role="status" aria-live="polite" className="mt-3">
+                <Spinner label="Confirming with PayPal…" />
+              </div>
+            )}
+            {showPay && !isBuyer && (
+              <p className="mt-2 text-sm text-muted">
+                Only buyer accounts can buy reports. In the demo, switch the role to <strong>Buyer</strong> at the top to try the PayPal checkout.
+              </p>
+            )}
+            {showPay && isBuyer && (
               <>
                 <p className="mb-4 mt-1 text-sm text-muted">Pay with a PayPal sandbox (test) account or a test card. No real money moves.</p>
                 {!config?.paypalClientId ? (
@@ -220,6 +259,7 @@ export function StoreItemPage() {
                         }
                       }}
                       onApprove={async () => {
+                        setCapturing(true);
                         try {
                           // The server captures and verifies; returning from the popup proves nothing on its own.
                           const r = await post<CaptureResult>(`/checkout/${saleRef.current}/capture`);
@@ -228,6 +268,8 @@ export function StoreItemPage() {
                           refresh();
                         } catch (e) {
                           fail(e);
+                        } finally {
+                          setCapturing(false);
                         }
                       }}
                       onCancel={() => setError(new Error('Checkout cancelled. No payment was taken.'))}
@@ -248,7 +290,7 @@ export function StoreItemPage() {
             <ErrorNote error={error} />
           </Card>
 
-          {result && result.saleStatus !== 'payment_failed' && <PaymentResult result={result} unlocked={full} />}
+          <div aria-live="polite">{result && result.saleStatus !== 'payment_failed' && <PaymentResult result={result} unlocked={full} />}</div>
         </div>
       </div>
     </>
@@ -275,15 +317,14 @@ function PaymentResult({ result, unlocked }: { result: CaptureResult; unlocked: 
         <dt className="text-muted">Amount</dt>
         <dd>{result.capturedCents !== null ? formatMoney(result.capturedCents) : 'Not confirmed yet'}</dd>
       </dl>
-      <details className="mt-3 rounded-lg border border-line bg-slate-50 text-sm">
-        <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted hover:text-ink">Technical details</summary>
-        <dl className="grid grid-cols-[8rem_minmax(0,1fr)] gap-y-1.5 border-t border-line px-3 py-3 text-xs">
+      <TechnicalDetails className="mt-3">
+        <dl className="grid grid-cols-[8rem_minmax(0,1fr)] gap-y-1.5 text-xs">
           <dt className="text-muted">PayPal order</dt>
           <dd><Hash value={result.orderId} n={20} /></dd>
           <dt className="text-muted">PayPal payment ID</dt>
           <dd><Hash value={result.captureId} n={20} /></dd>
         </dl>
-      </details>
+      </TechnicalDetails>
       <p className="mt-3 text-xs text-muted">
         TracePay confirmed this payment with PayPal itself and checked the amount before unlocking the report and working out what each contributor is owed.
       </p>

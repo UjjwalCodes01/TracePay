@@ -7,7 +7,8 @@ import { ownedBuild, publisherScope } from '../http/access';
 import { HttpError } from '../http/errors';
 import { quotas } from '../http/limits';
 
-import { AgentStateError, cancelRun, createRunWithinCap, createShopperRunWithinCap, decidePurchase, decideReplacement, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
+import { AgentStateError, cancelRun, createRunWithinCap, createShopperRunWithinCap, decidePurchase, decideReplacement, proposalPayment, resumePaidPurchase, runAgent, TooManyRunsError } from '../modules/agent/agent.service';
+import { isDemoBuyer } from '../modules/answers/credits.service';
 import { explainPreflight } from '../modules/builds/explain';
 
 const MAX_ACTIVE_RUNS = 2;
@@ -105,7 +106,9 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
     const body = ShopperBody.parse(req.body);
     let run;
     try {
-      run = await createShopperRunWithinCap(db, planner(), { buyerId: currentUser(req).id, goal: body.goal, policy: { budgetCents: body.budgetCents, maxPurchases: body.maxPurchases } }, MAX_ACTIVE_RUNS);
+      const buyerId = currentUser(req).id;
+      const policy = { budgetCents: body.budgetCents, maxPurchases: body.maxPurchases, ...(config.demoSharedBuyer && isDemoBuyer(buyerId) ? { repeatPurchases: true } : {}) };
+      run = await createShopperRunWithinCap(db, planner(), { buyerId, goal: body.goal, policy }, MAX_ACTIVE_RUNS);
     } catch (err) {
       if (err instanceof TooManyRunsError) throw new HttpError(429, 'You already have two shopping runs going. Finish or stop one of them first.');
       throw err;
@@ -125,6 +128,8 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
   });
 
   r.get('/shopper/runs/:id', requireRole('buyer'), async (req, res) => {
+    // Paid but not yet told (a lost reply, a full-page PayPal return, a capture PayPal finished later): carry on.
+    if (await resumePaidPurchase(db, param(req, 'id'), currentUser(req).id)) runInBackground(param(req, 'id'));
     const run = await db.agentRun.findFirst({
       where: { id: param(req, 'id'), kind: 'buyer', publisherId: currentUser(req).id },
       select: { id: true, goal: true, status: true, model: true, policy: true, pending: true, summary: true, createdAt: true, finishedAt: true, steps: { orderBy: { ordinal: 'asc' } } },
@@ -132,7 +137,10 @@ export function agentRoutes({ db, planner, writer, config }: AppDeps) {
     if (!run) throw new HttpError(404, 'Run not found.');
     // Only the proposal, never the loop's bookkeeping (call ids, partial results).
     const p = run.pending as { type?: string; artifactId?: string; title?: string; priceCents?: number; currency?: string; reason?: string } | null;
-    const pending = p?.type === 'purchase' ? { artifactId: p.artifactId, title: p.title, priceCents: p.priceCents, currency: p.currency, reason: p.reason } : null;
+    const pending =
+      p?.type === 'purchase' && p.artifactId
+        ? { artifactId: p.artifactId, title: p.title, priceCents: p.priceCents, currency: p.currency, reason: p.reason, payment: await proposalPayment(db, run.id, currentUser(req).id, p.artifactId) }
+        : null;
     res.json({ run: { ...run, pending } });
   });
 

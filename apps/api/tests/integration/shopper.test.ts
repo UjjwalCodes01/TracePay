@@ -85,6 +85,20 @@ describe.runIf(process.env.TEST_DATABASE_URL)('Shopping Assistant (integration)'
     expect(events.map((e) => e.eventType)).toEqual(expect.arrayContaining(['agent.started', 'agent.awaiting_approval', 'agent.purchase_approved', 'agent.completed']));
   });
 
+  it('carries on by itself once the buyer has paid, and a paid purchase can’t be declined', async () => {
+    const start = await request(app).post('/api/shopper/runs').set(buyer).send({ goal, budgetCents: 2500 }).expect(202);
+    await until(start.body.runId, 'awaiting_approval');
+    const order = await request(app).post('/api/checkout/orders').set(buyer).send({ artifactId }).expect(201);
+    paypal.approve(order.body.orderId);
+    await request(app).post(`/api/checkout/${order.body.saleId}/capture`).set(buyer).expect(200);
+    // The page's "No thanks" lost the race against the payment: refused, not recorded as a decline.
+    const declined = await request(app).post(`/api/shopper/runs/${start.body.runId}/decision`).set(buyer).send({ approved: false }).expect(409);
+    expect(declined.body.error).toMatch(/already paid/);
+    // No decision call at all (the reply was lost): reading the run resumes it.
+    const done = await until(start.body.runId, 'completed');
+    expect(done.summary).toMatch(/you bought the report for \$20\.00/);
+  });
+
   it('never proposes a report over the budget', async () => {
     const start = await request(app).post('/api/shopper/runs').set(buyer).send({ goal, budgetCents: 500 }).expect(202);
     const done = await until(start.body.runId, 'completed');

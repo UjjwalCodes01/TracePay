@@ -7,9 +7,9 @@ import { describeFormula } from '@tracepay/shared';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { RoyaltyLedger } from '../components/RoyaltyLedger';
-import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, StatusBadge, statusLabel } from '../components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, StatusBadge, statusLabel, TechnicalDetails } from '../components/ui';
 import { api, post } from '../lib/api';
-import { formatMoney } from '../lib/format';
+import { formatDateTime, formatMoney } from '../lib/format';
 import { gridTheme } from '../lib/grid';
 import { useSession } from '../lib/session';
 import type { SettlementLine, SettlementRun } from '../lib/types';
@@ -50,16 +50,18 @@ function calculationTooltip(row: Row): string {
   return parts.join(' · ');
 }
 
-const Details = ({ children }: { children: ReactNode }) => (
-  <details className="mt-3 text-xs text-muted">
-    <summary className="cursor-pointer select-none hover:text-ink">Technical details</summary>
-    <div className="mt-2">{children}</div>
-  </details>
-);
+const Details = ({ children }: { children: ReactNode }) => <TechnicalDetails className="text-xs text-muted">{children}</TechnicalDetails>;
+
+const DEFAULT_COL: ColDef<Row> = { resizable: true, sortable: false };
+
+/** Long names and explanations wrap onto more lines instead of being cut off. */
+const WRAP = { wrapText: true, autoHeight: true, cellStyle: { lineHeight: '1.35', paddingTop: '10px', paddingBottom: '10px', wordBreak: 'normal' } } as const;
 
 export function SettlementsPage() {
   const qc = useQueryClient();
-  const { users } = useSession();
+  const { users, user } = useSession();
+  // Only publishers can act on their sales; admins look but can't approve or pay (the API refuses).
+  const canAct = user?.role === 'publisher';
   const q = useQuery({ queryKey: ['settlements'], queryFn: () => api<{ settlements: NamedRun[] }>('/settlements'), refetchInterval: 8000 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const names = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u.name])), [users]);
@@ -80,12 +82,14 @@ export function SettlementsPage() {
       {
         headerName: 'Recipient',
         field: 'recipientName',
-        flex: 1.6,
-        minWidth: 200,
+        flex: 1.4,
+        minWidth: 170,
+        ...WRAP,
+        tooltip: (p) => (p.data?.isTotal ? undefined : p.value),
         cellRenderer: (p: ICellRendererParams<Row>) =>
           p.data?.isTotal ? <strong>Total</strong> : (
-            <span className="flex items-center gap-2">
-              {p.value}
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <span>{p.value}</span>
               {p.data?.kind === 'publisher_residual' && <Badge tone="info">You</Badge>}
             </span>
           ),
@@ -93,47 +97,66 @@ export function SettlementsPage() {
       {
         headerName: 'For',
         colId: 'source',
-        flex: 1.4,
-        minWidth: 180,
+        flex: 1.2,
+        minWidth: 150,
+        ...WRAP,
         valueGetter: (p) => (p.data?.isTotal ? '' : p.data?.kind === 'publisher_residual' ? 'The rest of the sale' : (p.data?.sourceTitle ?? 'A licensed source')),
+        tooltip: (p) => p.value || undefined,
       },
       {
         headerName: 'How it was worked out',
         colId: 'share',
-        flex: 1.8,
-        minWidth: 220,
+        flex: 1.6,
+        minWidth: 190,
+        ...WRAP,
         valueGetter: (p) => (p.data ? describeFormula(p.data.formula) : ''),
-        tooltipValueGetter: (p) => (p.data ? calculationTooltip(p.data) : undefined),
+        tooltip: (p) => (p.data ? calculationTooltip(p.data) : undefined),
       },
+      {
+        // One column for how and whether it's paid: "Kept by you", "Not owed", or the PayPal payout's status.
+        headerName: 'Payout',
+        colId: 'payout',
+        width: 175,
+        valueGetter: (p) => p.data?.payoutItem?.status ?? null,
+        cellRenderer: (p: ICellRendererParams<Row>) => {
+          if (!p.data || p.data.isTotal) return null;
+          if (p.value) return <StatusBadge status={p.value} />;
+          if (p.data.kind === 'publisher_residual') return <Badge>Kept by you</Badge>;
+          return p.data.payable ? <Badge tone="warn">Not sent yet</Badge> : <Badge>Not owed</Badge>;
+        },
+        tooltip: (p) => (p.data && !p.data.isTotal && p.data.payeeEmail ? `PayPal email: ${p.data.payeeEmail}` : undefined),
+      },
+      // Pinned, so the money is always on screen however narrow the window.
       {
         headerName: 'Amount',
         field: 'amountCents',
-        width: 120,
+        width: 110,
+        pinned: 'right',
         type: 'rightAligned',
         valueFormatter: (p) => formatMoney(p.value ?? 0),
         cellClass: (p) => clsx('tabular-nums', p.data?.isTotal && 'font-semibold'),
       },
-      {
-        headerName: 'How it’s paid',
-        field: 'payable',
-        width: 140,
-        cellRenderer: (p: ICellRendererParams<Row>) =>
-          p.data?.isTotal ? null : p.value ? <Badge tone="pass">PayPal payout</Badge> : <Badge>{p.data?.kind === 'publisher_residual' ? 'Kept by you' : 'Not owed'}</Badge>,
-      },
-      {
-        headerName: 'Payout status',
-        width: 170,
-        valueGetter: (p) => p.data?.payoutItem?.status ?? null,
-        cellRenderer: (p: ICellRendererParams<Row>) => (p.value ? <StatusBadge status={p.value} /> : p.data?.isTotal ? null : <span className="text-muted">—</span>),
-      },
-      { headerName: 'PayPal email', field: 'payeeEmail', flex: 1.2, minWidth: 180, valueFormatter: (p) => (p.data?.isTotal ? '' : (p.value ?? '—')) },
-      { headerName: 'PayPal payout ID', width: 170, valueGetter: (p) => p.data?.payoutItem?.paypalItemId ?? '', cellClass: 'mono' },
     ],
     [],
   );
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
+  const rows = useMemo<Row[]>(
+    () => (run ? run.lines.map((l) => ({ ...l, recipientName: l.recipientName ?? names[l.recipientId] ?? l.recipientId })) : []),
+    [run, names],
+  );
+  const pinnedTotal = useMemo<Row[]>(
+    () =>
+      run
+        ? [{
+            id: 'total', kind: 'contributor', recipientId: '', recipientName: 'Total', payeeEmail: null, licenseGrantId: null, assetVersionId: null,
+            amountCents: rows.reduce((s, r) => s + r.amountCents, 0), formula: `= verified capture ${formatMoney(run.grossCents)}`, payable: false, note: null, payoutItem: null, isTotal: true,
+          }]
+        : [],
+    [run, rows],
+  );
+
+  if (q.isPending) return <Spinner />;
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
   if (!run) {
     return (
       <>
@@ -143,11 +166,6 @@ export function SettlementsPage() {
     );
   }
 
-  const rows: Row[] = run.lines.map((l) => ({ ...l, recipientName: l.recipientName ?? names[l.recipientId] ?? l.recipientId }));
-  const total: Row = {
-    id: 'total', kind: 'contributor', recipientId: '', recipientName: 'Total', payeeEmail: null, licenseGrantId: null, assetVersionId: null,
-    amountCents: rows.reduce((s, r) => s + r.amountCents, 0), formula: `= verified capture ${formatMoney(run.grossCents)}`, payable: false, note: null, payoutItem: null, isTotal: true,
-  };
   const payment = run.sale.payment;
   const latest = run.batches[0];
   const hasFailedPayouts = run.lines.some((l) => l.payoutItem && ['FAILED', 'RETURNED', 'BLOCKED', 'REFUNDED', 'REVERSED'].includes(l.payoutItem.status));
@@ -158,13 +176,14 @@ export function SettlementsPage() {
         title="Pay contributors"
         subtitle="Each PayPal sale is split under the license terms in force when it was sold. Nothing is paid until you approve, and a payout only counts as paid when PayPal confirms it."
       />
-      <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Card title="Sales">
           <ul className="-m-2 space-y-1">
             {runs.map((r) => (
               <li key={r.id}>
                 <button
                   onClick={() => setSelectedId(r.id)}
+                  aria-pressed={r.id === run.id}
                   className={clsx('w-full rounded-lg px-3 py-2 text-left text-sm', r.id === run.id ? 'bg-slate-100' : 'hover:bg-slate-50')}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -178,15 +197,16 @@ export function SettlementsPage() {
           </ul>
         </Card>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <Card
             title={
-              <span className="flex items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 <Link to={`/reports/${run.sale.artifact.id}`} className="hover:underline">{run.sale.artifact.title}</Link>
                 <StatusBadge status={run.status} />
               </span>
             }
             action={
+              canAct && (
               <div className="flex flex-wrap gap-2">
                 {run.status === 'calculated' && (
                   <Button size="sm" loading={act.isPending} onClick={() => act.mutate({ action: 'approve', id: run.id })}>
@@ -214,6 +234,7 @@ export function SettlementsPage() {
                   </Button>
                 )}
               </div>
+              )
             }
           >
             <ol className="mb-5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -253,16 +274,17 @@ export function SettlementsPage() {
               </div>
             )}
             <ErrorNote error={act.error} />
-            <div className="h-[300px]">
-              <AgGridReact<Row>
-                theme={gridTheme}
-                rowData={rows}
-                pinnedBottomRowData={[total]}
-                columnDefs={columns}
-                defaultColDef={{ resizable: true, sortable: false }}
-                tooltipShowDelay={200}
-              />
-            </div>
+            {/* A handful of lines: the grid is exactly as tall as its rows. */}
+            <AgGridReact<Row>
+              theme={gridTheme}
+              domLayout="autoHeight"
+              rowData={rows}
+              getRowId={(p) => p.data.id}
+              pinnedBottomRowData={pinnedTotal}
+              columnDefs={columns}
+              defaultColDef={DEFAULT_COL}
+              tooltipShowDelay={200}
+            />
             <p className="mt-3 text-xs text-muted">Each contributor’s share is rounded down to the cent; anything left over stays with you. Hover a share to see the exact calculation.</p>
           </Card>
 
@@ -273,14 +295,14 @@ export function SettlementsPage() {
                   ? `PayPal confirmed a payment of ${formatMoney(payment.capturedCents)}. The split above is worked out from that amount, not from what the checkout asked for.`
                   : 'PayPal hasn’t confirmed a payment for this sale.'}
               </p>
-              <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
+              <dl className="grid grid-cols-[8rem_minmax(0,1fr)] gap-y-1.5 text-sm">
                 <dt className="text-muted">Paid</dt><dd>{payment?.capturedCents != null ? formatMoney(payment.capturedCents) : '—'}</dd>
                 <dt className="text-muted">PayPal status</dt><dd>{payment?.captureStatus ? statusLabel(payment.captureStatus) : '—'}</dd>
                 <dt className="text-muted">PayPal fee</dt><dd>{payment?.paypalFeeCents != null ? `${formatMoney(payment.paypalFeeCents)} (paid by you)` : '—'}</dd>
               </dl>
               {payment && (
                 <Details>
-                  <dl className="grid grid-cols-[9rem_1fr] gap-y-1.5">
+                  <dl className="grid grid-cols-[9rem_minmax(0,1fr)] gap-y-1.5">
                     <dt>PayPal order ID</dt><dd><Hash value={payment.orderId} n={20} /></dd>
                     <dt>PayPal payment ID</dt><dd><Hash value={payment.captureId} n={20} /></dd>
                     <dt>PayPal status</dt><dd className="mono">{payment.captureStatus ?? '—'}</dd>
@@ -292,10 +314,10 @@ export function SettlementsPage() {
               {run.batches.length ? (
                 <div className="space-y-4">
                   {run.batches.map((b) => (
-                    <dl key={b.attempt} className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
+                    <dl key={b.attempt} className="grid grid-cols-[8rem_minmax(0,1fr)] gap-y-1.5 text-sm">
                       <dt className="text-muted">Attempt</dt><dd>{b.attempt}{b.attempt > 1 && ' (sending failed payouts again)'}</dd>
                       <dt className="text-muted">Status</dt><dd><StatusBadge status={b.status} /></dd>
-                      <dt className="text-muted">Last checked</dt><dd>{b.lastCheckedAt ? new Date(b.lastCheckedAt).toLocaleTimeString() : 'Not yet'}</dd>
+                      <dt className="text-muted">Last checked</dt><dd>{b.lastCheckedAt ? formatDateTime(b.lastCheckedAt) : 'Not yet'}</dd>
                     </dl>
                   ))}
                 </div>
@@ -303,7 +325,7 @@ export function SettlementsPage() {
                 <p className="text-sm text-muted">No payouts sent yet. Each payout has a fixed reference, so sending again can never pay twice.</p>
               )}
               <Details>
-                <dl className="grid grid-cols-[9rem_1fr] gap-y-1.5">
+                <dl className="grid grid-cols-[9rem_minmax(0,1fr)] gap-y-1.5">
                   {run.batches.map((b) => (
                     <div key={b.attempt} className="contents">
                       <dt>Attempt {b.attempt} reference</dt><dd><Hash value={b.senderBatchId} n={24} /></dd>

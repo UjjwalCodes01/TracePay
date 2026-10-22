@@ -46,15 +46,21 @@ function readable(issue: { message: string; path?: unknown[] }): string {
 
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const demoUser = getDemoUserId();
-  const res = await fetch(`${BASE}/api${path}`, {
-    method: init.method ?? (init.body === undefined ? 'GET' : 'POST'),
-    credentials: 'include',
-    headers: {
-      ...(demoUser ? { 'X-Demo-User': demoUser } : {}),
-      ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
-    },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      method: init.method ?? (init.body === undefined ? 'GET' : 'POST'),
+      credentials: 'include',
+      headers: {
+        ...(demoUser ? { 'X-Demo-User': demoUser } : {}),
+        ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    });
+  } catch {
+    // The browser's own wording ("Failed to fetch", "NetworkError when…") means nothing to people.
+    throw new ApiError(0, 'Can’t reach TracePay. Check your internet connection, then try again.');
+  }
   const text = await res.text();
   let data = null;
   try {
@@ -75,6 +81,13 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   }
   return data as T;
 }
+
+/** The server is asleep, waking or unreachable (not a TracePay answer): worth retrying for a while. */
+export const isUnavailable = (e: unknown) => e instanceof ApiError && (e.status === 0 || e.status >= 502);
+
+/** Retry policy for the queries a page can't start without: ride out a cold start (~1 minute). */
+export const retryWhileWaking = (failures: number, e: unknown) => (isUnavailable(e) ? failures < 8 : failures < 1);
+export const wakingRetryDelay = (attempt: number) => Math.min(8000, 1000 * 2 ** attempt);
 
 export const post = <T>(path: string, body: unknown = {}) => api<T>(path, { method: 'POST', body });
 export const del = <T>(path: string) => api<T>(path, { method: 'DELETE' });

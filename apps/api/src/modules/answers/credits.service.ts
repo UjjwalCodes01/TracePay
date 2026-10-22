@@ -7,6 +7,8 @@ import type { Capture, Order } from '../../integrations/paypal/types';
 import { appendAudit, lockAuditChain } from '../audit/audit-log';
 import { after, notifyScheduled, ORDER_CHECK_DELAYS_MS, PENDING_CAPTURE_DELAYS_MS } from '../reconciliation/schedule';
 import { PaymentError } from '../payments/payments.service';
+import { DEMO_CREDIT_CENTS } from '../demo/soft-reset';
+import { DEMO_USERS } from '../demo/world';
 
 /**
  * Prepaid answer credits, bought with PayPal. Money enters only through a
@@ -38,6 +40,29 @@ export async function lockAccount(tx: Tx, ownerId: string) {
   await accountFor(tx, ownerId);
   await tx.$queryRaw`SELECT id FROM "CreditAccount" WHERE "ownerId" = ${ownerId} FOR UPDATE`;
   return tx.creditAccount.findUniqueOrThrow({ where: { ownerId } });
+}
+
+const DEMO_BUYERS = new Set(DEMO_USERS.filter((u) => u.role === 'buyer').map((u) => u.id));
+/** The demo's buyer persona, shared by every visitor of a hosted demo. */
+export const isDemoBuyer = (userId: string) => DEMO_BUYERS.has(userId);
+/** The shared demo buyer's credit tops back up to its starting amount once less than this is left. */
+export const DEMO_REFILL_BELOW_CENTS = 50;
+
+/**
+ * A hosted demo (DEMO_SHARED_BUYER): every visitor shares the demo buyer, so its demo credit
+ * tops itself back up instead of running dry for the next visitor. It stays demo credit — it only
+ * ever pays the demo's own contributors — and the ledger still sums to the balance.
+ */
+export async function refillDemoCredit(db: Db, ownerId: string): Promise<void> {
+  if (!DEMO_BUYERS.has(ownerId)) return;
+  await db.$transaction(async (tx) => {
+    const account = await lockAccount(tx, ownerId);
+    const available = account.balanceCents - account.reservedCents;
+    if (available >= DEMO_REFILL_BELOW_CENTS) return;
+    const add = DEMO_CREDIT_CENTS - available;
+    await tx.creditAccount.update({ where: { id: account.id }, data: { balanceCents: { increment: add } } });
+    await tx.creditEntry.create({ data: { accountId: account.id, kind: 'demo_credit', amountCents: add } });
+  });
 }
 
 export async function creditSummary(db: Db, ownerId: string) {

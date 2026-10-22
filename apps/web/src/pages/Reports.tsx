@@ -8,6 +8,13 @@ import type { ArtifactPreview } from '../lib/types';
 
 type MyReport = ArtifactPreview & { withdrawnReason: string | null };
 
+/** Summaries often open with the report's own title ("Title: 5 findings…"); the card already shows it. */
+function withoutTitle(summary: string, title: string): string {
+  if (!summary.startsWith(`${title}:`)) return summary;
+  const rest = summary.slice(title.length + 1).trim();
+  return rest ? rest.replace(/^./, (c) => c.toUpperCase()) : summary;
+}
+
 const STATUS = {
   listed: { label: 'On sale', tone: 'pass' },
   withdrawn: { label: 'Off sale', tone: 'block' },
@@ -25,9 +32,9 @@ export function ReportsPage() {
     },
   });
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const reports = q.data!.reports;
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
+  const reports = q.data.reports;
 
   return (
     <>
@@ -59,7 +66,7 @@ export function ReportsPage() {
                     <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {a.withdrawnReason}
                   </p>
                 )}
-                {a.summary && <p className="mt-3 line-clamp-3 flex-1 text-sm text-muted">{a.summary}</p>}
+                {a.summary && <p className="mt-3 line-clamp-3 flex-1 text-sm text-muted">{withoutTitle(a.summary, a.title)}</p>}
                 <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
                   <Link to={`/reports/${a.id}/provenance`} className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline">
                     <GitBranch className="size-4" /> Where it came from
@@ -67,14 +74,13 @@ export function ReportsPage() {
                   <Link to={`/reports/${a.id}/receipt`} className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline">
                     <ScrollText className="size-4" /> Receipt
                   </Link>
-                  <span className="flex-1" />
                   {a.status === 'listed' && (
-                    <Button size="sm" variant="ghost" loading={act.isPending && act.variables?.id === a.id && act.variables.action === 'withdraw'} disabled={act.isPending} onClick={() => confirm('Take this report off sale?') && act.mutate({ id: a.id, action: 'withdraw' })}>
+                    <Button size="sm" variant="ghost" className="ml-auto" loading={act.isPending && act.variables?.id === a.id && act.variables.action === 'withdraw'} disabled={act.isPending} onClick={() => confirm('Take this report off sale?') && act.mutate({ id: a.id, action: 'withdraw' })}>
                       Take off sale
                     </Button>
                   )}
                   {a.status === 'withdrawn' && (
-                    <Button size="sm" variant="secondary" loading={act.isPending && act.variables?.id === a.id && act.variables.action === 'relist'} disabled={act.isPending} onClick={() => act.mutate({ id: a.id, action: 'relist' })}>
+                    <Button size="sm" variant="secondary" className="ml-auto" loading={act.isPending && act.variables?.id === a.id && act.variables.action === 'relist'} disabled={act.isPending} onClick={() => act.mutate({ id: a.id, action: 'relist' })}>
                       Put back on sale
                     </Button>
                   )}

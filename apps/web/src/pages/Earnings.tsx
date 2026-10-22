@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { LicenseTermsSchema } from '@tracepay/shared';
+import type { Economics } from '@tracepay/shared';
 import { lazy, Suspense } from 'react';
-import { Badge, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge, statusLabel } from '../components/ui';
+import { Badge, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge, statusLabel, statusTone } from '../components/ui';
 import { api } from '../lib/api';
 import { economicsLabel, formatMoney, localDate } from '../lib/format';
 import type { PayoutItem } from '../lib/types';
@@ -28,19 +28,21 @@ interface License {
   asset: { title: string };
 }
 
-/** What PayPal reports for a payout, in plain words. */
-const PAYOUT_TEXT: Record<string, { text: string; tone: 'pass' | 'warn' | 'block' | 'neutral' | 'info' }> = {
-  SUCCESS: { text: 'Paid', tone: 'pass' },
-  PENDING: { text: 'Being sent', tone: 'info' },
-  ONHOLD: { text: 'On hold at PayPal', tone: 'warn' },
-  UNCLAIMED: { text: 'Waiting for you to claim it in PayPal', tone: 'warn' },
-  FAILED: { text: 'Didn’t go through', tone: 'block' },
-  RETURNED: { text: 'Returned (not claimed in time)', tone: 'block' },
-  BLOCKED: { text: 'Blocked by PayPal', tone: 'block' },
-  REFUNDED: { text: 'Taken back', tone: 'block' },
-  REVERSED: { text: 'Reversed', tone: 'block' },
-  DENIED: { text: 'Declined by PayPal', tone: 'block' },
-};
+/**
+ * The license's payment term, if it's one we can show. A hand check rather than the shared zod
+ * schema, which would add ~90 KB to every page; anything malformed shows nothing (never "NaN%").
+ */
+function economicsOf(terms: unknown): Economics | null {
+  const e = (terms as { economics?: Record<string, unknown> } | null)?.economics;
+  if (!e || typeof e !== 'object') return null;
+  const whole = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  if (e.kind === 'percent_of_gross' && whole(e.bps) && e.bps <= 10_000) return { kind: 'percent_of_gross', bps: e.bps };
+  if (e.kind === 'fixed_per_sale' && whole(e.amountCents)) return { kind: 'fixed_per_sale', amountCents: e.amountCents };
+  if (e.kind === 'none') return { kind: 'none' };
+  return null;
+}
+
+const allowsAiAnswers = (terms: unknown) => (terms as { aiAnswers?: { allowed?: unknown } } | null)?.aiAnswers?.allowed === true;
 
 /** Where the payment split stands when no payout has been sent yet. */
 const SETTLEMENT_TEXT: Record<string, string> = {
@@ -56,9 +58,12 @@ const ON_TRACK = ['calculated', 'approved', 'payout_submitted'];
 
 export function EarningsPage() {
   const q = useQuery({ queryKey: ['earnings'], queryFn: () => api<{ lines: EarningLine[]; licenses: License[] }>('/contributor/earnings') });
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const { lines, licenses } = q.data!;
+  if (q.isPending) return <Spinner />;
+  if (!q.data) return <ErrorNote error={q.error ?? new Error('Your earnings couldn’t be loaded. Try again in a moment.')} />;
+  const { lines, licenses } = q.data;
+  // One sale can pay you for several sources: count sales, not shares.
+  const sales = new Set(lines.map((l) => l.run.sale.id)).size;
+  const aiAllowed = licenses.some((l) => allowsAiAnswers(l.terms) && ['approved', 'offered'].includes(l.status));
   const paid = lines.filter((l) => l.payoutItem?.status === 'SUCCESS').reduce((s, l) => s + l.amountCents, 0);
   // Refunded or disputed sales (an exception) and failed payouts aren't counted as on their way.
   const owed = lines.filter((l) => l.payable && ON_TRACK.includes(l.run.status) && l.payoutItem?.status !== 'SUCCESS').reduce((s, l) => s + l.amountCents, 0);
@@ -66,10 +71,12 @@ export function EarningsPage() {
   return (
     <>
       <PageHeader title="My earnings" subtitle="Every sale and AI answer that used your licensed work, how your share was worked out, and where your PayPal payout stands." />
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Stat label="Paid to you" value={formatMoney(paid)} tone="pass" />
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat label="Paid to you" value={formatMoney(paid)} tone={paid > 0 ? 'pass' : undefined} />
         <Stat label="Owed to you" value={formatMoney(owed)} />
-        <Stat label="Sales using your work" value={lines.length} />
+        <div className="col-span-2 sm:col-span-1">
+          <Stat label="Sales using your work" value={sales} />
+        </div>
       </div>
 
       <Card title="Your share of every sale">
@@ -87,7 +94,7 @@ export function EarningsPage() {
                 note: l.note,
                 amountCents: l.amountCents,
                 status: l.payoutItem
-                  ? (PAYOUT_TEXT[l.payoutItem.status] ?? { text: statusLabel(l.payoutItem.status), tone: 'neutral' })
+                  ? { text: statusLabel(l.payoutItem.status), tone: statusTone(l.payoutItem.status) }
                   : { text: l.payable ? (SETTLEMENT_TEXT[l.run.status] ?? statusLabel(l.run.status)) : 'Not owed', tone: l.run.status === 'exception' ? 'warn' : 'neutral' },
                 captureId: l.run.sale.payment?.captureId ?? null,
                 paypalTransaction: l.payoutItem?.transactionId ?? null,
@@ -97,17 +104,17 @@ export function EarningsPage() {
         )}
       </Card>
 
-      <AnswerEarnings />
+      <AnswerEarnings aiAllowed={aiAllowed} />
 
       <Card title="My licenses" className="mt-6">
         <ul className="divide-y divide-line text-sm">
           {licenses.map((l) => {
-            const t = LicenseTermsSchema.safeParse(l.terms);
+            const economics = economicsOf(l.terms);
             return (
               <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                 <span className="font-medium">{l.asset.title} <span className="text-xs text-muted">version {l.version}</span></span>
                 <span className="flex items-center gap-2">
-                  {t.success && <Badge>{economicsLabel(t.data.economics)}</Badge>}
+                  {economics && <Badge>{economicsLabel(economics)}</Badge>}
                   <StatusBadge status={l.status} />
                 </span>
               </li>
@@ -133,16 +140,16 @@ const CREDIT_TEXT: Record<AnswerEarningsData['credits'][number]['status'], { tex
 };
 
 /** Pay-per-citation: what AI answers that relied on your work have earned you. */
-function AnswerEarnings() {
+function AnswerEarnings({ aiAllowed }: { aiAllowed: boolean }) {
   const q = useQuery({ queryKey: ['answer-earnings'], queryFn: () => api<AnswerEarningsData>('/contributor/answer-earnings') });
-  if (q.isLoading) {
+  if (q.isPending) {
     return (
       <Card title="From AI answers — paid per cited passage" className="mt-6">
         <Spinner />
       </Card>
     );
   }
-  if (q.error || !q.data) {
+  if (!q.data) {
     return (
       <Card title="From AI answers — paid per cited passage" className="mt-6">
         <ErrorNote error={q.error ?? new Error('Your AI answer earnings couldn’t be loaded.')} />
@@ -152,13 +159,19 @@ function AnswerEarnings() {
   const d = q.data;
   return (
     <Card title="From AI answers — paid per cited passage" className="mt-6">
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Stat label="Paid to you" value={formatMoney(d.paidCents)} tone="pass" />
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat label="Paid to you" value={formatMoney(d.paidCents)} tone={d.paidCents > 0 ? 'pass' : undefined} />
         <Stat label="Owed to you" value={formatMoney(d.owedCents)} />
-        <Stat label="Passages cited" value={d.citations} />
+        <div className="col-span-2 sm:col-span-1">
+          <Stat label="Passages cited" value={d.citations} />
+        </div>
       </div>
       {d.credits.length === 0 ? (
-        <Empty>No AI answer has cited your work yet. Allow AI answers in your license terms to start earning each time an answer cites you.</Empty>
+        <Empty>
+          {aiAllowed
+            ? 'No AI answer has cited your work yet. Each time one does, you earn your per-passage rate.'
+            : 'No AI answer has cited your work yet. Allow AI answers in your license terms to start earning each time an answer cites you.'}
+        </Empty>
       ) : (
         <ul className="divide-y divide-line text-sm">
           {d.credits.slice(0, 15).map((c) => (

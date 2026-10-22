@@ -158,7 +158,7 @@ server.registerTool(
   {
     title: 'Check a report before buying (or read one you own)',
     description:
-      'Re-runs TracePay’s license compiler on the report’s sources as of today, and lists its sections, sources and citation check. If the user already owns it, returns the full report text.',
+      'Re-runs TracePay’s license check on the report’s sources as of today, and lists its sections, sources and citation check. If the user already owns it, returns the full report text.',
     inputSchema: { report_id: z.string().min(1).max(64) },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
@@ -288,9 +288,9 @@ interface Answer {
 server.registerTool(
   'ask_library',
   {
-    title: 'Ask a licensed library (pays its authors)',
+    title: 'Ask a licensed library (pays its contributors)',
     description:
-      'Answer a question using ONLY sources licensed for AI answers. The user’s prepaid credit pays a small fee plus each author’s rate for every passage the answer verifiably relies on — never more than max_price_cents. Cite the answer’s sources when you relay it.',
+      'Answer a question using ONLY sources licensed for AI answers. The user’s prepaid credit pays a small fee plus each contributor’s rate for every passage the answer verifiably relies on — never more than max_price_cents. Cite the answer’s sources when you relay it.',
     inputSchema: {
       question: z.string().min(8).max(500),
       library_id: z.string().max(64).optional().describe('From list_libraries; defaults to the largest library.'),

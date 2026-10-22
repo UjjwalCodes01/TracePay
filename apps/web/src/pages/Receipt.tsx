@@ -1,23 +1,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { describeFormula, formatDay, RULE_LABELS, type RuleId } from '@tracepay/shared';
-import { Download, ShieldAlert, ShieldCheck } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ArrowLeft, Download, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { Badge, Button, Card, ErrorNote, Hash, PageHeader, Spinner, StatusBadge } from '../components/ui';
+import { Badge, Button, Card, ErrorNote, Hash, PageHeader, Spinner, StatusBadge, TechnicalDetails } from '../components/ui';
 import { api, post } from '../lib/api';
-import { eventLabel, formatMoney } from '../lib/format';
+import { eventLabel, formatDateTime, formatMoney } from '../lib/format';
 import { useSession } from '../lib/session';
 import type { SignedReceipt } from '../lib/types';
-
-/** The exact proof behind a plain summary: there for anyone checking, out of the way for everyone else. */
-function TechnicalDetails({ children }: { children: ReactNode }) {
-  return (
-    <details className="group mt-4 rounded-lg border border-line bg-slate-50 text-sm">
-      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted hover:text-ink">Technical details</summary>
-      <div className="border-t border-line px-3 py-3">{children}</div>
-    </details>
-  );
-}
 
 const DL = 'grid grid-cols-[7rem_minmax(0,1fr)] gap-y-1.5 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]';
 
@@ -31,13 +21,29 @@ export function ReceiptPage() {
   const verify = useMutation({
     mutationFn: (r: SignedReceipt) => post<{ valid: boolean }>('/receipts/verify', { document: r.document, signature: r.signature, publicKeyPem: r.publicKeyPem }),
   });
+  // One switch for every "Technical details" section; each can still be opened on its own.
+  const body = useRef<HTMLDivElement>(null);
+  const [technical, setTechnical] = useState(false);
+  const toggleTechnical = () => {
+    const next = !technical;
+    body.current?.querySelectorAll('details').forEach((el) => (el.open = next));
+    setTechnical(next);
+  };
 
-  if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
-  const r = q.data!;
+  if (!q.data) return <Spinner />;
+  const r = q.data;
   const d = r.document;
   const passed = d.rights.preflight.verdict === 'pass';
   const confirmedCents = d.sales.reduce((sum, s) => sum + s.paypal.capturedCents, 0);
+  // When the licenses were checked, as a moment in the viewer's time (like every other event here).
+  const checkedAt = d.auditTrail.find((e) => e.eventType === 'build.preflight_passed' || e.eventType === 'build.preflight_blocked')?.at ?? null;
+  const checkedOn = checkedAt ? formatDateTime(checkedAt) : formatDay(d.rights.asOf);
+  const paidAt = d.auditTrail.filter((e) => e.eventType === 'sale.captured').map((e) => e.at);
+  const buyerPaid =
+    d.view === 'buyer' && d.sales.length > 0
+      ? `You paid ${formatMoney(confirmedCents)} with PayPal${d.sales.length === 1 && paidAt.length === 1 ? ` on ${formatDateTime(paidAt[0])}` : ''}, and PayPal confirmed the payment.`
+      : null;
   const recipientName = (l: { recipientId: string; recipientName?: string | null }) => l.recipientName ?? names[l.recipientId] ?? 'A contributor';
 
   const download = () => {
@@ -52,6 +58,9 @@ export function ReceiptPage() {
 
   return (
     <>
+      <Link to={`/reports/${d.artifact.id}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
+        <ArrowLeft className="size-4" aria-hidden /> Back to the report
+      </Link>
       <PageHeader
         title="Receipt"
         subtitle={
@@ -62,6 +71,9 @@ export function ReceiptPage() {
         }
         action={
           <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={toggleTechnical} aria-pressed={technical}>
+              {technical ? 'Hide technical details' : 'Show technical details'}
+            </Button>
             <Button variant="secondary" onClick={download}>
               <Download className="size-4" /> Download receipt
             </Button>
@@ -90,27 +102,29 @@ export function ReceiptPage() {
         <ul className="space-y-2 text-sm">
           <li>
             {passed ? (
-              <>Every source’s license was checked on {formatDay(d.rights.asOf)}, and all of them allowed this report.</>
+              <>Every source’s license was checked on {checkedOn}, and all of them allowed this report.</>
             ) : (
-              <>The license check on {formatDay(d.rights.asOf)} stopped this report.</>
+              <>The license check on {checkedOn} stopped this report.</>
             )}
           </li>
           <li>{d.artifact.fromFixture ? 'Written without AI: each finding is a key sentence from a licensed source.' : `Written with AI (${d.artifact.model}), using only passages from licensed sources.`}</li>
           <li>
             {d.sales.length === 0
               ? 'Not sold yet, so no one has been paid.'
-              : `Sold ${d.sales.length === 1 ? 'once' : `${d.sales.length} times`}; PayPal confirmed ${formatMoney(confirmedCents)} in payments.`}
+              : (buyerPaid ?? `Sold ${d.sales.length === 1 ? 'once' : `${d.sales.length} times`}; PayPal confirmed ${formatMoney(confirmedCents)} in payments.`)}
           </li>
-          <li className="flex flex-wrap items-center gap-2">
-            {d.chain.verified ? <ShieldCheck className="size-4 text-verified" aria-hidden /> : <ShieldAlert className="size-4 text-block" aria-hidden />}
-            {d.chain.verified
-              ? 'Signed by TracePay, and its activity record is intact. Use “Check signature” to confirm nothing has changed.'
-              : 'TracePay’s activity record failed its integrity check. Treat this receipt with caution.'}
+          <li className="flex items-start gap-2">
+            {d.chain.verified ? <ShieldCheck className="mt-0.5 size-4 shrink-0 text-verified" aria-hidden /> : <ShieldAlert className="mt-0.5 size-4 shrink-0 text-block" aria-hidden />}
+            <span>
+              {d.chain.verified
+                ? 'Signed by TracePay, and its activity record is intact. Use “Check signature” to confirm nothing has changed.'
+                : 'TracePay’s activity record failed its integrity check. Treat this receipt with caution.'}
+            </span>
           </li>
         </ul>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div ref={body} className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="1 · The report">
           <dl className={DL}>
             <dt className="text-muted">Report</dt><dd className="font-medium">{d.artifact.title}</dd>
@@ -123,7 +137,7 @@ export function ReceiptPage() {
               <dt className="text-muted">Report ID</dt><dd><Hash value={d.artifact.id} n={24} /></dd>
               <dt className="text-muted">Content hash</dt><dd><Hash value={d.artifact.contentHash} n={24} /></dd>
               <dt className="text-muted">Receipt format</dt><dd className="mono break-all">{d.receiptVersion}</dd>
-              <dt className="text-muted">Issued</dt><dd className="mono break-all">{d.issuedAt}</dd>
+              <dt className="text-muted">Issued</dt><dd>{formatDateTime(d.issuedAt)} <span className="mono break-all text-xs text-muted">({d.issuedAt})</span></dd>
             </dl>
           </TechnicalDetails>
         </Card>
@@ -131,7 +145,7 @@ export function ReceiptPage() {
         <Card title="2 · License check">
           <dl className={DL}>
             <dt className="text-muted">Result</dt><dd><StatusBadge status={d.rights.preflight.verdict} /></dd>
-            <dt className="text-muted">Checked on</dt><dd>{formatDay(d.rights.asOf)}</dd>
+            <dt className="text-muted">Checked on</dt><dd>{checkedOn}</dd>
             <dt className="text-muted">Checks made</dt><dd>{d.rights.preflight.rulesEvaluated}</dd>
             {d.rights.preflight.failed.length > 0 && (
               <>
@@ -143,6 +157,7 @@ export function ReceiptPage() {
           <TechnicalDetails>
             <dl className={DL}>
               <dt className="text-muted">Policy</dt><dd className="mono break-all">{d.rights.preflight.policyVersion}</dd>
+              <dt className="text-muted">Terms as of</dt><dd className="mono">{d.rights.asOf} (UTC)</dd>
               <dt className="text-muted">Terms snapshot</dt><dd><Hash value={d.rights.snapshotHash} n={24} /></dd>
               <dt className="text-muted">Build ID</dt><dd><Hash value={d.rights.buildId} n={24} /></dd>
               {d.rights.preflight.failed.length > 0 && (
@@ -202,7 +217,7 @@ export function ReceiptPage() {
                   <div className="flex flex-wrap items-center gap-3 text-sm">
                     <span className="font-medium">Sale {d.sales.length > 1 ? n + 1 : ''}</span>
                     <StatusBadge status={s.status} />
-                    <span>PayPal confirmed <span className="font-medium tabular-nums">{formatMoney(s.paypal.capturedCents)}</span></span>
+                    <span>{d.view === 'buyer' ? 'You paid' : 'PayPal confirmed'} <span className="font-medium tabular-nums">{formatMoney(s.paypal.capturedCents)}</span></span>
                   </div>
                   {s.settlement ? (
                     <div className="overflow-x-auto">
@@ -224,7 +239,7 @@ export function ReceiptPage() {
                               </td>
                               <td className="hidden py-1.5 pr-3 md:table-cell" title={l.formula}>{describeFormula(l.formula)}</td>
                               <td className="py-1.5 text-right tabular-nums">{formatMoney(l.amountCents)}</td>
-                              <td className="py-1.5 pl-4">{l.payout ? <StatusBadge status={l.payout.status} /> : <span className="text-muted">{l.kind === 'publisher_residual' ? 'Kept by the publisher' : 'Not sent yet'}</span>}</td>
+                              <td className="whitespace-nowrap py-1.5 pl-4">{l.payout ? <StatusBadge status={l.payout.status} /> : <span className="text-muted">{l.kind === 'publisher_residual' ? 'Kept by the publisher' : 'Not sent yet'}</span>}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -237,12 +252,12 @@ export function ReceiptPage() {
                     <dl className={DL}>
                       <dt className="text-muted">PayPal order</dt><dd><Hash value={s.paypal.orderId} n={24} /></dd>
                       <dt className="text-muted">PayPal payment ID</dt><dd><Hash value={s.paypal.captureId} n={24} /></dd>
-                      <dt className="text-muted">PayPal status</dt><dd className="mono break-all">{s.paypal.captureStatus || '—'}</dd>
+                      <dt className="text-muted">PayPal status</dt><dd className="mono">{s.paypal.captureStatus || '—'}</dd>
                       {s.settlement && (
                         <>
                           <dt className="text-muted">Payment split</dt><dd><Hash value={s.settlement.runId} n={24} /></dd>
                           <dt className="text-muted">Total split</dt><dd>{formatMoney(s.settlement.grossCents)}</dd>
-                          <dt className="text-muted">Rounding</dt><dd className="break-all">{s.settlement.roundingRule}</dd>
+                          <dt className="text-muted">Rounding</dt><dd className="break-words">{s.settlement.roundingRule}</dd>
                         </>
                       )}
                     </dl>
@@ -274,12 +289,12 @@ export function ReceiptPage() {
           )}
         </Card>
 
-        <Card title="5 · What happened, in order" className="lg:col-span-2" action={<Badge tone={d.chain.verified ? 'pass' : 'block'}>{d.chain.verified ? 'Record intact' : 'Record changed'}</Badge>}>
+        <Card title="5 · What happened, in order" className="lg:col-span-2" action={<Badge tone={d.chain.verified ? 'pass' : 'block'} className="whitespace-nowrap">{d.chain.verified ? 'Record intact' : 'Record changed'}</Badge>}>
           <ol className="divide-y divide-line text-sm">
             {d.auditTrail.map((e) => (
-              <li key={e.seq} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-1.5">
+              <li key={e.seq} className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                 <span className="min-w-0">{eventLabel(e.eventType)}</span>
-                <time className="text-xs text-muted" dateTime={e.at}>{new Date(e.at).toLocaleString()}</time>
+                <time className="text-xs text-muted sm:text-right" dateTime={e.at}>{formatDateTime(e.at)}</time>
               </li>
             ))}
           </ol>
@@ -298,7 +313,7 @@ export function ReceiptPage() {
             </ol>
             {d.chain.headSeq !== null && (
               <p className="mt-2 text-xs text-muted">
-                Latest event #{d.chain.headSeq} <Hash value={d.chain.headHash} n={12} />
+                These are the {d.auditTrail.length} events about this report. TracePay keeps one chain for everything it records, and it had reached event #{d.chain.headSeq} <Hash value={d.chain.headHash} n={12} /> when this receipt was issued.
               </p>
             )}
           </TechnicalDetails>
@@ -310,7 +325,7 @@ export function ReceiptPage() {
             <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-y-2 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]">
               <dt className="text-muted">Algorithm</dt><dd>{r.algorithm}</dd>
               <dt className="text-muted">Signature</dt><dd className="mono break-all">{r.signature}</dd>
-              <dt className="text-muted">Public key</dt><dd><pre className="mono whitespace-pre-wrap break-all text-slate-700">{r.publicKeyPem}</pre></dd>
+              <dt className="text-muted">Public key</dt><dd className="min-w-0"><pre className="mono overflow-x-auto whitespace-pre text-xs text-slate-700">{r.publicKeyPem}</pre></dd>
             </dl>
           </TechnicalDetails>
           <p className="mt-3 text-xs text-muted">{d.disclaimer}</p>

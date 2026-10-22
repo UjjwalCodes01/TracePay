@@ -4,7 +4,7 @@ import type { AppDeps } from '../app';
 import { currentUser, requireRole } from '../http/auth';
 import { quotas } from '../http/limits';
 import { askLibrary, getAnswer, listAnswers, listLibraries } from '../modules/answers/answers.service';
-import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, startTopUp } from '../modules/answers/credits.service';
+import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
 import { runRedTeam } from '../modules/answers/integrity';
 import { contributorAnswerEarnings, refreshRoyaltyPayout, royaltySummary, sendRoyaltyPayout, submitRoyaltyPayout } from '../modules/answers/royalties.service';
 import { HttpError } from '../http/errors';
@@ -29,6 +29,7 @@ export function answerRoutes({ db, paypal, signingKeys, answerWriter, config }: 
   });
 
   r.get('/credits', requireRole('buyer'), async (req, res) => {
+    if (config.demoSharedBuyer) await refillDemoCredit(db, currentUser(req).id);
     res.json(await creditSummary(db, currentUser(req).id));
   });
 
@@ -43,6 +44,7 @@ export function answerRoutes({ db, paypal, signingKeys, answerWriter, config }: 
 
   r.post('/answers', requireRole('buyer'), quotas.answer(), async (req, res) => {
     const body = AskBody.parse(req.body);
+    if (config.demoSharedBuyer) await refillDemoCredit(db, currentUser(req).id);
     res.status(201).json({ answer: await askLibrary(db, answerWriter(), signingKeys(), { askerId: currentUser(req).id, ...body }) });
   });
 

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
-import { ApiError, api, post, setDemoUserId } from './api';
+import { ApiError, api, post, retryWhileWaking, setDemoUserId, wakingRetryDelay } from './api';
 import type { AppConfig, DemoUser } from './types';
 
 type AuthMethod = 'session' | 'api_key' | 'demo';
@@ -26,8 +26,9 @@ const SessionContext = createContext<Session | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
-  const config = useQuery({ queryKey: ['config'], queryFn: () => api<AppConfig>('/config'), staleTime: Infinity });
-  const users = useQuery({ queryKey: ['demo-users'], queryFn: () => api<{ users: DemoUser[] }>('/demo/users') });
+  const waking = { retry: retryWhileWaking, retryDelay: wakingRetryDelay };
+  const config = useQuery({ queryKey: ['config'], queryFn: () => api<AppConfig>('/config'), staleTime: Infinity, ...waking });
+  const users = useQuery({ queryKey: ['demo-users'], queryFn: () => api<{ users: DemoUser[] }>('/demo/users'), ...waking });
   const me = useQuery({
     queryKey: ['me'],
     queryFn: async () => {
@@ -38,6 +39,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         throw e;
       }
     },
+    ...waking,
   });
 
   // Every other query belongs to the acting user: drop them when the user changes.

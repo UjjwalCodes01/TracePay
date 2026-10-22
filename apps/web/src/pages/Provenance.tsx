@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Background, Controls, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import clsx from 'clsx';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { describeFormula, type Economics } from '@tracepay/shared';
 import { Card, ErrorNote, EVIDENCE, EvidenceBadge, PageHeader, Spinner, statusLabel } from '../components/ui';
@@ -13,7 +13,7 @@ import type { ProvEdge, ProvNode } from '../lib/types';
 
 const COLUMNS: Array<{ kind: ProvNode['kind']; title: string; one: string }> = [
   { kind: 'source', title: 'Licensed sources', one: 'Source' },
-  { kind: 'passage', title: 'Passages used', one: 'Passage' },
+  { kind: 'passage', title: 'Passages considered', one: 'Passage' },
   { kind: 'section', title: 'Report sections', one: 'Section' },
   { kind: 'artifact', title: 'The report', one: 'Report' },
   { kind: 'sale', title: 'PayPal sales', one: 'Sale' },
@@ -101,12 +101,41 @@ function ProvNodeView({ data }: NodeProps<Node<FlowData>>) {
 
 const nodeTypes = { prov: ProvNodeView };
 
+/** On load, frame the start of the story (sources → report) at a size people can read; pan or zoom out for the rest. */
+const FIRST_VIEW: ReadonlyArray<ProvNode['kind']> = ['source', 'passage', 'section', 'artifact'];
+
+function useWide(minPx: number) {
+  const query = `(min-width: ${minPx}px)`;
+  const [wide, setWide] = useState(() => typeof window === 'undefined' || window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setWide(m.matches);
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, [query]);
+  return wide;
+}
+
 export function ProvenancePage() {
   const { id } = useParams();
   const { users } = useSession();
   const names = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const q = useQuery({ queryKey: ['provenance', id], queryFn: () => api<{ nodes: ProvNode[]; edges: ProvEdge[] }>(`/artifacts/${id}/provenance`) });
   const [selected, setSelected] = useState<string | null>(null);
+  const wide = useWide(640);
+  // On a phone the details sit below the list: bring them into view when an item is chosen.
+  useEffect(() => {
+    if (!wide && selected) document.getElementById('prov-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [wide, selected]);
+  const toggle = (nodeId: string) => setSelected((s) => (s === nodeId ? null : nodeId));
+  // Keyboard: React Flow makes each item focusable; Enter or Space opens its details, like a click.
+  const onGraphKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const nodeId = (e.target as HTMLElement).closest('.react-flow__node')?.getAttribute('data-id');
+    if (!nodeId) return;
+    e.preventDefault();
+    toggle(nodeId);
+  };
 
   const { nodes, edges, connected } = useMemo(() => {
     const g = q.data;
@@ -159,9 +188,11 @@ export function ProvenancePage() {
     return { nodes, edges, connected };
   }, [q.data, selected]);
 
-  if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
-  const sel = q.data!.nodes.find((n) => n.id === selected);
+  if (!q.data) return <Spinner />;
+  const graph = q.data;
+  const sel = graph.nodes.find((n) => n.id === selected);
+  const firstView = graph.nodes.filter((n) => FIRST_VIEW.includes(n.kind)).map((n) => ({ id: n.id }));
 
   return (
     <>
@@ -181,33 +212,39 @@ export function ProvenancePage() {
             {v.label}
           </span>
         ))}
-        <span className="text-muted">· Click any item to follow it from start to finish</span>
+        <span className="basis-full text-muted sm:basis-auto">{wide ? 'Click any item to follow it from start to finish; drag to see the rest.' : 'Tap any item to see what backs it up.'}</span>
       </div>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="h-[640px] overflow-hidden rounded-xl border border-line bg-white">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            fitView
-            minZoom={0.2}
-            nodesDraggable={false}
-            onNodeClick={(_, n) => setSelected((s) => (s === n.id ? null : n.id))}
-            onPaneClick={() => setSelected(null)}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background gap={24} color="#eef2f7" />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        {wide ? (
+          <div className="h-[640px] overflow-hidden rounded-xl border border-line bg-white" onKeyDown={onGraphKey}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              fitView
+              fitViewOptions={{ nodes: firstView.length ? firstView : undefined, minZoom: 0.65, maxZoom: 1, padding: 0.08 }}
+              minZoom={0.2}
+              nodesDraggable={false}
+              onNodeClick={(_, n) => toggle(n.id)}
+              onPaneClick={() => setSelected(null)}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background gap={24} color="#eef2f7" />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </div>
+        ) : (
+          <StepList nodes={graph.nodes} selected={selected} connected={connected} onSelect={toggle} />
+        )}
+        <div id="prov-details" className="min-w-0 scroll-mt-4">
         <Card title={sel ? displayLabel(sel) : 'Details'}>
           {!sel ? (
             <div className="space-y-3 text-sm text-muted">
               <p>Choose an item to see what backs it up.</p>
               <ul className="space-y-2">
-                {COLUMNS.map((c) => (
+                {COLUMNS.filter((c) => c.kind !== 'artifact').map((c) => (
                   <li key={c.kind}>
-                    <span className="font-medium text-ink">{c.title}:</span> {q.data!.nodes.filter((n) => n.kind === c.kind).length}
+                    <span className="font-medium text-ink">{c.title}:</span> {graph.nodes.filter((n) => n.kind === c.kind).length}
                   </li>
                 ))}
               </ul>
@@ -244,7 +281,49 @@ export function ProvenancePage() {
             </div>
           )}
         </Card>
+        </div>
       </div>
     </>
+  );
+}
+
+/** Phones: the same trail as a list of steps, from the sources down to the payouts. */
+function StepList({ nodes, selected, connected, onSelect }: { nodes: ProvNode[]; selected: string | null; connected: Set<string>; onSelect: (id: string) => void }) {
+  return (
+    <ol className="space-y-3">
+      {COLUMNS.map((c) => {
+        const items = nodes.filter((n) => n.kind === c.kind);
+        if (!items.length) return null;
+        return (
+          <li key={c.kind} className="rounded-xl border border-line bg-white p-4">
+            <h2 className="text-sm font-semibold">
+              {c.title} <span className="font-normal text-muted">({items.length})</span>
+            </h2>
+            <ul className="mt-2 space-y-1.5">
+              {items.map((n) => {
+                const color = EVIDENCE[n.evidence].color;
+                return (
+                  <li key={n.id}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(n.id)}
+                      aria-pressed={n.id === selected}
+                      className={clsx(
+                        'w-full rounded-lg border bg-white px-3 py-2 text-left text-sm transition',
+                        n.id === selected && 'ring-2 ring-ink',
+                        selected && !connected.has(n.id) && 'opacity-40',
+                      )}
+                      style={{ borderColor: color, borderLeftWidth: 4 }}
+                    >
+                      <span className="line-clamp-2">{displayLabel(n)}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

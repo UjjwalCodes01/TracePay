@@ -38,16 +38,15 @@ export interface CheckoutStarted {
 export async function startCheckout(
   db: Db,
   paypal: PayPalGateway,
-  args: { artifactId: string; buyerId: string | null; appBaseUrl: string },
+  args: { artifactId: string; buyerId: string | null; appBaseUrl: string; /** The shared demo buyer may buy a report again. */ allowRepeat?: boolean },
 ): Promise<CheckoutStarted> {
   const artifact = await db.artifact.findUnique({ where: { id: args.artifactId } });
   if (!artifact) throw new PaymentError(`Artifact ${args.artifactId} not found.`, 'not_found');
   if (artifact.status !== 'listed' || artifact.priceCents <= 0) {
     throw new PaymentError('This report is not for sale right now.', 'not_for_sale');
   }
-  if (args.buyerId && (await db.sale.count({ where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'captured' } })) > 0) {
-    throw new PaymentError('You already own this report.', 'state');
-  }
+  const alreadyOwned = !!args.buyerId && (await db.sale.count({ where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'captured' } })) > 0;
+  if (alreadyOwned && !args.allowRepeat) throw new PaymentError('You already own this report.', 'state');
   // A payment PayPal is still processing (a pending capture) must finish first: closing
   // it to start again would leave real money untracked, and could charge the buyer twice.
   if (args.buyerId && (await db.sale.count({ where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment', payment: { captureId: { not: null } } } })) > 0) {
@@ -57,7 +56,8 @@ export async function startCheckout(
   // PayPal orders. (PayPal orders stay approvable for ~3 hours; reuse within 2.)
   if (args.buyerId) {
     const open = await db.sale.findFirst({
-      where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment', createdAt: { gt: new Date(Date.now() - 2 * 60 * 60_000) }, payment: { is: { captureId: null } } },
+      // A checkout opened before the buyer owned it can't serve a repeat purchase (it would be refused at capture).
+      where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment', createdAt: { gt: new Date(Date.now() - 2 * 60 * 60_000) }, payment: { is: { captureId: null } }, ...(alreadyOwned ? { repeatPurchase: true } : {}) },
       orderBy: { createdAt: 'desc' },
       include: { payment: true },
     });
@@ -96,6 +96,7 @@ export async function startCheckout(
         buyerId: args.buyerId,
         amountCents: artifact.priceCents,
         currency: artifact.currency,
+        repeatPurchase: alreadyOwned,
         rightsCheck: json({ asOf: todayUtc(), verdict: rights.report.verdict, policyVersion: rights.report.policyVersion }),
         termsSnapshot: json(rights.snapshot),
         snapshotHash: rights.snapshotHash,
@@ -188,9 +189,10 @@ export async function captureSale(db: Db, paypal: PayPalGateway, saleId: string)
   }
 
   // Before taking money: the report must still be on sale, and the buyer must not
-  // already own it (e.g. bought through another checkout). Otherwise: no charge.
+  // already own it (e.g. bought through another checkout) — unless this checkout was
+  // started as a deliberate repeat purchase. Otherwise: no charge.
   const artifact = await db.artifact.findUniqueOrThrow({ where: { id: payment.sale.artifactId }, select: { status: true } });
-  const ownedElsewhere = payment.sale.buyerId
+  const ownedElsewhere = payment.sale.buyerId && !payment.sale.repeatPurchase
     ? await db.sale.count({ where: { artifactId: payment.sale.artifactId, buyerId: payment.sale.buyerId, status: 'captured', id: { not: saleId } } })
     : 0;
   if (artifact.status !== 'listed' || ownedElsewhere) {

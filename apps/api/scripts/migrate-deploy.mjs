@@ -1,6 +1,6 @@
 // `prisma migrate deploy` with retries for transient connection failures.
 //
-// Render runs this before every start. A serverless database (Neon) may still be
+// Render runs this in every build (render.yaml). A serverless database (Neon) may still be
 // waking its compute, or a connection can drop on the way; neither should fail a
 // deploy. Only connection errors are retried: a failing migration stops at once.
 import { spawnSync } from 'node:child_process';

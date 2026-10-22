@@ -35,10 +35,10 @@ export function OffersPanel() {
     },
   });
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
-  const offers = q.data!.licenses.filter((l) => l.status === 'offered');
-  const requests = q.data!.licenses.filter((l) => l.status === 'requested');
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
+  const offers = q.data.licenses.filter((l) => l.status === 'offered');
+  const requests = q.data.licenses.filter((l) => l.status === 'requested');
 
   return (
     <div className="space-y-4">
@@ -85,7 +85,7 @@ export function OffersPanel() {
                 ? 'Your current license stays in force until you accept. Reports you already sold keep their original terms.'
                 : 'Accepting makes these exact terms binding for reports you write from now on.'}
             </p>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <Button loading={decide.isPending && decide.variables?.item.id === o.id && decide.variables.accept} disabled={decide.isPending} onClick={() => decide.mutate({ item: o, accept: true })}>
                 Accept these terms
               </Button>
@@ -139,10 +139,10 @@ export function FindSourcesPanel() {
     },
   });
 
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorNote error={q.error} />;
+  if (q.error && !q.data) return <ErrorNote error={q.error} />;
+  if (!q.data) return <Spinner />;
   const needle = query.trim().toLowerCase();
-  const sources = q.data!.sources.filter((s) => !needle || `${s.title} ${s.description} ${s.owner.name}`.toLowerCase().includes(needle));
+  const sources = q.data.sources.filter((s) => !needle || `${s.title} ${s.description} ${s.owner.name}`.toLowerCase().includes(needle));
 
   const statusOf = (s: Listing) => {
     const st = s.myLicense?.status;
@@ -172,8 +172,8 @@ export function FindSourcesPanel() {
             return (
               <div key={s.assetId} className="flex flex-col rounded-xl border border-line bg-white p-5">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="font-semibold">{s.title}</div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="min-w-0 font-semibold">{s.title}</div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
                     {statusOf(s)}
                     {s.pendingLicense?.status === 'offered' && <Badge tone="warn">New terms offered</Badge>}
                     {s.pendingLicense?.status === 'requested' && <Badge tone="info">New terms requested</Badge>}
@@ -184,7 +184,7 @@ export function FindSourcesPanel() {
                 </div>
                 <p className="mt-2 flex-1 text-sm text-slate-700">{s.description}</p>
                 {canRequest && (
-                  <Button size="sm" variant="secondary" className="mt-4 self-start" loading={request.isPending && request.variables === s.assetId} onClick={() => request.mutate(s.assetId)}>
+                  <Button size="sm" variant="secondary" className="mt-4 self-start" loading={request.isPending && request.variables === s.assetId} disabled={request.isPending} onClick={() => request.mutate(s.assetId)}>
                     Request a license
                   </Button>
                 )}

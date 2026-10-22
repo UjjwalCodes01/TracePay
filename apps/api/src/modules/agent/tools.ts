@@ -105,7 +105,7 @@ const summarizeLicense = (e: CatalogEntry) => {
     rawRedistribution: t.rawRedistribution,
     validUntil: t.validUntil,
     economics:
-      t.economics.kind === 'percent_of_gross' ? `${formatBps(t.economics.bps)} of gross` : t.economics.kind === 'fixed_per_sale' ? `${formatMoney(t.economics.amountCents)} per sale` : 'none',
+      t.economics.kind === 'percent_of_gross' ? `${formatBps(t.economics.bps)} of each sale` : t.economics.kind === 'fixed_per_sale' ? `${formatMoney(t.economics.amountCents)} per sale` : 'none',
     payableOn: t.payableOn,
   };
 };
@@ -180,7 +180,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
           });
         }
         evaluated.sort((a, b) => Number(b.compatible) - Number(a.compatible) || a.maxContributorCents - b.maxContributorCents);
-        return ok({ blockedAssetVersionId: blocked, candidates: evaluated });
+        return ok({ blockedAssetVersionId: blocked, blockedTitle: catalog.find((e) => e.assetVersionId === blocked)?.assetTitle ?? null, candidates: evaluated });
       }
 
       case 'propose_replacement': {

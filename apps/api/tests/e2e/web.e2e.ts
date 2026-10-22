@@ -39,7 +39,7 @@ const ROLES = {
 } as const;
 
 /** Text that means something broke, whatever the page. */
-const BROKEN = /Unexpected Application Error|Something went wrong|Internal error|undefined|NaN|\[object Object\]/;
+const BROKEN = /Unexpected Application Error|Something went wrong|Internal error|undefined|NaN|\[object Object\]|AG Grid found/;
 
 describe.runIf(process.env.TEST_DATABASE_URL)('the web app in a browser', () => {
   let api: Server;
@@ -136,16 +136,18 @@ describe.runIf(process.env.TEST_DATABASE_URL)('the web app in a browser', () => 
     expect(problems).toEqual([]);
   }, 240_000);
 
-  it('never scrolls sideways on a phone', async () => {
+  it('never scrolls sideways on a phone, on any page', async () => {
     const overflow: string[] = [];
-    for (const [role, path] of [['buyer', '/ask'], ['buyer', '/store'], ['publisher', '/dashboard'], ['publisher', '/royalties'], ['publisher', '/settlements'], ['contributor', '/earnings']] as const) {
-      const page = await open(role, path, 375);
-      const width = await page.evaluate(() => document.documentElement.scrollWidth);
-      if (width > 375) overflow.push(`${role} ${path}: ${width}px wide`);
-      await page.close();
+    for (const role of Object.keys(ROLES) as Array<keyof typeof ROLES>) {
+      for (const path of ROLES[role].pages) {
+        const page = await open(role, path, 375);
+        const width = await page.evaluate(() => document.documentElement.scrollWidth);
+        if (width > 375) overflow.push(`${role} ${path}: ${width}px wide`);
+        await page.close();
+      }
     }
     expect(overflow).toEqual([]);
-  }, 180_000);
+  }, 300_000);
 
   it('has no serious accessibility problems (axe, WCAG 2 A/AA)', async () => {
     const axe = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { api, post } from '../lib/api';
 import { timeAgo } from '../lib/format';
-import { Button, ErrorNote } from './ui';
+import { Button, buttonClass, ErrorNote } from './ui';
 
 interface Issue {
   id: string;
@@ -30,6 +30,12 @@ function inFuture(iso: string): string {
   return `on ${new Date(iso).toLocaleDateString()}`;
 }
 
+/** "1 payment and 2 payouts" */
+function following(w: Summary['watching']): string {
+  const part = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? one : many}` : null);
+  return [part(w.payments, 'payment', 'payments'), part(w.payout_batches, 'group of payouts', 'groups of payouts')].filter(Boolean).join(' and ');
+}
+
 /**
  * "Needs attention": what reconciliation with PayPal found that a person should
  * look at, plus a plain statement of when TracePay last checked and will check next.
@@ -50,12 +56,17 @@ export function NeedsAttention() {
   const total = s?.open_issues ?? open.length;
   const watching = s ? s.watching.payments + s.watching.payout_batches : 0;
   const loaded = !!s && !!issues.data;
+  const failed = !loaded && (summary.isError || issues.isError);
 
   return (
     <section className="rounded-xl border border-line bg-white">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
         <h2 className="flex items-center gap-2 font-semibold">
-          {!loaded ? (
+          {failed ? (
+            <>
+              <AlertTriangle className="size-4 text-muted" /> Couldn’t check with PayPal right now
+            </>
+          ) : !loaded ? (
             'Checking with PayPal…'
           ) : total ? (
             <>
@@ -83,7 +94,7 @@ export function NeedsAttention() {
         TracePay checks your payments and contributor payouts with PayPal on its own — even if a PayPal notification gets lost.
         {s?.last_checked_at && ` Last checked ${timeAgo(s.last_checked_at)}.`}
         {watching > 0 && s?.next_check_at
-          ? ` Still following ${watching} ${watching === 1 ? 'item' : 'items'}; next check ${inFuture(s.next_check_at)}.`
+          ? ` Keeping an eye on ${following(s.watching)} with PayPal (for refunds and late changes); next check ${inFuture(s.next_check_at)}.`
           : s
             ? ' Nothing is waiting on PayPal right now.'
             : ''}
@@ -110,7 +121,7 @@ function IssueRow({ issue, onResolved }: { issue: Issue; onResolved: () => void 
           <p className="mt-1 text-xs text-muted">Found {timeAgo(issue.opened)}</p>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Link to="/settlements" className="inline-flex h-8 items-center rounded-lg border border-line px-3 text-sm font-medium hover:bg-slate-50">
+          <Link to="/settlements" className={buttonClass({ variant: 'secondary', size: 'sm' })}>
             Open payments
           </Link>
           {note === null && (
@@ -135,7 +146,7 @@ function IssueRow({ issue, onResolved }: { issue: Issue; onResolved: () => void 
             minLength={3}
             maxLength={500}
             placeholder="What did you do? e.g. “Paid the contributors directly.”"
-            className="h-9 min-w-64 flex-1 rounded-lg border border-line px-3 text-sm"
+            className="h-9 w-full min-w-0 flex-1 rounded-lg border border-line px-3 text-sm sm:min-w-64"
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />

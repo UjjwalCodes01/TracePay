@@ -27,6 +27,9 @@ type Row = Scenario & {
   problem: string | null;
 };
 
+// Long contributor names wrap onto a second header line instead of being cut off.
+const DEFAULT_COL: ColDef = { sortable: true, resizable: true, wrapHeaderText: true, autoHeaderHeight: true };
+
 let nextId = 0;
 const scenario = (priceCents: number): Scenario => ({ id: `s${++nextId}`, priceCents });
 
@@ -234,13 +237,14 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
           {note}
         </p>
       )}
-      <div className="h-[220px]">
+      <div>
         <AgGridReact<Row>
+          domLayout="autoHeight"
           theme={gridTheme}
           rowData={rows}
           getRowId={(p) => p.data.id}
           columnDefs={columns}
-          defaultColDef={{ sortable: true, resizable: true }}
+          defaultColDef={DEFAULT_COL}
           tooltipShowDelay={200}
           singleClickEdit
           stopEditingWhenCellsLoseFocus

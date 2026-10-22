@@ -1,14 +1,22 @@
 # TracePay
 
-**The license compiler and settlement engine for AI-generated products.**
+**TracePay checks that an AI-made report or answer is allowed to use its sources, sells it with PayPal, and pays every contributor their share automatically — with a signed receipt to prove it.**
 
-An AI can assemble a paid deliverable out of a dozen licensed sources in seconds. Nothing today checks whether those licenses actually allow that *specific* product to be sold, records which sources the output really used, or pays each contributor their agreed share when it sells. TracePay connects those three steps — and uses **PayPal** to collect the sale and pay the contributors.
+An AI can assemble a paid report out of a dozen licensed sources in seconds. Nothing today checks whether those licenses actually allow that *specific* product to be sold, records which sources the output really used, or pays each contributor their agreed share when it sells. TracePay connects those three steps — and uses **PayPal** to collect the sale and pay the contributors.
 
 > Built for the *Build What's Next with PayPal and AI* hackathon. Everything runs on the **PayPal sandbox** with **synthetic, fictional** demo data.
 
 ![CI](https://github.com/UjjwalCodes01/TracePay/actions/workflows/ci.yml/badge.svg)
 
-**Live demo:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — PayPal sandbox; pick a demo role on the sign-in page.
+**Live demo:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — PayPal sandbox, no sign-up needed. You start as the demo publisher; switch to *Buyer* or *Contributor* from the **Demo role** menu at the top. The API runs on free hosting, so the very first visit can take up to a minute to wake it.
+
+### Judge it in 3 minutes
+
+1. **Publisher → Create a report → Start the assistant.** The license check blocks one source (licensed for internal research only); the AI assistant finds a compatible replacement and asks you to approve it. Approve → the report is written, every claim citing its passage.
+2. **Buyer → Report store → Pay with PayPal** (sandbox). PayPal's payment is verified server-side.
+3. **Publisher → Pay contributors → Approve payment split → Send PayPal payouts.** Each contributor is paid their share in one PayPal Payouts batch, under the license terms in force when the report sold.
+4. **Receipt → Check signature.** One signed record from sources to license check to PayPal payment to payouts.
+5. **Buyer → Ask the library.** An AI answer that pays the contributors whose passages it really relied on — and the live red team shows it can't be gamed.
 
 ---
 
@@ -18,21 +26,21 @@ AI is built on people's work, and those people rarely see a cent. TracePay's ans
 
 1. A buyer, or their AI agent (Claude Desktop through our MCP server, or any app through the API), holds **prepaid credit bought with PayPal**.
 2. They ask a question and set the most it may cost.
-3. The **license compiler** decides which sources may be used: only licenses that allow AI answers, are in term, commercial and have a payee. Revoked, expired or "no AI" sources are never even retrieved.
+3. A **license check** (fixed rules, no AI) decides which sources may be used: only licenses that allow AI answers, are current, allow commercial use and have a contributor who can be paid. Revoked, expired or "no AI" sources are never even retrieved.
 4. Sources are **fitted to the price limit before the model runs**, at their worst-case cost, and that amount is held from the balance — so an answer can never cost more than the limit, and concurrent answers can never overspend.
 5. Gemini writes the answer from those passages only, citing `[C1]`, `[C2]`…
 6. **Citations are audited, not trusted.** An invented source rejects the answer (free). A citation is paid only if its sentence really draws on the passage; each passage is paid once, at most 3 per source. A small fee goes to the library.
-7. Each author's credit accrues; the library pays them in one **PayPal Payouts** batch (idempotent, failed items return to the pool). The asker gets an **Ed25519-signed receipt** of who was paid, under which license terms.
+7. Each contributor's earnings add up; the library pays them in one **PayPal Payouts** batch (idempotent, failed items return to the pool). The asker gets an **Ed25519-signed receipt** of who was paid, under which license terms.
 
 **Headline metric — "Can the AI overcharge you?"** A red-team suite attacks the payment rules — citation padding, decorative citations, instructions hidden in a source (to steer the model, or planted for it), invented sources, word-for-word copying, over-cap and over-budget answers — in the test suite *and live on the Ask page*: **8 of 8 attacks caught; overpaid: $0.00.**
 
-**Built so nobody can game it:** an unpaid answer never returns its text (no free licensed content); passages that try to instruct the model are withheld from it; answers that copy a source word for word are rejected (licenses forbid raw redistribution); demo credit only ever pays the demo's own authors; royalties wait a clearing period before payout, and a refund or chargeback claws back the ones its money funded.
+**Built so nobody can game it:** an unpaid answer never returns its text (no free licensed content); passages that try to instruct the model are withheld from it; answers that copy a source word for word are rejected (licenses forbid raw redistribution); demo credit only ever pays the demo's own contributors; royalties wait a clearing period before payout, and a refund or chargeback claws back the ones its money funded.
 
 | Who | Where |
 |---|---|
-| Buyer / AI agent | *Ask the Library* · `POST /api/v1/answers` (402 when credit runs out) · MCP tool `ask_library` |
-| Author | License terms gain an *AI answers* clause (cents per cited passage); *My Earnings → From AI answers* |
-| Library (publisher) | *Answer Royalties*: owed per author, one-click PayPal payout, statuses read back from PayPal |
+| Buyer / AI agent | *Ask the library* · `POST /api/v1/answers` (402 when credit runs out) · MCP tool `ask_library` |
+| Contributor | License terms gain an *AI answers* clause (cents per cited passage); *My earnings → From AI answers* |
+| Library (publisher) | *Answer royalties*: owed per contributor, one-click PayPal payout, statuses read back from PayPal |
 
 ---
 
@@ -40,21 +48,21 @@ AI is built on people's work, and those people rarely see a cent. TracePay's ans
 
 **Atlas Research Studio** wants to sell a *Developer Tools Market Brief* for **$20**, built from three licensed sources.
 
-1. **Preflight blocks it.** One source — the *Kestrel Enterprise Panel* — is licensed for *internal research only*. TracePay's deterministic license compiler refuses the commercial build (`PURPOSE_ALLOWED`, `COMMERCIAL_USE`).
-2. **The Publisher Agent recovers.** A Gemini agent finds a compatible replacement (*Open Developer Survey Digest*, $2 per sale), asks the publisher for approval, re-runs preflight — now **PASS** — and generates the report. It cannot override a failed rule, change the price, or move money.
+1. **The license check blocks it.** One source — the *Kestrel Enterprise Panel* — is licensed for *internal research only*. TracePay's license check (fixed rules, no AI) refuses a report that will be sold.
+2. **The research assistant recovers.** A Gemini agent finds a compatible replacement (*Open Developer Survey Digest*, $2 per sale), asks the publisher for approval, re-runs the license check — now **passed** — and writes the report. It cannot override a failed rule, change the price, or move money.
 3. **Every claim is traceable.** Each finding cites `[C1]`, `[C4]`… which resolve to the exact retrieved passage. Invented citations are rejected.
-4. **A buyer pays with PayPal — or lets an AI shop for them.** The buyer's **Shopping Assistant** (Gemini) searches the store for what they asked for, re-runs the license compiler on each candidate, checks its citations and proposes one purchase **within the buyer's budget** — the budget is enforced in code, and the assistant can't pay: the buyer approves the payment in PayPal. Either way, the server creates the order, captures it, and verifies amount, currency and sale reference against PayPal's response.
+4. **A buyer pays with PayPal — or lets an AI shop for them.** The buyer's **shopping assistant** (Gemini) searches the store for what they asked for, re-runs the license check on each candidate, checks its citations and proposes one purchase **within the buyer's budget** — the budget is enforced in code, and the assistant can't pay: the buyer approves the payment in PayPal. Either way, the server creates the PayPal order, takes the payment, and verifies amount, currency and sale reference against PayPal's response.
 5. **Contributors are paid automatically — under the license terms in force at the moment of sale.**
 
    | Recipient | Rule (approved license) | Amount |
    |---|---|---|
-   | Northwind Data Co. | 25% of gross | $5.00 |
-   | Mara Okafor (analyst) | 15% of gross, *only if cited* | $3.00 |
-   | Lumen Collective | $2.00 fixed per sale | $2.00 |
-   | Atlas (publisher, merchant of record) | residual | $10.00 |
+   | Northwind Data Co. | 25% of each sale | $5.00 |
+   | Mara Okafor (analyst) | 15% of each sale, *only if cited* | $3.00 |
+   | Lumen Collective | $2.00 for each sale | $2.00 |
+   | Atlas (the publisher, who sold it) | what's left | $10.00 |
 
    After the publisher approves, one **PayPal Payouts** batch pays all three; statuses are read back from PayPal until each item reports `SUCCESS`.
-6. **A signed receipt proves it.** One Ed25519-signed document links source versions → rights check → artifact → PayPal capture → settlement formula → payout status, on top of a hash-chained audit log.
+6. **A signed receipt proves it.** One Ed25519-signed document links source versions → license check → report → PayPal payment → payment split → payout status, on top of a hash-chained audit log.
 
 ---
 
@@ -62,25 +70,25 @@ AI is built on people's work, and those people rarely see a cent. TracePay's ans
 
 The innovation isn't splitting $20 — many systems can do that. It's that **the financial structure of the product is derived from its verified dependency trail**:
 
-- **Rights are checked against the intended use, not just "has a license".** The same dataset can be allowed in a derived report and blocked the moment you add a raw-data appendix (`RAW_REDISTRIBUTION`).
-- **Provenance drives payment.** A license can pay only when the final output *cites* the source; retrieved-but-uncited sources get $0 with a recorded reason.
+- **Rights are checked against the intended use, not just "has a license".** The same dataset can be allowed in a derived report and blocked the moment you add an appendix of the original data.
+- **Where it came from drives payment.** A license can pay only when the final output *cites* the source; retrieved-but-uncited sources get $0 with a recorded reason.
 - **Rights are re-checked at every sale, and terms are frozen per sale.** A report keeps selling only while every source's license still permits it; a revoked or expired license takes it off sale. Each sale settles under the terms in force when it happened — later renegotiations never rewrite it.
 - **Answers pay per verified citation.** Pay-per-citation turns the same dependency trail into a royalty stream for AI answers — with the price limit enforced before the model runs.
-- **Evidence is never blurred.** Every node in the provenance graph is labeled as *verified by PayPal*, *recorded event*, *AI interpretation*, or *contractual* — a model's claim is never presented as a fact.
+- **Evidence is never blurred.** Every node in the *Where it came from* graph is labeled as *verified by PayPal*, *recorded event*, *AI interpretation*, or *contractual* — a model's claim is never presented as a fact.
 
 ---
 
 ## Platform API & webhooks
 
-Everything the dashboard does is also available to other software, so a company can plug TracePay into its own stack after the hackathon:
+Everything the dashboard does is also available to other software, so a company can plug TracePay into its own stack after the hackathon. (In the API, *preflight* = license check, *settlement* = the contributors' payment split, *artifact* = report, *capture* = a PayPal payment.)
 
-- **REST API at `/api/v1`** — sources and licenses, license preflight, citation-checked generation, reports, signed receipts and provenance, sales, settlements and PayPal payouts, Publisher Agent runs, and **buying** for buyer accounts (search, license check, PayPal checkout). **OpenAPI 3.1** at [`/api/v1/openapi.json`](https://trace-pay-umber.vercel.app/api/v1/openapi.json), browsable on the **Developers → API reference** page.
+- **REST API at `/api/v1`** — sources and licenses, license preflight, citation-checked generation, reports, signed receipts and provenance, sales, settlements and PayPal payouts, research-assistant runs, and **buying** for buyer accounts (search, license check, PayPal checkout). **OpenAPI 3.1** at [`/api/v1/openapi.json`](https://trace-pay-umber.vercel.app/api/v1/openapi.json), browsable on the **Developers → API reference** page.
 - **API keys** from the Developers page: full or read-only, optional expiry, revocable. Keys work only on `/api/v1` (never on the dashboard's own routes).
 - **Signed webhooks** for 35+ event types (`sale.completed`, `settlement.created`, `payout_batch.updated`, `license.offered`, …): HMAC-SHA256 with timestamp, retries with backoff for about a day, secret rotation without downtime, a test button and a delivery log.
 - **Safe to retry:** `Idempotency-Key` on every POST; cursor pagination; one error format with request ids; per-key rate limits.
 
 ```bash
-curl https://tracepay-api.onrender.com/api/v1/sales?status=captured \
+curl 'https://tracepay-api.onrender.com/api/v1/sales?status=captured' \
   -H "Authorization: Bearer tp_…"
 ```
 
@@ -94,9 +102,9 @@ curl https://tracepay-api.onrender.com/api/v1/sales?status=captured \
 
 | | |
 |---|---|
-| **Build Studio** — rules × sources preflight matrix, Publisher Agent with live trace and approval card | **Provenance Explorer** — React Flow graph from source versions to payouts, colour-coded by evidence |
-| **Report** — clickable citation chips open the cited passage | **Settlement Console** — AG Grid ledger: formula per line, payable flags, live PayPal payout status, pinned totals |
-| **Report Store** — PayPal Smart Buttons, server-verified capture | **Audit Receipt** — signed, verifiable, downloadable |
+| **Create a report** — license check of every rule × source, research assistant with live trace and approval card | **Where it came from** — React Flow graph from source versions to payouts, colour-coded by evidence |
+| **Report** — clickable citation chips open the cited passage | **Pay contributors** — AG Grid ledger: how each share was worked out, live PayPal payout status, totals |
+| **Report store** — PayPal Smart Buttons, payment verified on the server | **Receipt** — signed, verifiable, downloadable |
 
 ---
 
@@ -134,12 +142,12 @@ Checks are claimed with leases (`SKIP LOCKED`), so several servers share the wor
 
 | Role | What the model does | What it is **not** allowed to do |
 |---|---|---|
-| **Publisher Agent** (function calling) | Plans the build, calls 7 TracePay tools (`run_license_preflight`, `find_compatible_replacement`, `propose_replacement`, `generate_report`, …), recovers from a blocked plan | Override the compiler, preflight unapproved sources, change price/purpose, touch money — enforced in code, not in the prompt |
-| **Shopping Assistant** (function calling, buyer side) | Searches the store, inspects candidates (fresh license check, citation check), proposes the best report within the buyer's budget with a plain reason, then reports back after the buyer decides | Pay, exceed the budget, propose a report it hasn't verified, owned or off sale — enforced in code; money moves only when the buyer approves in PayPal |
+| **Research assistant** (function calling, publisher side) | Plans the build, calls 7 TracePay tools (`run_license_preflight`, `find_compatible_replacement`, `propose_replacement`, `generate_report`, …), recovers from a blocked plan | Override the license check, check unapproved sources, change price/purpose, touch money — enforced in code, not in the prompt |
+| **Shopping assistant** (function calling, buyer side) | Searches the store, inspects candidates (fresh license check, citation check), proposes the best report within the buyer's budget with a plain reason, then reports back after the buyer decides | Pay, exceed the budget, propose a report it hasn't verified, owned or off sale — enforced in code; money moves only when the buyer approves in PayPal |
 | **Answer writer** (structured output, pay-per-citation) | Answers a question from licensed passages only, citing `[Cn]` | Decide who is paid: citations are audited deterministically (retrieved, supported, de-duplicated, capped, within the asker's limit); text inside a source is data, never instructions |
 | **Report writer** (structured output) | Synthesises findings from retrieved passages with `[Cn]` citation markers | Cite anything not retrieved (validated; one repair attempt, then rejected) |
 | **License drafter** (structured output) | Reads a contributor's license document and drafts normalized terms with a verbatim quote per field | Bind anyone — both parties confirm; quotes not found in the document are flagged |
-| **Explainer** | Turns failed rules into plain language for the publisher | Change the verdict — the compiler's decision is returned, never the model's |
+| **Explainer** | Turns failed rules into plain language for the publisher | Change the verdict — the license check's decision is returned, never the model's |
 
 When no Gemini model is configured (neither `GEMINI_API_KEY` nor Vertex AI), TracePay falls back to a **rule-based planner** and an **extractive fixture writer**. Both are clearly labeled in the UI and in the receipt (`fromFixture: true`) and are never presented as model output.
 
@@ -150,14 +158,14 @@ When no Gemini model is configured (neither `GEMINI_API_KEY` nor Vertex AI), Tra
 ```mermaid
 flowchart LR
   subgraph Web["apps/web — React · Vercel"]
-    Studio[Build Studio + Agent trace]
-    Store[Report Store · PayPal Buttons]
-    Console[Settlement Console · AG Grid]
-    Graph[Provenance · React Flow]
+    Studio[Create a report + assistant trace]
+    Store[Report store · PayPal Buttons]
+    Console[Pay contributors · AG Grid]
+    Graph[Where it came from · React Flow]
   end
   subgraph API["apps/api — Express · Render"]
-    Compiler[License compiler<br/>deterministic rules]
-    Agent[Publisher Agent<br/>bounded loop + guardrails]
+    Compiler[License check<br/>deterministic rules]
+    Agent[Research assistant<br/>bounded loop + guardrails]
     Gen[Retrieval + generation<br/>citation validation]
     Pay[Payments<br/>capture · verify · webhooks]
     Settle[Settlement engine<br/>integer cents · frozen terms]
@@ -186,7 +194,7 @@ flowchart LR
 | Real | Simulated / demo-only |
 |---|---|
 | PayPal sandbox Orders, capture, Payouts, webhooks (including answer-credit top-ups and per-citation royalty payouts) | All sources, contributors and numbers are fictional |
-| License compiler, settlement engine, audit chain, signatures | The seeded demo roles, reachable with one click when `DEMO_MODE=true` |
+| License check, payment-split engine, audit chain, signatures | The seeded demo roles, reachable with one click when `DEMO_MODE=true` |
 | Accounts: sign-up / sign-in, scrypt passwords, httpOnly sessions, API keys | |
 | Gemini agents and writers, through a Gemini API key or Vertex AI (when configured) | Fixture writer / rule-based planner when Gemini is not configured — always labeled |
 | PostgreSQL persistence | "Reset demo" restores TracePay fixtures; it does **not** reverse PayPal sandbox history |
@@ -197,7 +205,7 @@ TracePay enforces recorded, approved license terms. It does not establish legal 
 
 ## Run it locally
 
-**Prerequisites:** Node 22.12+ (24 recommended, see `.node-version`), Docker, a PayPal Developer account. Gemini (an API key or Vertex AI) is optional.
+**Prerequisites:** Node 24 (see `.node-version`; the MCP server runs TypeScript directly), Docker, a PayPal Developer account. Gemini (an API key or Vertex AI) is optional.
 
 ```bash
 git clone https://github.com/UjjwalCodes01/TracePay.git && cd TracePay
@@ -227,6 +235,9 @@ npm run dev:web                                # http://localhost:5173
 | `GOOGLE_CLOUD_PROJECT`, `VERTEX_MODEL` | or, for live AI | Vertex AI instead of an API key: plus `gcloud auth application-default login` locally, or `GOOGLE_SERVICE_ACCOUNT_JSON` on a server |
 | `AUDIT_SIGNING_PRIVATE_KEY` | yes | Ed25519 key from `npm run keys:generate` |
 | `DEMO_MODE` | no (default `false`) | `true` enables the one-click demo roles and "Reset demo". **Keep `false` for real users** |
+| `DEMO_SHARED_BUYER` | no (default `false`) | With `DEMO_MODE`, for a hosted demo many people visit: the demo buyer may buy a report again and its demo credit refills, so every visitor can try checkout and AI answers. Demo credit still only pays the demo's own contributors |
+| `PAYPAL_SANDBOX_BUYER_HINT` | no | Demo mode only: the sandbox buyer login shown next to the PayPal buttons, so visitors can complete a test payment |
+| `APP_BASE_URL`, `API_BASE_URL` | in production | The public web address (PayPal return URLs, CSRF) and the API's own public address (OpenAPI servers) |
 | `CORS_ORIGINS` | in production | The web app's origin(s); also used for the CSRF origin check |
 | `RATE_LIMIT_PER_MINUTE`, `AUTH_RATE_LIMIT` | no | Defaults 300 req/min/IP and 20 sign-in attempts per 15 min/IP |
 | `API_RATE_LIMIT_PER_MINUTE` | no | Platform API requests per minute per API key (default 600; twice that per account) |
@@ -259,7 +270,7 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
 | **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
-| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck, 329 tests with a coverage floor, browser tests and CodeQL against real Postgres, Render Blueprint, Vercel config |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck, 337 tests with a coverage floor, browser tests and CodeQL against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 
@@ -284,12 +295,12 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 
 ### Demo walkthrough
 
-1. **Publisher** → *Build Studio* → keep the default three sources → **Run agent**. Watch it get blocked, propose a replacement, and wait for you. **Approve** → report ready.
-2. Open the report → click a citation chip → **Provenance**.
-3. Switch role to **Buyer** → *Report Store* → **Pay with PayPal** (sandbox buyer account) → the report unlocks with the server-verified capture. Or open **Shopping Assistant**, describe what you need, set a budget, and watch it search, verify and propose — then pay (or decline) right on its proposal.
-4. Switch back to **Publisher** → *Settlement Console* → **Approve** → **Send PayPal payouts** → **Refresh from PayPal**.
-5. Open the **Audit Receipt** → **Verify signature**. Switch to a **Contributor** to see their own settlement record.
-6. **Pay-per-citation:** as **Buyer** → *Ask the Library* → ask (the demo buyer starts with $2.00 of demo credit; top up with PayPal for more). See who your cents paid, what was left out and why, and verify the signed receipt. As **Publisher** → *Answer Royalties* → **Pay with PayPal** → **Check with PayPal**. As a **Contributor** → *My Earnings → From AI answers*.
+1. **Publisher** → *Create a report* → keep the three preselected sources → **Start the assistant**. Watch it get blocked, propose a replacement, and wait for you. **Approve replacement** → report ready.
+2. Open the report → click a citation chip → **Where it came from**.
+3. Switch role to **Buyer** → *Report store* → **Pay with PayPal** (sandbox buyer account) → the report unlocks once the server has verified the payment. Or open *Shopping assistant*, describe what you need, set a budget, and watch it search, verify and propose — then pay (or decline) right on its proposal.
+4. Switch back to **Publisher** → *Pay contributors* → **Approve payment split** → **Send PayPal payouts** → **Refresh from PayPal**.
+5. Open the **Receipt** → **Check signature**. Switch to a **Contributor** to see their own share of every sale.
+6. **Pay-per-citation:** as **Buyer** → *Ask the library* → ask (the demo buyer has demo credit; top up with PayPal for more). See who your cents paid, what was left out and why, and verify the signed receipt. As **Publisher** → *Answer royalties* → **Pay with PayPal** → **Check with PayPal**. As a **Contributor** → *My earnings → From AI answers*.
 
 ---
 
@@ -297,25 +308,26 @@ npm run smoke:vertex -w @tracepay/api                   # Gemini structured outp
 
 ```bash
 npm run db:up                                # Postgres :5433 + Redis :6380
-npm run test:integration -w @tracepay/api    # 329 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api    # 337 tests; creates/migrates a tracepay_test database
 npm run test:coverage -w @tracepay/api       # the same, with a coverage floor (CI)
 npm run test:e2e -w @tracepay/api            # the web app in a real browser (Chrome, Chromium or Firefox)
 npm run db:check-drift -w @tracepay/api      # the schema matches its migrations (CI)
 ```
 
-**The harness.** Integration tests run against real PostgreSQL and Redis; PayPal is an in-memory fake that enforces PayPal's rules (approval before capture, idempotency keys, sender_batch_id uniqueness, pending/declined/refunded captures, lost responses); Gemini is either the labeled fallback or a scripted stand-in that checks what TracePay sends and how it treats malformed replies. A guard refuses to run integration tests against any non-local database. Every `/api/v1` response is validated against the OpenAPI schema. CI also boots the real server process, drives the MCP server over stdio with a real MCP client, runs the browser tests (every page for every role, no sideways scrolling at 375 px, no serious axe WCAG 2.1 AA violations, and the paid-answer flow end to end), enforces a coverage floor (currently ~92 % of lines, ~76 % of branches), checks for schema drift, audits dependencies and runs CodeQL.
+**The harness.** Integration tests run against real PostgreSQL and Redis; PayPal is an in-memory fake that enforces PayPal's rules (approval before capture, idempotency keys, sender_batch_id uniqueness, pending/declined/refunded captures, lost responses); Gemini is either the labeled fallback or a scripted stand-in that checks what TracePay sends and how it treats malformed replies. A guard refuses to run integration tests against any non-local database. Every `/api/v1` response is validated against the OpenAPI schema. CI also boots the real server process, drives the MCP server over stdio with a real MCP client, runs the browser tests (every page for every role, no sideways scrolling at 375 px, no serious axe WCAG 2.1 AA violations, and the paid-answer flow end to end), enforces a coverage floor (90 % of lines, 73 % of branches; currently ~92 % and ~76 %), checks for schema drift, audits dependencies and runs CodeQL.
 
 | Suite | Covers |
 |---|---|
 | License compiler (14) | block/pass, replacement, internal-only, raw-redistribution adversarial case, expiry, territory, >100% royalties, determinism |
-| Settlement engine (9) | exact $20 split, reconciliation for any amount, paid-only-if-cited, fixed fees, rejection cases |
+| Settlement engine (10) | exact $20 split, reconciliation for any amount, paid-only-if-cited, fixed fees, rejection cases, every formula described in plain words |
+| Plain words (3) | every rule, purpose and status has a name; countries and dates spelled out the same everywhere; license-check messages contain no codes, ids or raw values |
 | Citations · audit · signing · money (7) | invented citation rejected, hash chain tamper detection, signature tamper detection, decimal ↔ cents |
 | PayPal client (6) | same idempotency key on retry, payout POST never auto-retried, deadline on every call, no retry on 4xx, raw-body webhook verification, Payouts scope |
 | Build pipeline (5) | recorded blocked builds, retrieval scoped to approved sources, citation integrity |
 | Money path (21) | capture before approval, duplicate webhooks, webhook-before-response, forged-then-genuine webhook ids, reprocessing a half-applied webhook, amount mismatch, **sale-time terms that later edits never touch**, expired license blocks the sale, capture recorded even when settlement fails, no double purchase, **concurrent payout clicks send once**, denied batches (and retrying them), refunds stay exceptions, **lost payout response recovered via webhook**, missing Payouts permission |
 | Hardening (20) | no source text or payout addresses in builds or purchase lists, per-viewer provenance and receipts, refunds never undone or dropped, partial refunds, revocation closes pending offers, new credit requirements stop sales, generation and capture-time license re-checks, unreadable stored terms, payout retry with history, settlement recalculation, interrupted-work recovery, scoped demo reset, demo header limited to personas, cross-site writes, per-account login lockout, checkout reuse, price limits |
 | Publisher agent (5) | recovery, approval pause, decline, guardrail violations, turn limit |
-| Shopping Assistant & buying API (8) | finds, verifies and proposes; "yes" counts only once PayPal has the money, and only once; never over budget; decline; guardrails enforced whatever the model asks; buyer-only runs kept out of publisher screens; the `/v1` buying flow an MCP agent uses (search → license check → checkout → buyer approves → capture → read), buyer keys limited to buying, other buyers' checkouts unreachable |
+| Shopping assistant & buying API (9) | finds, verifies and proposes; "yes" counts only once PayPal has the money, and only once; never over budget; decline; guardrails enforced whatever the model asks; buyer-only runs kept out of publisher screens; the `/v1` buying flow an MCP agent uses (search → license check → checkout → buyer approves → capture → read), buyer keys limited to buying, other buyers' checkouts unreachable |
 | Security (17) | sign-up/sign-in/sign-out, hashed passwords and sessions, no account enumeration, rate limits, demo mode off, cross-tenant 404s on every resource, role-appropriate provenance views, API keys, CSRF, security headers, readiness |
 | License extraction (13) | the rule-based extractor reproduces all five demo licenses' approved terms (including their AI-answers clauses); restrictive defaults with warnings; end date read after "until"; impossible percentages; thousands separators; expired documents; schema normalisation |
 | Licensing lifecycle (10) | source registration, private marketplace listings, request → offer → accept, hash-bound acceptance, renegotiation, decline/withdraw, revocation vs. frozen settlement, contributor isolation, audit trail |
@@ -329,9 +341,10 @@ npm run db:check-drift -w @tracepay/api      # the schema matches its migrations
 | AI-answer rights (4) | every exclusion rule (no license, revoked, not approved, expired or not started, AI not allowed, non-commercial, territory, no payee), free sources, inclusive end dates |
 | Server process (2) | the real entry point boots, reports healthy and ready, exits cleanly on SIGTERM; refuses an incomplete production config and says why |
 | MCP server (4) | a real MCP client over stdio: tools listed, answers marked as untrusted data, idempotency keys sent, the session cap, choosing between libraries, refusing invalid caps |
-| Browser (4, `test:e2e`) | every page for every role renders without errors and with a title; no sideways scrolling on phones; no serious accessibility violations; asking, paying authors and the PayPal payout end to end |
+| Browser (4, `test:e2e`) | every page for every role renders without errors, library warnings or a missing title; no page scrolls sideways on a phone; no serious accessibility violations; asking, paying authors and the PayPal payout end to end |
 | Pay-per-citation hardening (22) | pending captures followed to the end, briefly-missing orders waited out, no capture outside the window, back-off while PayPal is down; unpaid answers never return their text; word-for-word copying rejected after one retry; instruction-carrying passages withheld; demo credit only pays demo authors; top-ups captured on the buyer's behalf, after a lost reply, or closed when abandoned; partial refunds add up once each and claw back unpaid royalties; royalty batches never paid twice after a lost reply and picked up from the webhook; refused batches back to the pool; no resend after 25 days; scheduled polling; payouts returned after success re-paid; clearing period; receipts verified only with TracePay's key; no buyer emails in settlements; payout-email changes need the password; data export and account deletion; retention pruning; production config checks |
 | Pay-per-citation (16) | red team (8 attacks plus an honest control, all as expected), supported-citation check, price limit never exceeded, per-source cap; answers only from AI-licensed sources with exclusions explained, exact charge = fee + verified citations, signed receipt verifies (tampered fails), 402 until topped up, not covered = free, invented source = rejected and free, model down = free, revoked license excluded at once, concurrent answers can't overspend, PayPal Payouts with failed items back in the pool, top-up refund reverses credit, interrupted answers release their hold, demo credit, the whole flow over `/v1` |
+| Shared demo (3) | the shared demo buyer may buy again (a real buyer still can't pay twice); its demo credit refills with an exact ledger, never for real accounts; the shopping assistant counts only this visitor's payment |
 | Shared rate limits (2) | two API instances share one limit through Redis / Render Key Value; limits fail open when it's unreachable |
 | AI config · sale records (5) | Gemini API key vs. Vertex AI selection; which sales count on receipts and provenance |
 
@@ -349,10 +362,10 @@ render.yaml   Render Blueprint (API; database on Neon); apps/web/vercel.json for
 ## Tools used
 
 - **PayPal Developer Platform (sandbox):** Orders v2, JS SDK Smart Buttons, Payouts, Webhooks.
-- **Google Gemini (Gemini API or Vertex AI):** function-calling Publisher Agent and buyer Shopping Assistant, structured-output report writer, license drafting, failure explanations — via `@google/genai`.
+- **Google Gemini (Gemini API or Vertex AI):** function-calling research assistant (publisher) and shopping assistant (buyer), structured-output report writer, license drafting, failure explanations — via `@google/genai`.
 - **AG Grid Community + AG Charts:**
-  - **Price & royalty simulator** (Create a Report): an editable grid of prices, each settled in the browser with the same engine that settles real sales (`packages/shared`), with a stacked chart of who gets what.
-  - **Royalty ledger** (Pay Contributors): every sale's royalty lines with quick search, column filters, totals and a per-recipient chart that follow the filters, CSV export, and cells that flash when PayPal changes a payout.
+  - **Price & royalty simulator** (Create a report): an editable grid of prices, each settled in the browser with the same engine that settles real sales (`packages/shared`), with a stacked chart of who gets what.
+  - **Royalty ledger** (Pay contributors): every sale's royalty lines with quick search, column filters, totals and a per-recipient chart that follow the filters, CSV export, and cells that flash when PayPal changes a payout.
   - **Contributor earnings** with filters and CSV export (for taxes), plus the source registry and per-sale settlement grids.
 - **React Flow:** provenance graph.
 - **Render:** the API (Blueprint in `render.yaml`) and a **Render Key Value** instance holding the shared rate-limit counters. **Neon** (serverless Postgres) and **Vercel** (web).

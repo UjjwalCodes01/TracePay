@@ -6,11 +6,11 @@ reports on TracePay **for a buyer** — through the Platform API, with the buyer
 | Tool | What it does |
 |---|---|
 | `search_reports` | Reports for sale, best match first, with price and whether citations are verified |
-| `check_report` | Re-runs the license compiler as of today; returns the full text once the buyer owns it |
+| `check_report` | Re-runs the license check as of today; returns the full text once the buyer owns it |
 | `start_checkout` | Creates a PayPal checkout and returns the **approve link for the buyer** |
 | `complete_checkout` | After the buyer approved at PayPal: capture, verify, unlock |
 | `checkout_status` | Where a checkout stands |
-| `ask_library` | **Pay-per-citation:** answers from sources licensed for AI only; the user's credit pays each author for the passages the answer verifiably used, never more than `TRACEPAY_MAX_ANSWER_CENTS` |
+| `ask_library` | **Pay-per-citation:** answers from sources licensed for AI only; the user's credit pays each contributor for the passages the answer verifiably used, never more than `TRACEPAY_MAX_ANSWER_CENTS` |
 | `list_libraries` · `credit_balance` | Libraries that answer questions; the user's answer credit |
 | `top_up_credits` · `complete_top_up` | Buy answer credit with PayPal: returns the approve link for the user |
 

@@ -11,37 +11,50 @@ export function Button({
   children,
   disabled,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; size?: 'sm' | 'md'; loading?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: 'sm' | 'md'; loading?: boolean }) {
   return (
-    <button
-      {...rest}
-      disabled={disabled || loading}
-      className={clsx(
-        'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
-        size === 'sm' ? 'h-8 px-3 text-sm' : 'h-10 px-4 text-sm',
-        variant === 'primary' && 'bg-ink text-white hover:bg-slate-800',
-        variant === 'secondary' && 'border border-line bg-white text-ink hover:bg-slate-50',
-        variant === 'ghost' && 'text-muted hover:bg-slate-100 hover:text-ink',
-        variant === 'danger' && 'border border-red-200 bg-white text-block hover:bg-red-50',
-        className,
-      )}
-    >
+    <button {...rest} disabled={disabled || loading} className={buttonClass({ variant, size, className })}>
       {loading && <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />}
       {children}
     </button>
   );
 }
 
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+
+/** A button's look, for links that act as buttons (`<Link className={buttonClass({ variant: 'secondary' })}>`). */
+export function buttonClass({ variant = 'primary', size = 'md', className }: { variant?: ButtonVariant; size?: 'sm' | 'md'; className?: string } = {}) {
+  return clsx(
+    'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+    size === 'sm' ? 'h-8 px-3 text-sm' : 'h-10 px-4 text-sm',
+    variant === 'primary' && 'bg-ink text-white hover:bg-slate-800',
+    variant === 'secondary' && 'border border-line bg-white text-ink hover:bg-slate-50',
+    variant === 'ghost' && 'text-muted hover:bg-slate-100 hover:text-ink',
+    variant === 'danger' && 'border border-red-200 bg-white text-block hover:bg-red-50',
+    className,
+  );
+}
+
+/** The exact proof behind a plain summary (ids, hashes, formulas): there for anyone checking, out of the way otherwise. */
+export function TechnicalDetails({ children, className, label = 'Technical details' }: { children: ReactNode; className?: string; label?: string }) {
+  return (
+    <details className={clsx('group mt-4 rounded-lg border border-line bg-slate-50 text-sm', className)}>
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted hover:text-ink">{label}</summary>
+      <div className="min-w-0 border-t border-line px-3 py-3">{children}</div>
+    </details>
+  );
+}
+
 export function Card({ className, children, title, action }: { className?: string; children: ReactNode; title?: ReactNode; action?: ReactNode }) {
   return (
-    <section className={clsx('rounded-xl border border-line bg-white', className)}>
+    <section className={clsx('min-w-0 rounded-xl border border-line bg-white', className)}>
       {(title || action) && (
-        <header className="flex items-center justify-between gap-4 border-b border-line px-5 py-3">
-          <h2 className="text-sm font-semibold">{title}</h2>
+        <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-5 py-3">
+          <h2 className="min-w-0 text-sm font-semibold">{title}</h2>
           {action}
         </header>
       )}
-      <div className="p-5">{children}</div>
+      <div className="min-w-0 p-5">{children}</div>
     </section>
   );
 }
@@ -94,7 +107,7 @@ export function EvidenceBadge({ evidence }: { evidence: Evidence }) {
 export function Stat({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: ReactNode; tone?: 'block' | 'pass' }) {
   return (
     <div className="rounded-xl border border-line bg-white px-5 py-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted">{label}</div>
+      <div className="text-sm text-muted">{label}</div>
       <div className={clsx('mt-1 text-2xl font-semibold tabular-nums', tone === 'block' && 'text-block', tone === 'pass' && 'text-pass')}>{value}</div>
       {hint && <div className="mt-1 text-xs text-muted">{hint}</div>}
     </div>

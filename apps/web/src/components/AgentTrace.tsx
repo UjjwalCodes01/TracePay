@@ -47,7 +47,7 @@ function ResultSummary({ step, titles }: { step: AgentStep; titles: Record<strin
           <StatusBadge status={String(o.verdict)} />
           {failed.map((f, i) => (
             <div key={i} className="text-block">
-              <span className="font-medium" title={f.ruleId}>{RULE_LABELS[f.ruleId as RuleId] ?? f.ruleId}</span> — {f.message}
+              <span className="font-medium" title={f.ruleId}>{RULE_LABELS[f.ruleId as RuleId] ?? f.ruleId}</span> — {withTitles(f.message, titles)}
             </div>
           ))}
         </div>
@@ -58,9 +58,10 @@ function ResultSummary({ step, titles }: { step: AgentStep; titles: Record<strin
       return (
         <ul className="space-y-0.5">
           {c.map((x) => (
-            <li key={x.assetVersionId} className={x.compatible ? 'text-pass' : 'text-muted line-through'}>
-              {x.compatible ? '✓' : '✗'} {x.title} {x.economics && <span className="text-muted no-underline">· {plainEconomics(x.economics)}</span>}
-              {!x.compatible && x.reasons[0] && <span className="ml-1 text-xs">({x.reasons[0]})</span>}
+            <li key={x.assetVersionId} className={x.compatible ? 'text-pass' : 'text-slate-600'}>
+              <span aria-hidden>{x.compatible ? '✓' : '✗'}</span> <span className="sr-only">{x.compatible ? 'Fits:' : 'Doesn’t fit:'}</span> <span className={x.compatible ? 'font-medium' : undefined}>{x.title}</span>
+              {x.economics && <span className="text-muted"> · {plainEconomics(x.economics)}</span>}
+              {!x.compatible && x.reasons[0] && <span className="block pl-4 text-muted">{withTitles(x.reasons[0], titles)}</span>}
             </li>
           ))}
         </ul>
@@ -110,9 +111,17 @@ function ResultSummary({ step, titles }: { step: AgentStep; titles: Record<strin
   }
 }
 
-/** Agents (and models) refer to sources by id; show the human title instead. */
+/** Agents (and models) refer to sources by id and use the API's terms; show titles and everyday words. */
 function withTitles(text: string, titles: Record<string, string>) {
-  return Object.entries(titles).reduce((t, [id, title]) => t.split(id).join(`"${title}"`), text);
+  return plainWords(Object.entries(titles).reduce((t, [id, title]) => t.split(id).join(`"${title}"`), text));
+}
+
+function plainWords(text: string) {
+  return text
+    .replace(/\bpreflight(?:ed)?\b/gi, (m) => (m[0] === 'P' ? 'License check' : 'license check'))
+    .replace(/\bbuild-level\b/gi, 'report-wide')
+    .replace(/\bof gross\b/gi, 'of each sale')
+    .replace(/\bartifact\b/gi, 'report');
 }
 
 function argsSummary(step: AgentStep, titles: Record<string, string>) {
@@ -148,41 +157,48 @@ export function AgentTrace({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm">
-          <Bot className="size-4" /> Research assistant
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+          <Bot className="size-4" aria-hidden /> Research assistant
           <Badge tone={run.model.startsWith('gemini') ? 'ai' : 'warn'}>{planner}</Badge>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
+          <StatusBadge status={run.status} />
           {onStop && (run.status === 'running' || run.status === 'awaiting_approval') && (
-            <Button size="sm" variant="ghost" loading={stopping} onClick={onStop}>
+            <Button size="sm" variant="secondary" loading={stopping} onClick={onStop}>
               Stop
             </Button>
           )}
-          <StatusBadge status={run.status} />
         </div>
       </div>
 
-      <ol className="relative space-y-2 border-l border-line pl-5">
+      {/* New steps are read out as they arrive. */}
+      <ol className="relative space-y-2 border-l border-line pl-5" aria-live="polite" aria-relevant="additions" aria-label="What the assistant did">
         {steps.map((s) => (
-          <li key={s.id} className="relative text-sm">
-            <span className="absolute -left-[27px] top-1 flex size-3.5 items-center justify-center rounded-full border border-line bg-white" />
+          <li key={s.id} className="relative min-w-0 text-sm">
+            {/* One dot per step, on the line and level with the step's first line; a result hangs off its step. */}
+            {s.kind !== 'tool_result' && (
+              <span
+                aria-hidden
+                className={clsx('absolute -left-[27px] size-3.5 rounded-full border border-line bg-white', s.kind === 'plan' || s.kind === 'message' ? 'top-[11px]' : 'top-[3px]')}
+              />
+            )}
             {s.kind === 'plan' || s.kind === 'message' ? (
               <p className={clsx('rounded-lg px-3 py-2', s.kind === 'message' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700')}>{withTitles(String(s.output?.text ?? ''), titles)}</p>
             ) : s.kind === 'tool_call' ? (
-              <div className="flex items-center gap-2 text-slate-700">
-                <Wrench className="size-3.5 shrink-0 text-muted" />
-                <span className="shrink-0 whitespace-nowrap font-medium" title={s.tool ?? undefined}>
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-slate-700">
+                <Wrench className="size-3.5 shrink-0 self-center text-muted" aria-hidden />
+                <span className="font-medium" title={s.tool ?? undefined}>
                   {TOOL_LABEL[s.tool ?? ''] ?? (s.tool ?? 'Step').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())}
                 </span>
-                <span className="truncate text-muted">{argsSummary(s, titles)}</span>
+                {argsSummary(s, titles) && <span className="min-w-0 break-words text-muted">{argsSummary(s, titles)}</span>}
               </div>
             ) : s.kind === 'tool_result' ? (
-              <div className="ml-5 rounded-lg border border-line bg-white px-3 py-2 text-xs">
+              <div className="ml-5 min-w-0 rounded-lg border border-line bg-white px-3 py-2 text-[13px] leading-5">
                 <ResultSummary step={s} titles={titles} />
               </div>
             ) : (
               <p className="flex items-center gap-1.5 text-block">
-                <AlertTriangle className="size-4" /> {withTitles(String(s.output?.message ?? 'The assistant stopped at this step.'), titles)}
+                <AlertTriangle className="size-4 shrink-0" aria-hidden /> {withTitles(String(s.output?.message ?? 'The assistant stopped at this step.'), titles)}
               </p>
             )}
           </li>
@@ -203,8 +219,8 @@ export function AgentTrace({
             Replace <strong>{titles[run.pending.blockedAssetVersionId] ?? run.pending.blockedAssetVersionId}</strong> with{' '}
             <strong>{titles[run.pending.replacementAssetVersionId] ?? run.pending.replacementAssetVersionId}</strong>?
           </p>
-          <p className="mt-1 text-sm text-slate-700">{run.pending.reason}</p>
-          <div className="mt-3 flex gap-2">
+          <p className="mt-1 text-sm text-slate-700">{withTitles(run.pending.reason, titles)}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" loading={deciding} onClick={() => onDecide(true)}>
               Approve replacement
             </Button>

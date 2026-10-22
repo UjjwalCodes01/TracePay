@@ -7,7 +7,7 @@ import type { CitationReport } from '../modules/generation/citations';
 import type { ArtifactContent } from '../modules/generation/generation.service';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
 import { askLibrary, getAnswer, listLibraries } from '../modules/answers/answers.service';
-import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, startTopUp } from '../modules/answers/credits.service';
+import { captureTopUp, creditSummary, isDemoBuyer, MAX_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
 import { checkSaleRights } from '../modules/sales/rights.service';
 import { cursorWhere, defineRoute, ListQuery, listOf, named, pageOrder, toPage, type AnyRoute } from './framework';
 
@@ -251,6 +251,7 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
       method: 'get', path: '/credits', operationId: 'getCredits', roles: ['buyer'], tag: ANSWERS, summary: 'Your answer credit',
       response: CreditBalance,
       handler: async ({ user }) => {
+        if (config.demoSharedBuyer) await refillDemoCredit(db, user.id);
         const c = await creditSummary(db, user.id);
         return {
           object: 'credit_balance' as const,
@@ -283,8 +284,10 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
         max_price_cents: z.number().int().min(1).max(500).meta({ description: 'The most this answer may cost.' }),
       }),
       response: AnswerResource, status: 201, errors: [402],
-      handler: async ({ user, body }) =>
-        answerOutV1(await askLibrary(db, answerWriter(), signingKeys(), { askerId: user.id, libraryId: body.library_id, question: body.question, maxPriceCents: body.max_price_cents })),
+      handler: async ({ user, body }) => {
+        if (config.demoSharedBuyer) await refillDemoCredit(db, user.id);
+        return answerOutV1(await askLibrary(db, answerWriter(), signingKeys(), { askerId: user.id, libraryId: body.library_id, question: body.question, maxPriceCents: body.max_price_cents }));
+      },
     }),
     defineRoute({
       method: 'get', path: '/answers', operationId: 'listAnswers', roles: ['buyer'], tag: ANSWERS, summary: 'Your answers, newest first',
@@ -349,7 +352,7 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
       body: z.object({ report_id: z.string().min(1).max(64) }),
       response: Checkout, status: 201, errors: [409],
       handler: async ({ user, body }) => {
-        const started = await startCheckout(db, paypal(), { artifactId: body.report_id, buyerId: user.id, appBaseUrl: config.appBaseUrl });
+        const started = await startCheckout(db, paypal(), { artifactId: body.report_id, buyerId: user.id, appBaseUrl: config.appBaseUrl, allowRepeat: !!config.demoSharedBuyer && isDemoBuyer(user.id) });
         return checkoutOut(await mySale(user.id, started.saleId));
       },
     }),

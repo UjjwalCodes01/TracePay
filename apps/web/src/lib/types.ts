@@ -18,6 +18,8 @@ export interface AppConfig {
   demoMode: boolean;
   /** Demo mode only: which PayPal sandbox buyer account to pay with. */
   sandboxBuyerHint?: string | null;
+  /** A hosted demo shares one buyer among every visitor: it may buy a report again. */
+  demoSharedBuyer?: boolean;
 }
 
 export interface CatalogEntry {

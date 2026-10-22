@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { formatMoney, localDate, localMidnight } from '../lib/format';
 import { gridTheme } from '../lib/grid';
-import { Badge, Button } from './ui';
+import { Badge, Button, type statusTone } from './ui';
 
 export interface EarningRow {
   id: string;
@@ -16,10 +16,12 @@ export interface EarningRow {
   formula: string;
   note: string | null;
   amountCents: number;
-  status: { text: string; tone: 'pass' | 'warn' | 'block' | 'neutral' | 'info' };
+  status: { text: string; tone: ReturnType<typeof statusTone> };
   captureId: string | null;
   paypalTransaction: string | null;
 }
+
+const DEFAULT_COL: ColDef<EarningRow> = { sortable: true, resizable: true, floatingFilter: true };
 
 /** A contributor's share of every sale: search, filter, and export them (e.g. for taxes). */
 export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
@@ -27,7 +29,7 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
   const [search, setSearch] = useState('');
   const columns = useMemo<ColDef<EarningRow>[]>(
     () => [
-      { headerName: 'Date', field: 'date', width: 150, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? localMidnight(p.data.date) : null) },
+      { headerName: 'Date', field: 'date', width: 175, minWidth: 175, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? localMidnight(p.data.date) : null) },
       {
         headerName: 'Report',
         field: 'report',
@@ -53,7 +55,7 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
         minWidth: 190,
         valueGetter: (p) => (p.data ? describeFormula(p.data.formula) : ''),
         // The exact calculation, as recorded, on hover.
-        tooltipValueGetter: (p) => (p.data ? [p.data.formula, p.data.note].filter(Boolean).join(' — ') : undefined),
+        tooltip: (p) => (p.data ? [p.data.formula, p.data.note].filter(Boolean).join(' — ') : undefined),
         filter: 'agTextColumnFilter',
       },
       // Exported with the CSV, not shown.
@@ -61,7 +63,9 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
       {
         headerName: 'Amount',
         field: 'amountCents',
-        width: 120,
+        width: 110,
+        // Pinned, so what you earned stays on screen on a phone.
+        pinned: 'right',
         type: 'rightAligned',
         filter: 'agNumberColumnFilter',
         filterValueGetter: (p) => (p.data ? p.data.amountCents / 100 : null),
@@ -71,9 +75,11 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
       {
         headerName: 'Payout',
         colId: 'status',
-        width: 230,
+        width: 270,
+        minWidth: 270,
         filter: 'agTextColumnFilter',
         valueGetter: (p) => p.data?.status.text,
+        tooltip: (p) => p.value,
         enableCellChangeFlash: true,
         cellRenderer: (p: ICellRendererParams<EarningRow>) => <Badge tone={p.data!.status.tone}>{p.value}</Badge>,
       },
@@ -110,7 +116,7 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
           rowData={rows}
           getRowId={(p) => p.data.id}
           columnDefs={columns}
-          defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }}
+          defaultColDef={DEFAULT_COL}
           tooltipShowDelay={200}
           onGridReady={(e) => setGridApi(e.api)}
         />

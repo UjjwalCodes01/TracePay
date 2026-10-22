@@ -1,10 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { BookOpenCheck, Bot, Code2, Coins, Database, FileStack, LayoutDashboard, Library, LogOut, MessageSquareQuote, Receipt, RotateCcw, ShoppingBag, Sparkles, UserRound, Wallet } from 'lucide-react';
+import { BookOpenCheck, Bot, ChevronDown, Code2, Coins, Database, FileStack, LayoutDashboard, Library, LogOut, MessageSquareQuote, Receipt, RotateCcw, ShoppingBag, Sparkles, UserRound, Wallet } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { post } from '../lib/api';
 import { useSession } from '../lib/session';
-import type { Role } from '../lib/types';
+import type { DemoUser, Role } from '../lib/types';
 import { Badge, Button, Card, ErrorNote, Spinner } from './ui';
 
 const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; roles: Role[] }> = [
@@ -55,8 +56,10 @@ export function Layout() {
     mutationFn: () => post('/demo/reset'),
     onSuccess: () => qc.invalidateQueries(),
   });
+  const [actionError, setActionError] = useState<unknown>(null);
+  const location = useLocation();
 
-  if (loading) return <Spinner />;
+  if (loading) return <WakingSpinner />;
   if (!user && error) {
     return (
       <div className="mx-auto max-w-md px-4 py-16">
@@ -69,7 +72,8 @@ export function Layout() {
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" replace />;
+  // Back where they were going after signing in (a shared receipt link, a PayPal return…).
+  if (!user) return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />;
   if (!allowedOn(pathname, user.role)) return <Navigate to="/" replace />;
 
   return (
@@ -117,31 +121,26 @@ export function Layout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-line bg-white/90 px-4 backdrop-blur md:px-8">
-          <div className="flex items-center gap-2 md:hidden">
+          <div className="flex shrink-0 items-center gap-2 md:hidden">
             <img src="/favicon.svg" alt="" className="size-6" />
             <span className="font-semibold">TracePay</span>
           </div>
-          <div className="hidden text-sm text-muted md:block">
-            {authMethod === 'demo' ? `Demo: acting as ${user.name}` : `Signed in as ${user.name}`}
+          <div className="hidden min-w-0 truncate text-sm text-muted md:block">
+            {authMethod === 'demo' && config?.demoMode ? 'Demo with made-up data and PayPal test money' : `Signed in as ${user.name}`}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             {authMethod === 'demo' && config?.demoMode && (
-              <label className="flex items-center gap-2 text-xs text-muted">
-                <span className="hidden sm:inline">Demo role</span>
-                <select
-                  value={user.id}
+              <RoleMenu
+                current={user}
+                users={users}
+                onPick={(id) =>
                   // Start the new role on its own start page, once the switch has loaded.
-                  onChange={(e) => void switchUser(e.target.value).then(() => navigate('/'))}
-                  className="h-8 max-w-[9rem] truncate rounded-lg sm:max-w-[14rem] border border-line bg-white px-2 text-sm text-ink"
-                  aria-label="Switch demo user"
-                >
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {ROLE_LABEL[u.role]} — {u.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  void switchUser(id).then(
+                    () => navigate('/'),
+                    (e) => setActionError(e),
+                  )
+                }
+              />
             )}
             {config?.demoMode && authMethod === 'demo' && (user.role === 'publisher' || user.role === 'admin') && (
               <Button
@@ -155,26 +154,112 @@ export function Layout() {
                 <span className="hidden sm:inline">Reset demo</span>
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => signOut().then(() => navigate('/login'))} title="Sign out">
+            <Button variant="ghost" size="sm" onClick={() => signOut().then(() => navigate('/login'), (e) => setActionError(e))} title="Sign out">
               <LogOut className="size-3.5" />
               <span className="hidden sm:inline">Sign out</span>
             </Button>
           </div>
         </header>
 
-        {/* Mobile nav */}
-        <nav className="flex gap-1 overflow-x-auto border-b border-line bg-white px-3 py-2 md:hidden">
-          {NAV.filter((n) => user && n.roles.includes(user.role)).map((n) => (
-            <NavLink key={n.to} to={n.to} className={({ isActive }) => clsx('whitespace-nowrap rounded-md px-3 py-1.5 text-sm', isActive ? 'bg-slate-100 font-medium' : 'text-muted')}>
-              {n.label}
-            </NavLink>
-          ))}
-        </nav>
+        {/* Mobile nav: the current page is scrolled into view; the fade says there's more. */}
+        <MobileNav items={NAV.filter((n) => user && n.roles.includes(user.role))} pathname={pathname} />
+
+        {(reset.error != null || actionError != null) && (
+          <div className="border-b border-red-200 bg-red-50 px-4 py-2 md:px-8">
+            <div className="flex items-start justify-between gap-3">
+              <ErrorNote error={reset.error ?? actionError} />
+              <Button variant="ghost" size="sm" onClick={() => (reset.reset(), setActionError(null))}>
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        )}
 
         <main id="main" tabIndex={-1} className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 focus:outline-none md:px-8 md:py-8">
           <Outlet />
         </main>
       </div>
+    </div>
+  );
+}
+
+/** The first load can wait on a sleeping free-tier server: say so instead of spinning silently. */
+function WakingSpinner() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 4000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="mx-auto max-w-md px-4 py-16">
+      <Spinner label={slow ? 'Starting the demo server. It sleeps when nobody is using it and can take up to a minute to wake…' : 'Loading…'} />
+    </div>
+  );
+}
+
+/** Demo role picker: switches only on an explicit choice (a <select> switches on every arrow key on Windows). */
+function RoleMenu({ current, users, onPick }: { current: DemoUser; users: DemoUser[]; onPick: (id: string) => void }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      const d = ref.current;
+      if (!d?.open) return;
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !d.contains(e.target as Node)) d.open = false;
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', close);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', close);
+    };
+  }, []);
+  return (
+    <details ref={ref} className="relative min-w-0">
+      <summary
+        className="flex h-8 min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-sm text-ink hover:bg-slate-50 [&::-webkit-details-marker]:hidden"
+      >
+        <span className="sr-only">Switch role. Current: </span>
+        <span className="hidden text-xs text-muted sm:inline">Demo role</span>
+        <span className="truncate font-medium">{ROLE_LABEL[current.role]}</span>
+        <ChevronDown className="size-3.5 shrink-0 text-muted" aria-hidden />
+      </summary>
+      <div role="menu" className="absolute right-0 z-30 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-white p-1 shadow-lg">
+        {users.map((u) => (
+          <button
+            key={u.id}
+            type="button"
+            role="menuitemradio"
+            aria-checked={u.id === current.id}
+            onClick={() => {
+              if (ref.current) ref.current.open = false;
+              if (u.id !== current.id) onPick(u.id);
+            }}
+            className={clsx('flex w-full flex-col items-start rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50', u.id === current.id && 'bg-slate-100')}
+          >
+            <span className="font-medium">{ROLE_LABEL[u.role]}</span>
+            <span className="text-xs text-muted">{u.name}</span>
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function MobileNav({ items, pathname }: { items: typeof NAV; pathname: string }) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [pathname]);
+  return (
+    <div className="relative md:hidden">
+      <nav ref={ref} aria-label="Pages" className="flex gap-1 overflow-x-auto border-b border-line bg-white px-3 py-2 pr-8">
+        {items.map((n) => (
+          <NavLink key={n.to} to={n.to} className={({ isActive }) => clsx('whitespace-nowrap rounded-md px-3 py-1.5 text-sm', isActive ? 'bg-slate-100 font-medium' : 'text-muted')}>
+            {n.label}
+          </NavLink>
+        ))}
+      </nav>
+      <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-white" />
     </div>
   );
 }

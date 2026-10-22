@@ -11,7 +11,8 @@ export function economicsLabel(e: Economics | null | undefined): string {
 }
 
 export function timeAgo(iso: string): string {
-  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  // A client clock slightly behind the server's never shows "-5s ago".
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
@@ -109,4 +110,20 @@ export function localDate(iso: string | Date): string {
 export function localMidnight(ymd: string): Date | null {
   const [y, m, d] = ymd.split('-').map(Number);
   return y && m && d ? new Date(y, m - 1, d) : null;
+}
+
+/** "Oct 23, 2026, 1:12 AM" in the viewer's time zone — the one format for moments in time. */
+export function formatDateTime(iso: string | Date | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** "Oct 23, 2026" in the viewer's time zone. */
+export function formatDate(iso: string | Date | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', { dateStyle: 'medium' });
 }

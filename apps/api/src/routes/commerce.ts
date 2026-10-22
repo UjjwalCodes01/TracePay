@@ -5,6 +5,7 @@ import { currentUser, requireRole } from '../http/auth';
 import { ownedSettlement } from '../http/access';
 import { HttpError } from '../http/errors';
 import { quotas } from '../http/limits';
+import { isDemoBuyer } from '../modules/answers/credits.service';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
 import { handlePayPalWebhook, readVerificationHeaders } from '../modules/payments/webhooks.service';
 import { approveSettlement, recalculateSettlement, refreshPayouts, retryFailedPayouts, submitPayouts } from '../modules/settlements/settlement.service';
@@ -18,7 +19,9 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
 
   r.post('/checkout/orders', requireRole('buyer'), quotas.checkout(), async (req, res) => {
     const { artifactId } = z.object({ artifactId: z.string().min(1) }).parse(req.body);
-    const started = await startCheckout(db, paypal(), { artifactId, buyerId: currentUser(req).id, appBaseUrl: config.appBaseUrl });
+    const buyerId = currentUser(req).id;
+    // A hosted demo's shared buyer can buy again, so every visitor can try PayPal checkout.
+    const started = await startCheckout(db, paypal(), { artifactId, buyerId, appBaseUrl: config.appBaseUrl, allowRepeat: !!config.demoSharedBuyer && isDemoBuyer(buyerId) });
     res.status(201).json(started);
   });
 

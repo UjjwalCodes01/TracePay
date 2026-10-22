@@ -72,10 +72,21 @@ export class VertexReportWriter implements ReportWriter {
 
 // ---------------------------------------------------------------- Fixture writer
 
-/** At most `n` words, ending in a full stop. */
-const clipWords = (text: string, n: number) => {
-  const words = text.trim().split(/\s+/);
-  return words.length <= n ? text.trim() : `${words.slice(0, n).join(' ').replace(/[,;:]$/, '')}…`;
+const sentencesOf = (text: string) => text.match(/[^.!?]+[.!?]+(?=\s|$)/g)?.map((s) => s.trim()) ?? [text.trim()];
+const wordCount = (text: string) => text.trim().split(/\s+/).length;
+
+/**
+ * A short extract of at most `n` words that still reads as a sentence: the passage's first
+ * sentence that fits, else the first sentence cut at its last clause break that fits.
+ */
+const shortExtract = (text: string, n: number) => {
+  const sentences = sentencesOf(text);
+  const fits = sentences.find((s) => wordCount(s) <= n);
+  if (fits) return fits;
+  const words = sentences[0]!.split(/\s+/).slice(0, n);
+  const lastBreak = words.findLastIndex((w) => /[,;:]$/.test(w));
+  if (lastBreak >= 5) return `${words.slice(0, lastBreak + 1).join(' ').replace(/[,;:]$/, '')}.`;
+  return `${words.join(' ').replace(/[,;:]$/, '')}…`;
 };
 
 const firstSentence = (text: string) => (text.match(/^.*?[.!?](\s|$)/)?.[0] ?? text).trim();
@@ -105,21 +116,16 @@ export class FixtureReportWriter implements ReportWriter {
         {
           key: 'summary',
           heading: 'Summary',
-          body: `${input.intent.title}: ${picks.length} findings from ${bySource.size} licensed sources. (Written without AI: each finding is a key sentence from its source.)`,
+          body: `${picks.length} findings from ${bySource.size} licensed sources. Written without AI: each finding is a key sentence quoted from its source, with its citation.`,
           requiresCitation: false,
         },
+        // No outlook: connecting the findings takes a model, and a placeholder isn't worth reading.
         ...picks.map((p, i) => ({
           key: `finding_${i + 1}`,
           heading: `Finding ${i + 1} — ${p.sourceTitle}`,
           body: `${firstSentence(p.text)} [${p.handle}]`,
           requiresCitation: true,
         })),
-        {
-          key: 'outlook',
-          heading: 'Outlook',
-          body: 'Each finding above is a key sentence taken from a licensed source. When AI is turned on, TracePay writes an outlook that connects them.',
-          requiresCitation: false,
-        },
       ],
     };
   }
@@ -206,7 +212,7 @@ export class FixtureAnswerWriter implements AnswerWriter {
     return {
       covered: true,
       // Short extracts only: licenses forbid redistributing raw text, and answers are checked for copying.
-      text: picks.map((p) => `${clipWords(firstSentence(p.text), 20)} [${p.handle}]`).join(' '),
+      text: picks.map((p) => `${shortExtract(p.text, 20)} [${p.handle}]`).join(' '),
       model: 'fixture/extractive-v1',
       fromFixture: true,
     };

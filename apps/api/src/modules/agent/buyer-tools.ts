@@ -17,6 +17,8 @@ export interface ShopperPolicy {
   budgetCents: number;
   /** How many reports the assistant may propose buying in this run. */
   maxPurchases: number;
+  /** A hosted demo's shared buyer: earlier visitors' purchases don't count as owned, only this run's. */
+  repeatPurchases?: boolean;
 }
 
 export interface ShopperContext {
@@ -104,6 +106,7 @@ const asString = (args: Record<string, unknown>, key: string): string => {
 };
 
 async function owned(ctx: ShopperContext, artifactId: string) {
+  if (ctx.policy.repeatPurchases) return ctx.purchases.some((p) => p.artifactId === artifactId);
   return (await ctx.db.sale.count({ where: { artifactId, buyerId: ctx.buyerId, status: 'captured' } })) > 0;
 }
 
@@ -114,7 +117,9 @@ export async function executeShopperTool(ctx: ShopperContext, name: string, args
       case 'search_reports': {
         const query = typeof args.query === 'string' ? args.query.slice(0, 200) : '';
         const ownedIds = new Set(
-          (await ctx.db.sale.findMany({ where: { buyerId: ctx.buyerId, status: 'captured' }, select: { artifactId: true } })).map((s) => s.artifactId),
+          ctx.policy.repeatPurchases
+            ? ctx.purchases.map((p) => p.artifactId)
+            : (await ctx.db.sale.findMany({ where: { buyerId: ctx.buyerId, status: 'captured' }, select: { artifactId: true } })).map((s) => s.artifactId),
         );
         const listed = await ctx.db.artifact.findMany({ where: { status: 'listed' }, orderBy: { createdAt: 'desc' }, take: 100 });
         const left = remainingBudget(ctx);
