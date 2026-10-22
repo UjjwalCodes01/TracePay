@@ -45,7 +45,7 @@ export function StorePage() {
                 <Badge tone="pass">
                   <ShieldCheck className="size-3" /> Licensed sources
                 </Badge>
-                <Badge>{a.sources.length} contributors</Badge>
+                <Badge>{a.sources.length} licensed {a.sources.length === 1 ? 'source' : 'sources'}</Badge>
               </div>
             </Link>
           ))}

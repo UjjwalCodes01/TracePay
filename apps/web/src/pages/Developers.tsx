@@ -108,7 +108,9 @@ const MCP_CONFIG = `{
       "env": {
         "TRACEPAY_API_KEY": "tp_… (create one below)",
         "TRACEPAY_MAX_PRICE_CENTS": "5000",
-        "TRACEPAY_MAX_ANSWER_CENTS": "50"
+        "TRACEPAY_MAX_ANSWER_CENTS": "50",
+        "TRACEPAY_MAX_SESSION_CENTS": "200",
+        "TRACEPAY_LIBRARY_ID": "user_atlas"
       }
     }
   }
@@ -320,6 +322,9 @@ const GROUPS: { label: string; prefix: string }[] = [
   { label: 'Licenses', prefix: 'license.' },
   { label: 'Publisher Agent', prefix: 'agent_run.' },
   { label: 'Checks with PayPal', prefix: 'reconciliation.' },
+  { label: 'Answers (pay-per-citation)', prefix: 'answer.' },
+  { label: 'Answer royalties', prefix: 'royalties.' },
+  { label: 'Answer royalties', prefix: 'royalty_payout.' },
 ];
 
 const DELIVERY_TONE = { succeeded: 'pass', failed: 'block', pending: 'warn', skipped: 'neutral' } as const;
@@ -405,7 +410,8 @@ function AddEndpoint({ types, onCreated, onCancel }: { types: { type: string; de
         </div>
         {!all && (
           <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {GROUPS.map((g) => (
+            {/* Groups with no event types (yet) aren't shown. */}
+            {GROUPS.filter((g) => types.some((t) => t.type.startsWith(g.prefix))).map((g) => (
               <div key={g.prefix}>
                 <div className="text-xs font-semibold uppercase tracking-wide text-muted">{g.label}</div>
                 {types.filter((t) => t.type.startsWith(g.prefix)).map((t) => (

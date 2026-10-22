@@ -4,7 +4,7 @@ import type { AgCartesianChartOptions } from 'ag-charts-community';
 import { AgCharts } from 'ag-charts-react';
 import { Download, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { formatMoney } from '../lib/format';
+import { formatMoney, localDate, localMidnight } from '../lib/format';
 import { chartTheme, SERIES_COLORS } from '../lib/charts';
 import { gridTheme } from '../lib/grid';
 import type { SettlementLine, SettlementRun } from '../lib/types';
@@ -64,7 +64,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
       runs.flatMap((run) =>
         run.lines.map((l) => ({
           id: l.id,
-          date: run.createdAt.slice(0, 10),
+          date: localDate(run.createdAt),
           report: run.sale.artifact.title,
           recipient: l.recipientName ?? names[l.recipientId] ?? l.recipientId,
           role: l.kind === 'publisher_residual' ? 'You (publisher)' : 'Contributor',
@@ -80,7 +80,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
 
   const columns = useMemo<ColDef<LedgerRow>[]>(
     () => [
-      { headerName: 'Date', field: 'date', width: 150, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? new Date(p.data.date) : null) },
+      { headerName: 'Date', field: 'date', width: 150, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? localMidnight(p.data.date) : null) },
       { headerName: 'Report', field: 'report', flex: 1.4, minWidth: 200, filter: 'agTextColumnFilter' },
       { headerName: 'Recipient', field: 'recipient', flex: 1, minWidth: 160, filter: 'agTextColumnFilter' },
       { headerName: 'Role', field: 'role', width: 150, filter: 'agTextColumnFilter' },
@@ -176,7 +176,7 @@ export function RoyaltyLedger({ runs, names }: { runs: Run[]; names: Record<stri
             size="sm"
             variant="secondary"
             disabled={!gridApi}
-            onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-royalties-${new Date().toISOString().slice(0, 10)}.csv`, skipPinnedBottom: false })}
+            onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-royalties-${localDate(new Date())}.csv`, skipPinnedBottom: false })}
           >
             <Download className="size-3.5" /> Export CSV
           </Button>

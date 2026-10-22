@@ -151,7 +151,7 @@ export function AgentTrace({
         ))}
         {run.status === 'running' && (
           <li className="flex items-center gap-2 text-sm text-muted">
-            <Loader2 className="size-4 animate-spin" /> Working…
+            <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden /> Working…
           </li>
         )}
       </ol>

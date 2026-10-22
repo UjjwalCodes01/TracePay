@@ -12,7 +12,7 @@ import type { Tx } from '../../db';
  * addresses or raw PayPal payloads. Receivers fetch full objects through the API.
  */
 
-export type ObjectType = 'build' | 'report' | 'sale' | 'settlement' | 'payout_batch' | 'license' | 'agent_run' | 'webhook_endpoint' | 'reconciliation_issue';
+export type ObjectType = 'build' | 'report' | 'sale' | 'settlement' | 'payout_batch' | 'license' | 'agent_run' | 'webhook_endpoint' | 'reconciliation_issue' | 'answer' | 'royalty_payout';
 
 interface EventSpec {
   type: string;
@@ -86,6 +86,15 @@ const CATALOG: Record<string, EventSpec> = {
   'agent.replacement_declined': { type: 'agent_run.approval_declined', object: 'agent_run', description: 'You declined the agent’s proposal.' },
   'agent.completed': { type: 'agent_run.completed', object: 'agent_run', description: 'An agent run finished.' },
   'agent.failed': { type: 'agent_run.failed', object: 'agent_run', description: 'An agent run failed.' },
+
+  'answer.answered': { type: 'answer.answered', object: 'answer', fields: ['chargedCents'], description: 'Your library answered a question and paid the authors of the passages it relied on.' },
+  'answer.not_covered': { type: 'answer.not_covered', object: 'answer', description: 'Your library couldn’t answer a question from licensed sources; the asker wasn’t charged.' },
+  'answer.failed': { type: 'answer.failed', object: 'answer', description: 'An answer was rejected or interrupted; the asker wasn’t charged.' },
+
+  'royalties.payout_created': { type: 'royalty_payout.created', object: 'royalty_payout', fields: ['totalCents', 'contributors'], description: 'Answer royalties were grouped into a PayPal payout batch.' },
+  'royalties.payout_settled': { type: 'royalty_payout.settled', object: 'royalty_payout', fields: ['batchStatus'], description: 'PayPal finished an answer-royalties batch.' },
+  'royalties.payout_rejected': { type: 'royalty_payout.rejected', object: 'royalty_payout', description: 'PayPal refused an answer-royalties batch; its amounts are back to be paid.' },
+  'royalties.payout_submit_failed': { type: 'royalty_payout.submit_failed', object: 'royalty_payout', description: 'PayPal didn’t confirm an answer-royalties batch; it is safe to send again.' },
 };
 
 /** Sent only on request, to check an endpoint. */
@@ -100,6 +109,8 @@ const AUDIT_ENTITY_TO_OBJECT: Record<string, ObjectType> = {
   license: 'license',
   agent_run: 'agent_run',
   reconciliation_issue: 'reconciliation_issue',
+  answer: 'answer',
+  royalty_payout: 'royalty_payout',
 };
 
 /** Every public event type with its description, for docs and endpoint validation. */

@@ -8,6 +8,7 @@ import { AuthError, createApiKey, createSession, destroySession, logIn, signUp }
 import { hashPassword, sha256 } from '../modules/auth/crypto';
 import { DEMO_EMAILS } from '../modules/demo/soft-reset';
 import { limitStore } from '../http/rate-store';
+import { AccountError, deleteAccount, exportAccount } from '../modules/account/account.service';
 
 const SignUpBody = z.object({
   email: z.email().max(254),
@@ -99,6 +100,33 @@ export function authRoutes({ db, config }: AppDeps) {
 
   r.get('/me', (req, res) => {
     res.json({ user: currentUser(req), authMethod: req.authMethod });
+  });
+
+  // ---- your data ------------------------------------------------------------------
+
+  /** Everything TracePay holds about you, as JSON. */
+  r.get('/me/export', async (req, res) => {
+    const data = await exportAccount(db, currentUser(req).id);
+    res.setHeader('Content-Disposition', 'attachment; filename="tracepay-my-data.json"');
+    res.json(data);
+  });
+
+  /** Deletes the signed-in account (password required). Refused while money is still owed either way. */
+  r.post('/me/delete', credentialLimiter, async (req, res) => {
+    const user = currentUser(req);
+    if (req.authMethod !== 'session') throw new HttpError(403, 'Sign in with your password to delete your account.');
+    const body = z.object({ currentPassword: z.string().min(1).max(200), confirm: z.literal('DELETE') }).parse(req.body);
+    await logIn(db, user.email, body.currentPassword).catch(() => {
+      throw new HttpError(401, 'Your current password is incorrect.');
+    });
+    try {
+      await deleteAccount(db, user.id);
+    } catch (err) {
+      if (err instanceof AccountError) throw new HttpError(err.code === 'not_found' ? 404 : 409, err.message, { code: err.code === 'not_found' ? 'not_found' : 'money_outstanding' });
+      throw err;
+    }
+    res.clearCookie(SESSION_COOKIE, { path: '/' });
+    res.json({ deleted: true });
   });
 
   // ---- API keys for platform integrations --------------------------------------

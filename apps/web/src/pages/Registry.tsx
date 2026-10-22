@@ -24,7 +24,7 @@ export function RegistryPage() {
 
   const columns = useMemo<ColDef<CatalogEntry>[]>(
     () => [
-      { headerName: 'Asset', field: 'assetTitle', pinned: 'left', width: 300, cellClass: 'font-medium', tooltipField: 'assetTitle' },
+      { headerName: 'Asset', field: 'assetTitle', pinned: 'left', width: 300, cellClass: 'font-medium', tooltip: true },
       { headerName: 'Owner', valueGetter: (p) => p.data?.owner.name, flex: 1.4, minWidth: 160 },
       { headerName: 'Kind', field: 'kind', width: 130, valueFormatter: (p) => String(p.value).replace('_', ' ') },
       {

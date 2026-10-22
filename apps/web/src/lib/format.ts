@@ -19,3 +19,15 @@ export function timeAgo(iso: string): string {
 }
 
 export const eventLabel = (t: string) => t.replace(/[._]/g, ' ');
+
+/** The local calendar date of a timestamp, as YYYY-MM-DD (not the UTC date). */
+export function localDate(iso: string | Date): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Local midnight of a YYYY-MM-DD date — what AG Grid's date filter compares against. */
+export function localMidnight(ymd: string): Date | null {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return y && m && d ? new Date(y, m - 1, d) : null;
+}

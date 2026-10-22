@@ -35,7 +35,7 @@ const PAGE_ROLES: Array<[RegExp, Role[]]> = [
   [/^\/studio(\/|$)/, ['publisher']],
   [/^\/assistant(\/|$)/, ['buyer']],
   [/^\/ask(\/|$)/, ['buyer']],
-  [/^\/royalties(\/|$)/, ['publisher', 'admin']],
+  [/^\/royalties(\/|$)/, ['publisher']],
   [/^\/(sources|earnings)(\/|$)/, ['contributor']],
 ];
 
@@ -74,6 +74,9 @@ export function Layout() {
 
   return (
     <div className="flex min-h-full">
+      <a href="#main" className="sr-only z-50 rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
+        Skip to content
+      </a>
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-line bg-white md:flex">
         <div className="flex items-center gap-2 px-5 py-5">
           <img src="/favicon.svg" alt="" className="size-7" />
@@ -104,6 +107,10 @@ export function Layout() {
           <p className="flex items-start gap-1.5">
             <BookOpenCheck className="mt-0.5 size-3.5 shrink-0" />
             {config?.demoMode ? 'Demo with made-up data. ' : ''}TracePay follows the license terms on record; it isn’t legal advice.
+          </p>
+          <p className="flex gap-2">
+            <NavLink to="/privacy" className="underline hover:text-ink">Privacy</NavLink>
+            <NavLink to="/terms" className="underline hover:text-ink">Terms</NavLink>
           </p>
         </div>
       </aside>
@@ -164,7 +171,7 @@ export function Layout() {
           ))}
         </nav>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 md:px-8 md:py-8">
+        <main id="main" tabIndex={-1} className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 focus:outline-none md:px-8 md:py-8">
           <Outlet />
         </main>
       </div>

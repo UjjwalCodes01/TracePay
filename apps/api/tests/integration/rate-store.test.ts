@@ -39,12 +39,12 @@ describe.runIf(process.env.TEST_REDIS_URL)('rate limits shared through Redis', a
     expect((await request(a).get('/api/ready').expect(200)).body.rateLimits).toBe('shared');
   });
 
-  it('fails open when Redis goes away', async () => {
+  it('keeps limiting (per instance, in memory) when Redis goes away', async () => {
     await closeLimitStore();
     process.env.REDIS_URL = 'redis://127.0.0.1:1'; // nothing listens there
     const app = testApp(new FakePayPal(), { rateLimitPerMinute: 1 });
     await request(app).get('/api/config').expect(200);
-    await request(app).get('/api/config').expect(200); // limit 1, but the store is down: let through
+    await request(app).get('/api/config').expect(429); // limit 1 still holds: brute-force limits don't vanish
     expect((await request(app).get('/api/ready').expect(200)).body.rateLimits).toBe('unavailable');
   });
 });

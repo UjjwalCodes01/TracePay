@@ -37,6 +37,11 @@ function parseServiceAccount(value: string): Record<string, string> {
   return JSON.parse(text) as Record<string, string>;
 }
 
+/** Every model call gives up after this long. */
+export const AI_TIMEOUT_MS = 60_000;
+/** Generous (thinking models spend output tokens on reasoning) but bounded. */
+export const AI_MAX_OUTPUT_TOKENS = 8192;
+
 /**
  * Structured generation: the model must return JSON matching `schema`, and the
  * result is validated again with zod before anything downstream trusts it.
@@ -54,6 +59,9 @@ export async function generateStructured<S extends z.ZodType>(args: {
     config: {
       systemInstruction: args.system,
       temperature: args.temperature ?? 0.2,
+      // Bounded in time and size: a hung or runaway call must not hold credit or a request open.
+      httpOptions: { timeout: AI_TIMEOUT_MS },
+      maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
       responseMimeType: 'application/json',
       responseJsonSchema: toJSONSchema(args.schema, { target: 'draft-7' }),
     },

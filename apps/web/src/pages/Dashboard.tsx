@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { AlertCircle, ArrowRight, CheckCircle2, Circle, Clock, FileText, HandCoins, PartyPopper, ShieldCheck, ShoppingCart, Users, Wallet } from 'lucide-react';
+import { AlertCircle, ArrowRight, CheckCircle2, Circle, Clock, FileText, HandCoins, MessageSquareQuote, PartyPopper, ShieldCheck, ShoppingCart, Users, Wallet } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { NeedsAttention } from '../components/NeedsAttention';
-import { ErrorNote, Hash, Spinner } from '../components/ui';
+import { ErrorNote, Hash, Spinner, useDocumentTitle } from '../components/ui';
 import { describeEvent, type ActivityTone } from '../lib/activity';
 import { api } from '../lib/api';
 import { formatMoney, timeAgo } from '../lib/format';
@@ -66,6 +66,13 @@ export function DashboardPage() {
   const isPublisher = user?.role === 'publisher' || user?.role === 'admin';
   // Shared with the "Needs attention" panel (same query key: fetched once).
   const recon = useQuery({ queryKey: ['reconciliation'], queryFn: () => api<{ open_issues: number }>('/v1/reconciliation'), refetchInterval: 30_000, enabled: isPublisher });
+  // Pay-per-citation: answers from this library and what their authors are owed (publishers only).
+  const royalties = useQuery({
+    queryKey: ['royalties'],
+    queryFn: () => api<{ answers: number; accrued: Array<{ amountCents: number }> }>('/royalties'),
+    enabled: user?.role === 'publisher',
+  });
+  useDocumentTitle('Home');
 
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
@@ -139,6 +146,24 @@ export function DashboardPage() {
         <MoneyCard icon={<HandCoins className="size-5" />} label="Paid to contributors" value={d.paidOutCents} note="Confirmed by PayPal" good />
         <MoneyCard icon={<Clock className="size-5" />} label="Still to pay contributors" value={d.unsettledContributorCents} note={d.unsettledContributorCents ? 'Waiting for you or PayPal' : 'Nothing outstanding'} />
       </section>
+
+      {royalties.data && (
+        <Link to="/royalties" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white p-5 hover:border-ink">
+          <span className="flex items-center gap-3">
+            <MessageSquareQuote className="size-5 text-slate-500" aria-hidden />
+            <span>
+              <span className="block font-medium">AI answers from your library</span>
+              <span className="block text-sm text-muted">
+                {royalties.data.answers === 1 ? '1 answer' : `${royalties.data.answers} answers`} ·{' '}
+                {formatMoney(royalties.data.accrued.reduce((n, a) => n + a.amountCents, 0))} owed to authors
+              </span>
+            </span>
+          </span>
+          <span className="inline-flex items-center gap-1 text-sm font-medium">
+            Answer royalties <ArrowRight className="size-4" aria-hidden />
+          </span>
+        </Link>
+      )}
 
       {/* 4. What happened */}
       <section className="rounded-xl border border-line bg-white">

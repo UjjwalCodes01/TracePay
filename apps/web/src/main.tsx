@@ -10,6 +10,7 @@ import { SessionProvider, useSession } from './lib/session';
 import { ArtifactPage } from './pages/ArtifactPage';
 import { SignInPage, SignUpPage } from './pages/Auth';
 import { CheckoutReturnPage } from './pages/CheckoutReturn';
+import { NotFoundPage } from './pages/NotFound';
 import { DashboardPage } from './pages/Dashboard';
 import { EarningsPage } from './pages/Earnings';
 import { ReceiptPage } from './pages/Receipt';
@@ -32,8 +33,12 @@ function Home() {
 const router = createBrowserRouter([
   { path: '/login', element: <SignInPage />, errorElement: <RouteError /> },
   { path: '/signup', element: <SignUpPage />, errorElement: <RouteError /> },
+  { path: '/privacy', lazy: async () => ({ Component: (await import('./pages/Legal')).PrivacyPage }), errorElement: <RouteError /> },
+  { path: '/terms', lazy: async () => ({ Component: (await import('./pages/Legal')).TermsPage }), errorElement: <RouteError /> },
   {
     element: <Layout />,
+    // Shown while a lazily loaded screen's code arrives on first load.
+    hydrateFallbackElement: <Spinner />,
     errorElement: <RouteError />,
     children: [
       { index: true, element: <Home /> },
@@ -60,7 +65,7 @@ const router = createBrowserRouter([
       { path: 'profile', element: <ProfilePage /> },
       { path: 'developers', lazy: async () => ({ Component: (await import('./pages/Developers')).DevelopersPage }) },
       { path: 'developers/api', lazy: async () => ({ Component: (await import('./pages/ApiReference')).ApiReferencePage }) },
-      { path: '*', element: <Navigate to="/" replace /> },
+      { path: '*', element: <NotFoundPage /> },
     ],
   },
 ]);

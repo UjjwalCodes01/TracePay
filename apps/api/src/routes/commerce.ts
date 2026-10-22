@@ -49,10 +49,20 @@ export function commerceRoutes({ db, paypal, config }: AppDeps) {
 
   // ---- settlement console ------------------------------------------------------
 
+  // Explicit fields: never the buyer's PayPal email, raw PayPal payloads or the frozen terms snapshot.
   const settlementInclude = {
-    lines: { include: { payoutItem: true }, orderBy: { amountCents: 'desc' as const } },
-    batches: { orderBy: { attempt: 'desc' as const } },
-    sale: { include: { payment: true, artifact: { select: { id: true, title: true, buildJobId: true } } } },
+    lines: {
+      include: { payoutItem: { select: { id: true, status: true, receiver: true, amountCents: true, paypalItemId: true, transactionId: true, errorName: true, senderItemId: true } } },
+      orderBy: { amountCents: 'desc' as const },
+    },
+    batches: { orderBy: { attempt: 'desc' as const }, select: { id: true, attempt: true, senderBatchId: true, paypalBatchId: true, status: true, lastCheckedAt: true, createdAt: true } },
+    sale: {
+      select: {
+        id: true, status: true, amountCents: true, currency: true, createdAt: true,
+        payment: { select: { orderId: true, captureId: true, captureStatus: true, capturedCents: true, paypalFeeCents: true } },
+        artifact: { select: { id: true, title: true, buildJobId: true } },
+      },
+    },
   };
 
   /** Adds each line's recipient name, for people who don't know user ids. */

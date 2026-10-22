@@ -94,6 +94,17 @@ services:
         sync: false # npm run keys:generate -w @tracepay/api
       - key: DEMO_PAYEE_EMAILS
         sync: false # sandbox personal accounts: Northwind,Okafor,Lumen
+      - key: GEMINI_MODEL
+        sync: false # optional: defaults to gemini-flash-latest with GEMINI_API_KEY
+      - key: DB_POOL_MAX
+        value: "10"
+      # Pay-per-citation answers (defaults in apps/api/.env.example; demo mode pays out at once).
+      - key: ANSWER_FEE_CENTS
+        value: "2"
+      - key: ROYALTY_PAYOUT_MIN_CENTS
+        sync: false # default 100 (1 in demo mode)
+      - key: CREDIT_CLEARING_DAYS
+        sync: false # default 14 (0 in demo mode): refunds/chargebacks land before payouts
 
   # Rate-limit counters only: losing them on a restart just restarts the windows,
   # so the free plan (no persistence) fits. Reachable only from inside Render.

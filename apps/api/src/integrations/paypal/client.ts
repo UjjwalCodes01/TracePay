@@ -11,6 +11,9 @@ import type {
   WebhookVerificationHeaders,
 } from './types';
 
+/** Items per page when reading a payout batch back (PayPal's maximum). */
+export const PAYOUT_PAGE_SIZE = 1000;
+
 const BASE_URL = 'https://api-m.sandbox.paypal.com';
 export const REQUEST_TIMEOUT_MS = 25_000;
 
@@ -145,8 +148,13 @@ export class PayPalClient {
     );
   }
 
-  getPayoutBatch(payoutBatchId: string): Promise<PayoutBatchStatus> {
-    return this.call('payouts.get', 'GET', `/v1/payments/payouts/${encodeURIComponent(payoutBatchId)}?fields=batch_header,items&page_size=100`);
+  /** One page of a batch's items (PayPal allows up to 1000 per page). */
+  getPayoutBatch(payoutBatchId: string, page = 1): Promise<PayoutBatchStatus> {
+    return this.call(
+      'payouts.get',
+      'GET',
+      `/v1/payments/payouts/${encodeURIComponent(payoutBatchId)}?fields=batch_header,items&page_size=${PAYOUT_PAGE_SIZE}&page=${Math.max(1, Math.floor(page))}`,
+    );
   }
 
   // ---- webhooks ----------------------------------------------------------------

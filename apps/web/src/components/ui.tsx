@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { Loader2 } from 'lucide-react';
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import type { Evidence } from '../lib/types';
 
 export function Button({
@@ -26,7 +26,7 @@ export function Button({
         className,
       )}
     >
-      {loading && <Loader2 className="size-4 animate-spin" />}
+      {loading && <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />}
       {children}
     </button>
   );
@@ -46,7 +46,15 @@ export function Card({ className, children, title, action }: { className?: strin
   );
 }
 
+/** Names the browser tab (and history entry) after the page. */
+export function useDocumentTitle(title: string | null | undefined) {
+  useEffect(() => {
+    document.title = title ? `${title} · TracePay` : 'TracePay';
+  }, [title]);
+}
+
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: ReactNode; action?: ReactNode }) {
+  useDocumentTitle(title);
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
@@ -95,8 +103,8 @@ export function Stat({ label, value, hint, tone }: { label: string; value: React
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex items-center gap-2 py-8 text-sm text-muted">
-      <Loader2 className="size-4 animate-spin" /> {label ?? 'Loading…'}
+    <div role="status" aria-live="polite" className="flex items-center gap-2 py-8 text-sm text-muted">
+      <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden /> {label ?? 'Loading…'}
     </div>
   );
 }
@@ -113,7 +121,7 @@ export function ErrorNote({ error }: { error: unknown }) {
 export function Hash({ value, n = 10 }: { value: string | null | undefined; n?: number }) {
   if (!value) return <span className="text-muted">—</span>;
   return (
-    <span className="mono rounded bg-slate-100 px-1.5 py-0.5 text-slate-700" title={value}>
+    <span className="mono break-all rounded bg-slate-100 px-1.5 py-0.5 text-slate-700" title={value}>
       {value.length > n ? `${value.slice(0, n)}…` : value}
     </span>
   );
@@ -126,6 +134,67 @@ export function statusTone(status: string): keyof typeof TONES {
   return 'neutral';
 }
 
+/** Every status the API reports, in plain words. Anything new falls back to a readable form. */
+export const STATUS_LABEL: Record<string, string> = {
+  // checks and verdicts
+  pass: 'Passed',
+  block: 'Blocked',
+  // sales and PayPal captures
+  pending_payment: 'Waiting for payment',
+  captured: 'Paid',
+  payment_failed: 'Not paid',
+  refunded: 'Refunded',
+  exception: 'Needs a look',
+  COMPLETED: 'Completed',
+  DECLINED: 'Declined',
+  PARTIALLY_REFUNDED: 'Partly refunded',
+  // settlements
+  calculated: 'Calculated',
+  approved: 'Approved',
+  payout_submitted: 'Payouts sent',
+  completed: 'Completed',
+  // payout batches and items
+  SUBMITTING: 'Sending to PayPal',
+  SUBMIT_FAILED: 'PayPal didn’t accept it',
+  AWAITING_CONFIRMATION: 'Waiting for PayPal to confirm',
+  DUPLICATE_REJECTED: 'Already sent',
+  PENDING: 'On its way',
+  PROCESSING: 'On its way',
+  SUCCESS: 'Paid',
+  DENIED: 'Declined by PayPal',
+  CANCELED: 'Cancelled',
+  FAILED: 'Failed',
+  UNCLAIMED: 'Waiting to be claimed',
+  RETURNED: 'Returned',
+  ONHOLD: 'On hold at PayPal',
+  BLOCKED: 'Blocked by PayPal',
+  REFUNDED: 'Taken back',
+  REVERSED: 'Reversed',
+  // licenses
+  requested: 'Requested',
+  draft: 'Draft',
+  offered: 'Offered',
+  declined: 'Declined',
+  withdrawn: 'Withdrawn',
+  revoked: 'Revoked',
+  superseded: 'Replaced by newer terms',
+  // agent runs
+  running: 'Working',
+  awaiting_approval: 'Waiting for you',
+  failed: 'Stopped',
+  // builds and reports
+  preflight_blocked: 'Blocked by a license',
+  preflight_passed: 'Licenses check out',
+  generating: 'Being written',
+  generated: 'Written',
+  generation_failed: 'Writing failed',
+  listed: 'For sale',
+};
+
+export function statusLabel(status: string): string {
+  return STATUS_LABEL[status] ?? status.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}
+
 export function StatusBadge({ status }: { status: string }) {
-  return <Badge tone={statusTone(status)}>{status.replace(/_/g, ' ')}</Badge>;
+  return <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>;
 }

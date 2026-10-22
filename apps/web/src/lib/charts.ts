@@ -1,7 +1,9 @@
-import { AllCommunityModule, ModuleRegistry, type AgChartTheme } from 'ag-charts-community';
+import { BarSeriesModule, CategoryAxisModule, LegendModule, LocaleModule, ModuleRegistry, NumberAxisModule, type AgChartTheme } from 'ag-charts-community';
 
-// Imported only by chart components, so AG Charts stays out of the main bundle.
-ModuleRegistry.registerModules([AllCommunityModule]);
+// Imported only by chart components, so AG Charts stays out of the main bundle. Only what the
+// charts use is registered: bar series (it brings the cartesian chart), their axes, the legend
+// and default texts. Tooltips are built in.
+ModuleRegistry.registerModules([BarSeriesModule, CategoryAxisModule, NumberAxisModule, LegendModule, LocaleModule]);
 
 /**
  * Categorical slots in a fixed order (validated for colour-blind separation on a light

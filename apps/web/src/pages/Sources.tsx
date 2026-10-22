@@ -497,19 +497,30 @@ export function ProfilePage() {
   const qc = useQueryClient();
   const { authMethod } = useSession();
   const q = useQuery({ queryKey: ['profile'], queryFn: () => api<{ user: { name: string; email: string; role: string; paypalEmail: string | null } }>('/me/profile') });
-  const [form, setForm] = useState<{ name: string; paypalEmail: string } | null>(null);
+  const [form, setForm] = useState<{ name: string; paypalEmail: string; currentPassword: string } | null>(null);
   useEffect(() => {
-    if (q.data && !form) setForm({ name: q.data.user.name, paypalEmail: q.data.user.paypalEmail ?? '' });
+    if (q.data && !form) setForm({ name: q.data.user.name, paypalEmail: q.data.user.paypalEmail ?? '', currentPassword: '' });
   }, [q.data, form]);
+  const isDemo = authMethod === 'demo';
+  // Changing where money goes needs the password: a stolen session alone can't redirect payouts.
+  const payeeChanges = !!form && !!q.data && (form.paypalEmail.trim().toLowerCase() || null) !== (q.data.user.paypalEmail ?? null);
   const m = useMutation({
-    mutationFn: () => api('/me', { method: 'PATCH', body: { name: form!.name, paypalEmail: form!.paypalEmail || null } }),
-    onSuccess: () => qc.invalidateQueries(),
+    mutationFn: () =>
+      api('/me', {
+        method: 'PATCH',
+        body: { name: form!.name, paypalEmail: form!.paypalEmail.trim() || null, ...(payeeChanges ? { currentPassword: form!.currentPassword } : {}) },
+      }),
+    onSuccess: () => {
+      setForm((f) => (f ? { ...f, currentPassword: '' } : f));
+      qc.invalidateQueries();
+    },
   });
-  if (q.isLoading || !form) return <Spinner />;
+  if (q.isLoading || !form) return q.error ? <ErrorNote error={q.error} /> : <Spinner />;
   return (
     <div className="mx-auto max-w-xl">
       <PageHeader title="Profile" subtitle={q.data!.user.email} />
       <Card>
+        {isDemo && <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">This is a shared demo profile, so it can’t be changed. Sign up for your own account to edit yours.</p>}
         <form
           className="space-y-4"
           onSubmit={(e) => {
@@ -517,22 +528,98 @@ export function ProfilePage() {
             m.mutate();
           }}
         >
-          <label className="block space-y-1.5 text-sm">
-            <span className="font-medium">Name</span>
-            <input className={`${input} h-10`} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          </label>
-          <label className="block space-y-1.5 text-sm">
-            <span className="font-medium">PayPal email for receiving payments</span>
-            <input className={`${input} h-10`} type="email" value={form.paypalEmail} onChange={(e) => setForm({ ...form, paypalEmail: e.target.value })} placeholder="you@example.com" />
-            <span className="text-xs text-muted">Royalties are sent here with PayPal. Without it, publishers can’t include your sources in reports they sell.</span>
-          </label>
+          <fieldset disabled={isDemo} className="space-y-4">
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Name</span>
+              <input className={`${input} h-10`} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">PayPal email for receiving payments</span>
+              <input className={`${input} h-10`} type="email" value={form.paypalEmail} onChange={(e) => setForm({ ...form, paypalEmail: e.target.value })} placeholder="you@example.com" />
+              <span className="text-xs text-muted">Royalties are sent here with PayPal. Without it, publishers can’t include your sources in reports they sell.</span>
+            </label>
+            {payeeChanges && (
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium">Your password, to change where payments go</span>
+                <input className={`${input} h-10`} type="password" autoComplete="current-password" required value={form.currentPassword} onChange={(e) => setForm({ ...form, currentPassword: e.target.value })} />
+              </label>
+            )}
+          </fieldset>
           <ErrorNote error={m.error} />
-          {m.isSuccess && <p className="text-sm text-pass">Saved.</p>}
-          <Button loading={m.isPending}>Save</Button>
+          {m.isSuccess && <p className="text-sm text-pass" role="status">Saved.</p>}
+          {!isDemo && <Button loading={m.isPending}>Save</Button>}
         </form>
       </Card>
       {authMethod === 'session' && <ChangePassword />}
+      <YourData canDelete={authMethod === 'session'} />
     </div>
+  );
+}
+
+/** Download everything TracePay holds about you, or delete the account. */
+function YourData({ canDelete }: { canDelete: boolean }) {
+  const [confirming, setConfirming] = useState(false);
+  const [password, setPassword] = useState('');
+  const [typed, setTyped] = useState('');
+  const download = useMutation({
+    mutationFn: () => api<unknown>('/me/export'),
+    onSuccess: (data) => {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+      Object.assign(document.createElement('a'), { href: url, download: 'tracepay-my-data.json' }).click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => post('/me/delete', { currentPassword: password, confirm: typed }),
+    onSuccess: () => window.location.assign('/login'),
+  });
+  return (
+    <Card title="Your data" className="mt-6">
+      <p className="mb-3 text-sm text-muted">Download a copy of everything TracePay holds about you: profile, sources, licenses, purchases, earnings, questions and credit history.</p>
+      <Button variant="secondary" loading={download.isPending} onClick={() => download.mutate()}>
+        Download my data
+      </Button>
+      <ErrorNote error={download.error} />
+      {canDelete && (
+        <div className="mt-6 border-t border-line pt-4">
+          <p className="text-sm text-muted">
+            Deleting removes your name, emails, PayPal address, password, sessions, API keys and the questions you asked. Sales and payouts you were part of stay on record,
+            without your details, because accounting requires them. It can’t be undone, and isn’t possible while you still have credit or are owed royalties.
+          </p>
+          {!confirming ? (
+            <Button variant="ghost" className="mt-3 text-block" onClick={() => setConfirming(true)}>
+              Delete my account…
+            </Button>
+          ) : (
+            <form
+              className="mt-3 space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                remove.mutate();
+              }}
+            >
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium">Your password</span>
+                <input className={`${input} h-10`} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+              </label>
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium">Type DELETE to confirm</span>
+                <input className={`${input} h-10`} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+              </label>
+              <ErrorNote error={remove.error} />
+              <div className="flex gap-2">
+                <Button className="bg-block hover:bg-block/90" disabled={typed !== 'DELETE' || !password} loading={remove.isPending}>
+                  Delete my account
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setConfirming(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 

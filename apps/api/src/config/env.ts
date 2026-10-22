@@ -15,6 +15,9 @@ function parse<T extends z.ZodType>(schema: T, label: string): z.infer<T> {
 }
 
 const nonEmpty = z.string().trim().min(1);
+/** An optional whole number; unset or empty (as in a copied .env.example) means "use the default". */
+const optionalInt = (min: number, max: number) =>
+  z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(min).max(max).optional());
 
 export const serverEnv = () =>
   parse(
@@ -99,6 +102,36 @@ export const aiReady = (): boolean => aiConfig() !== null;
  * demo mode; never put real account details here.
  */
 export const sandboxBuyerHint = (): string | null => process.env.PAYPAL_SANDBOX_BUYER_HINT?.trim().slice(0, 300) || null;
+
+/** Pay-per-citation pricing and payout rules (all optional; defaults documented in .env.example). */
+export const answersEnv = () =>
+  parse(
+    z.object({
+      /** The library's fee per answered question, in cents. */
+      ANSWER_FEE_CENTS: optionalInt(0, 100),
+      /** Smallest royalty total worth one PayPal payout, in cents. */
+      ROYALTY_PAYOUT_MIN_CENTS: optionalInt(1, 100_000),
+      /** Days before an earned credit can be paid out (refunds and chargebacks land first). */
+      CREDIT_CLEARING_DAYS: optionalInt(0, 180),
+    }),
+    'answers',
+  );
+
+/**
+ * Problems that make a production deployment unsafe or broken. The server refuses to
+ * start with any of them (it would otherwise fail later, at a customer's first payment).
+ */
+export function productionConfigProblems(e: NodeJS.ProcessEnv = process.env): string[] {
+  const problems: string[] = [];
+  const local = (v: string | undefined) => !v || /localhost|127\.0\.0\.1|\[::1\]/.test(v);
+  if (local(e.APP_BASE_URL)) problems.push('APP_BASE_URL must be the public web address (PayPal sends buyers back there).');
+  if (local(e.API_BASE_URL)) problems.push('API_BASE_URL must be the public API address.');
+  if (local(e.CORS_ORIGINS)) problems.push('CORS_ORIGINS must list the public web origin(s).');
+  if (!e.PAYPAL_CLIENT_ID?.trim() || !e.PAYPAL_CLIENT_SECRET?.trim()) problems.push('PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are required.');
+  if (!e.PAYPAL_WEBHOOK_ID?.trim()) problems.push('PAYPAL_WEBHOOK_ID is required: without it every PayPal webhook is rejected.');
+  if (!e.AUDIT_SIGNING_PRIVATE_KEY?.trim()) problems.push('AUDIT_SIGNING_PRIVATE_KEY is required (npm run keys:generate -w @tracepay/api).');
+  return problems;
+}
 
 export const signingEnv = () =>
   parse(z.object({ AUDIT_SIGNING_PRIVATE_KEY: nonEmpty }), 'audit signing');

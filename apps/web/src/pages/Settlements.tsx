@@ -73,7 +73,7 @@ export function SettlementsPage() {
           ),
       },
       { headerName: 'License', field: 'licenseGrantId', width: 150, valueFormatter: (p) => p.value ?? '—', cellClass: 'mono' },
-      { headerName: 'Calculation', field: 'formula', flex: 1.8, minWidth: 220, cellClass: 'mono', tooltipField: 'note' },
+      { headerName: 'Calculation', field: 'formula', flex: 1.8, minWidth: 220, cellClass: 'mono', tooltip: (p) => p.data?.note ?? undefined },
       {
         headerName: 'Amount',
         field: 'amountCents',
@@ -243,7 +243,6 @@ export function SettlementsPage() {
                 <dt className="text-muted">Capture status</dt><dd>{payment?.captureStatus}</dd>
                 <dt className="text-muted">Captured</dt><dd>{payment?.capturedCents != null ? formatMoney(payment.capturedCents) : '—'}</dd>
                 <dt className="text-muted">PayPal fee</dt><dd>{payment?.paypalFeeCents != null ? `${formatMoney(payment.paypalFeeCents)} (borne by publisher)` : '—'}</dd>
-                <dt className="text-muted">Buyer</dt><dd>{payment?.payerEmail ?? '—'}</dd>
               </dl>
             </Card>
             <Card title={run.batches.length > 1 ? `Payout attempts (${run.batches.length})` : 'Payout batch'}>

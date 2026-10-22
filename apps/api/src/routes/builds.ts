@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { BuildIntentSchema } from '@tracepay/shared';
@@ -24,8 +25,9 @@ const PreflightBody = z.object({
 
 const VerifyReceiptBody = z.object({
   document: z.record(z.string(), z.unknown()),
-  signature: z.string().min(1),
-  publicKeyPem: z.string().min(1).optional(),
+  signature: z.string().min(1).max(200),
+  /** Ignored (always TracePay's key); accepted so older clients keep working. */
+  publicKeyPem: z.string().max(4000).optional(),
 });
 
 const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
@@ -165,14 +167,16 @@ export function buildRoutes({ db, signingKeys, writer }: AppDeps) {
   /** Anyone can check a receipt; by default against this server's public key. */
   r.post('/receipts/verify', async (req, res) => {
     const body = VerifyReceiptBody.parse(req.body);
-    const pem = body.publicKeyPem ?? publicKeyPem(signingKeys());
+    // Always TracePay's own key: a receipt forged with someone else's key (and carrying that
+    // key) must not verify. To check against another key, verify offline with the receipt.
+    const pem = publicKeyPem(signingKeys());
     let valid = false;
     try {
       valid = verifyDocument(body.document, body.signature, pem);
     } catch {
       valid = false;
     }
-    res.json({ valid });
+    res.json({ valid, signedBy: valid ? 'TracePay' : null, keyFingerprint: createHash('sha256').update(pem).digest('hex').slice(0, 16) });
   });
 
   return r;

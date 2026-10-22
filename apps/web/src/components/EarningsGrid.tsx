@@ -3,7 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { Download, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { formatMoney } from '../lib/format';
+import { formatMoney, localDate, localMidnight } from '../lib/format';
 import { gridTheme } from '../lib/grid';
 import { Badge, Button } from './ui';
 
@@ -26,7 +26,7 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
   const [search, setSearch] = useState('');
   const columns = useMemo<ColDef<EarningRow>[]>(
     () => [
-      { headerName: 'Date', field: 'date', width: 150, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? new Date(p.data.date) : null) },
+      { headerName: 'Date', field: 'date', width: 150, filter: 'agDateColumnFilter', filterValueGetter: (p) => (p.data ? localMidnight(p.data.date) : null) },
       {
         headerName: 'Report',
         field: 'report',
@@ -45,7 +45,7 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
           </Link>
         ),
       },
-      { headerName: 'Calculation', field: 'formula', flex: 1.2, minWidth: 190, cellClass: 'mono', tooltipField: 'note', filter: 'agTextColumnFilter' },
+      { headerName: 'Calculation', field: 'formula', flex: 1.2, minWidth: 190, cellClass: 'mono', tooltip: (p) => p.data?.note ?? undefined, filter: 'agTextColumnFilter' },
       {
         headerName: 'Amount',
         field: 'amountCents',
@@ -87,7 +87,7 @@ export default function EarningsGrid({ rows }: { rows: EarningRow[] }) {
             className="h-8 w-44 rounded-lg border border-line pl-8 pr-2 text-sm"
           />
         </label>
-        <Button size="sm" variant="secondary" disabled={!gridApi} onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-earnings-${new Date().toISOString().slice(0, 10)}.csv` })}>
+        <Button size="sm" variant="secondary" disabled={!gridApi} onClick={() => gridApi?.exportDataAsCsv({ fileName: `tracepay-earnings-${localDate(new Date())}.csv` })}>
           <Download className="size-3.5" /> Export CSV
         </Button>
       </div>

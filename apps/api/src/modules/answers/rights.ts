@@ -6,7 +6,7 @@ import type { ResolvedSource } from '../catalog/catalog.service';
  * rejects, so it can't use (or be paid for) what isn't licensed.
  */
 
-export type ExclusionCode = 'no_license' | 'not_approved' | 'revoked' | 'out_of_term' | 'ai_not_allowed' | 'not_commercial' | 'territory' | 'no_payee' | 'over_budget';
+export type ExclusionCode = 'no_license' | 'not_approved' | 'revoked' | 'out_of_term' | 'ai_not_allowed' | 'not_commercial' | 'territory' | 'no_payee' | 'over_budget' | 'demo_only' | 'instructions';
 
 export interface EligibleSource {
   source: ResolvedSource;

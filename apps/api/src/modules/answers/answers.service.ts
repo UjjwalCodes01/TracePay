@@ -1,7 +1,9 @@
+import { answersEnv } from '../../config/env';
 import { formatMoney } from '@tracepay/shared';
 import type { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
-import { appendAudit } from '../audit/audit-log';
+import { appendAudit, lockAuditChain } from '../audit/audit-log';
+import { DEMO_USERS } from '../demo/world';
 import { sha256Hex } from '../audit/hash-chain';
 import { publicKeyPem, signDocument, type SigningKeys } from '../audit/signing';
 import { todayUtc } from '../builds/preflight.service';
@@ -9,7 +11,7 @@ import { listCatalog, resolveSources } from '../catalog/catalog.service';
 import type { AnswerWriter } from '../generation/writers';
 import { retrievePassages } from '../generation/retrieval';
 import { CreditError, lockAccount } from './credits.service';
-import { auditAnswer, MAX_PAID_PASSAGES_PER_SOURCE, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
+import { auditAnswer, containsInstructions, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
 import { checkAnswerRights, type ExcludedSource } from './rights';
 
 /**
@@ -23,15 +25,27 @@ import { checkAnswerRights, type ExcludedSource } from './rights';
  */
 
 export const ANSWER_RECEIPT_VERSION = 'tracepay-answer-receipt/1';
-export const answerFeeCents = () => intEnv('ANSWER_FEE_CENTS', 2);
+export const answerFeeCents = () => answersEnv().ANSWER_FEE_CENTS ?? 2;
 const PASSAGES_PER_SOURCE = MAX_PAID_PASSAGES_PER_SOURCE;
 
-function intEnv(name: string, fallback: number): number {
-  const n = Number(process.env[name]);
-  return Number.isInteger(n) && n >= 0 ? n : fallback;
-}
 
 const json = (v: unknown) => v as Prisma.InputJsonValue;
+
+/** The model gets this long; well inside the recovery sweep's window, so a hold is never stranded. */
+export const WRITER_TIMEOUT_MS = 60_000;
+
+const DEMO_IDS = new Set(DEMO_USERS.map((u) => u.id));
+const DEMO_CONTRIBUTORS = new Set(DEMO_USERS.filter((u) => u.role === 'contributor').map((u) => u.id));
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`the AI model took longer than ${ms / 1000}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 export interface AskInput {
   askerId: string;
@@ -42,11 +56,14 @@ export interface AskInput {
 }
 
 interface StoredContent {
-  text: string;
+  /** The answer, kept only when it was paid for (or is TracePay's own "not covered" note). */
+  text: string | null;
   /** Every citation, with whether it was paid. Passage text is never stored here. */
-  citations: Array<{ handle: string; assetVersionId: string | null; chunkId: string | null; supported: boolean }>;
+  citations: Array<{ handle: string; assetVersionId: string | null; chunkId: string | null; supported: boolean; title?: string | null }>;
   ignored: AnswerAudit['ignored'];
-  passages: Array<{ handle: string; chunkId: string; assetVersionId: string }>;
+  passages: Array<{ handle: string; chunkId: string; assetVersionId: string; title?: string }>;
+  /** Passages withheld from the model because they tried to instruct it. */
+  withheld?: number;
 }
 
 export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys, input: AskInput) {
@@ -60,12 +77,29 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   // 1. Rights: only sources whose license allows AI answers, today.
   const entries = (await listCatalog(db, input.libraryId)).filter((e) => e.license);
   const sources = entries.length ? await resolveSources(db, input.libraryId, entries.map((e) => e.assetVersionId)) : [];
-  const { eligible, excluded } = checkAnswerRights(sources, asOf);
+  const rights = checkAnswerRights(sources, asOf);
+  const excluded = [...rights.excluded];
+  // The demo's free credit only ever pays the demo's own (fictional) authors.
+  const eligible = DEMO_IDS.has(input.askerId)
+    ? rights.eligible.filter((e) => {
+        if (DEMO_CONTRIBUTORS.has(e.source.contributorId)) return true;
+        excluded.push({ assetVersionId: e.source.assetVersionId, assetTitle: e.source.assetTitle, contributorName: e.source.contributorName, code: 'demo_only', reason: 'Demo credit only pays the demo’s own authors.' });
+        return false;
+      })
+    : rights.eligible;
   const rateOf = new Map(eligible.map((e) => [e.source.assetVersionId, e.centsPerCitation]));
   const sourceOf = new Map(sources.map((s) => [s.assetVersionId, s]));
 
   // 2. Retrieval from licensed sources only, most relevant first; unrelated passages are dropped.
-  const retrieved = eligible.length ? (await retrievePassages(db, eligible.map((e) => e.source.assetVersionId), input.question, PASSAGES_PER_SOURCE)).filter((p) => p.rank > 0) : [];
+  const relevant = eligible.length ? (await retrievePassages(db, eligible.map((e) => e.source.assetVersionId), input.question, PASSAGES_PER_SOURCE)).filter((p) => p.rank > 0) : [];
+  // Text that tries to steer the model never reaches it.
+  const retrieved = relevant.filter((p) => !containsInstructions(p.text));
+  const withheld = relevant.length - retrieved.length;
+  for (const id of new Set(relevant.filter((p) => containsInstructions(p.text)).map((p) => p.assetVersionId))) {
+    if (retrieved.some((p) => p.assetVersionId === id)) continue;
+    const s = sourceOf.get(id)!;
+    excluded.push({ assetVersionId: id, assetTitle: s.assetTitle, contributorName: s.contributorName, code: 'instructions', reason: 'Its text contains instructions aimed at AI, so it wasn’t shown to the model.' });
+  }
   const bySource = new Map<string, typeof retrieved>();
   for (const p of [...retrieved].sort((a, b) => b.rank - a.rank)) bySource.set(p.assetVersionId, [...(bySource.get(p.assetVersionId) ?? []), p]);
   const candidates: Candidate[] = [...bySource].map(([assetVersionId, ps]) => ({
@@ -102,45 +136,61 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
     });
   });
 
-  // 5. The model writes (outside any transaction). One repair pass for invented citations.
-  const writerPassages = plan.passages.map((p) => ({ handle: p.handle, text: p.text, sourceTitle: sourceOf.get(p.assetVersionId)!.assetTitle }));
+  // 5. The model writes (outside any transaction). One repair pass for invented citations or copying.
+  const titled = plan.passages.map((p) => ({ ...p, title: sourceOf.get(p.assetVersionId)!.assetTitle }));
+  const writerPassages = titled.map((p) => ({ handle: p.handle, text: p.text, sourceTitle: p.title }));
   const rates = plan.passages.map((p) => ({ assetVersionId: p.assetVersionId, centsPerCitation: rateOf.get(p.assetVersionId) ?? 0 }));
+  const copied = (text: string) => plan.passages.some((p) => longestCopiedRun(text, p.text) > MAX_VERBATIM_WORDS);
   let out;
   let audit: AnswerAudit;
   try {
-    out = await writer.answer({ question: input.question, passages: writerPassages });
+    out = await withTimeout(writer.answer({ question: input.question, passages: writerPassages }), WRITER_TIMEOUT_MS);
     audit = auditAnswer(out.text, plan.passages, rates);
-    if (out.covered && audit.unknownHandles.length) {
-      out = await writer.answer({ question: input.question, passages: writerPassages, previousProblems: audit.unknownHandles.map((h) => `[${h}] is not one of the excerpts.`) });
+    const problems = [
+      ...audit.unknownHandles.map((h) => `[${h}] is not one of the excerpts.`),
+      ...(copied(out.text) ? [`You copied more than ${MAX_VERBATIM_WORDS} words of an excerpt word for word. Paraphrase.`] : []),
+    ];
+    if (out.covered && problems.length) {
+      out = await withTimeout(writer.answer({ question: input.question, passages: writerPassages, previousProblems: problems }), WRITER_TIMEOUT_MS);
       audit = auditAnswer(out.text, plan.passages, rates);
     }
   } catch (err) {
-    await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The AI model could not be reached. You were not charged.', detail: (err as Error).message });
+    await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The AI model couldn’t answer in time. You were not charged.', detail: (err as Error).message, plan: titled, withheld });
     return getAnswer(db, answer.id, input.askerId, keys);
   }
 
-  // 6. Charge only for a grounded answer; credit only verified citations.
+  // 6. Charge only for a grounded, original answer; credit only verified citations.
   if (audit.unknownHandles.length) {
-    await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The answer cited sources it wasn’t given, so it was rejected. You were not charged.', out, audit, plan: plan.passages });
+    await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The answer cited sources it wasn’t given, so it was rejected. You were not charged.', out, audit, plan: titled, withheld });
+  } else if (out.covered && copied(out.text)) {
+    await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The answer copied a source word for word, which its license doesn’t allow, so it was rejected. You were not charged.', out, audit, plan: titled, withheld });
   } else if (!out.covered || audit.paid.length === 0) {
-    await settle(db, keys, answer.id, { status: 'not_covered', out, audit, plan: plan.passages });
+    await settle(db, keys, answer.id, { status: 'not_covered', out, audit, plan: titled, withheld });
   } else {
-    await settle(db, keys, answer.id, { status: 'answered', out, audit, plan: plan.passages, feeCents: fee, sourceOf });
+    await settle(db, keys, answer.id, { status: 'answered', out, audit, plan: titled, feeCents: fee, sourceOf, withheld });
   }
   return getAnswer(db, answer.id, input.askerId, keys);
 }
 
-type SettleArgs =
-  | { status: 'failed'; failureReason: string; detail?: string; out?: { text: string; model: string; fromFixture: boolean }; audit?: AnswerAudit; plan?: Passage[] }
-  | { status: 'not_covered'; out: { text: string; model: string; fromFixture: boolean }; audit: AnswerAudit; plan: Passage[] }
-  | { status: 'answered'; out: { text: string; model: string; fromFixture: boolean }; audit: AnswerAudit; plan: Passage[]; feeCents: number; sourceOf: Map<string, Awaited<ReturnType<typeof resolveSources>>[number]> };
+type TitledPassage = Passage & { title: string };
+type SettleArgs = { withheld?: number } & (
+  | { status: 'failed'; failureReason: string; detail?: string; out?: { text: string; model: string; fromFixture: boolean }; audit?: AnswerAudit; plan?: TitledPassage[] }
+  | { status: 'not_covered'; out: { text: string; model: string; fromFixture: boolean }; audit: AnswerAudit; plan: TitledPassage[] }
+  | { status: 'answered'; out: { text: string; model: string; fromFixture: boolean }; audit: AnswerAudit; plan: TitledPassage[]; feeCents: number; sourceOf: Map<string, Awaited<ReturnType<typeof resolveSources>>[number]> }
+);
 
 /** Releases the hold, charges (only a grounded answer), credits contributors, signs the receipt. */
 async function settle(db: Db, keys: SigningKeys, answerId: string, args: SettleArgs) {
   await db.$transaction(async (tx) => {
+    // Lock order everywhere: audit chain → account → answer row. Status is read under the
+    // answer's own lock, so the recovery sweep and a late answer can't both settle it.
+    await lockAuditChain(tx);
+    const head = await tx.answer.findUnique({ where: { id: answerId }, select: { account: { select: { ownerId: true } } } });
+    if (!head) return; // removed (a demo reset): nothing to settle
+    await lockAccount(tx, head.account.ownerId);
+    await tx.$queryRaw`SELECT id FROM "Answer" WHERE id = ${answerId} FOR UPDATE`;
     const answer = await tx.answer.findUniqueOrThrow({ where: { id: answerId }, include: { account: true, library: { select: { id: true, name: true } } } });
     if (answer.status !== 'answering') return; // already settled (e.g. by the recovery sweep)
-    await lockAccount(tx, answer.account.ownerId);
 
     const charged = args.status === 'answered' ? args.feeCents + args.audit.contributorCents : 0;
     // The mandate was enforced when planning; this is the belt to those braces.
@@ -171,12 +221,16 @@ async function settle(db: Db, keys: SigningKeys, answerId: string, args: SettleA
         : [];
     if (credits.length) await tx.citationCredit.createMany({ data: credits });
 
+    const titleOf = new Map((args.plan ?? []).map((p) => [p.assetVersionId, p.title]));
+    // Only a paid answer keeps its text: an unpaid one must not hand out licensed content for free.
+    const keepText = args.status === 'answered' || (args.status === 'not_covered' && args.out.model === 'none');
     const content: StoredContent | null = args.out
       ? {
-          text: args.out.text,
-          citations: (args.audit?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, chunkId: c.chunkId, supported: c.supported })),
+          text: keepText ? args.out.text : null,
+          citations: (args.audit?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, chunkId: c.chunkId, supported: c.supported, title: c.assetVersionId ? (titleOf.get(c.assetVersionId) ?? null) : null })),
           ignored: args.audit?.ignored ?? { unsupported: 0, repeated: 0, overCap: 0 },
-          passages: (args.plan ?? []).map((p) => ({ handle: p.handle, chunkId: p.chunkId, assetVersionId: p.assetVersionId })),
+          passages: (args.plan ?? []).map((p) => ({ handle: p.handle, chunkId: p.chunkId, assetVersionId: p.assetVersionId, title: p.title })),
+          withheld: args.withheld ?? 0,
         }
       : null;
 
@@ -259,17 +313,22 @@ type AnswerRow = Prisma.AnswerGetPayload<{ include: { library: { select: { id: t
 
 export function answerOut(a: AnswerRow, keys: SigningKeys) {
   const content = a.content as unknown as StoredContent | null;
-  const titleOf = new Map(a.credits.map((c) => [c.assetVersionId, c.assetTitle]));
+  const titleOf = new Map([...(content?.passages ?? []).map((p) => [p.assetVersionId, p.title ?? null] as const), ...a.credits.map((c) => [c.assetVersionId, c.assetTitle] as const)]);
   return {
     id: a.id,
     question: a.question,
     status: a.status,
     library: a.library,
-    text: content?.text ?? null,
+    // Only a paid answer's text is returned; an unpaid one would hand out licensed content for free.
+    text: a.status === 'answered' ? (content?.text ?? null) : a.status === 'not_covered' ? (content?.text ?? 'The licensed sources in this library don’t answer that question.') : null,
     model: a.model,
     fromFixture: a.fromFixture,
     // Which handle is which source (titles only — the asker never receives raw passages).
-    citations: (content?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, title: c.assetVersionId ? (titleOf.get(c.assetVersionId) ?? null) : null, paid: c.supported && !!c.assetVersionId })),
+    citations:
+      a.status === 'answered'
+        ? (content?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, title: c.title ?? (c.assetVersionId ? (titleOf.get(c.assetVersionId) ?? null) : null), paid: c.supported && !!c.assetVersionId }))
+        : [],
+    withheldPassages: content?.withheld ?? 0,
     paid: a.credits.map((c) => ({ assetVersionId: c.assetVersionId, title: c.assetTitle, contributor: c.contributor.name, citations: c.citations, centsPerCitation: c.centsPerCitation, amountCents: c.amountCents })),
     notPaid: content?.ignored ?? { unsupported: 0, repeated: 0, overCap: 0 },
     excluded: (a.excluded as unknown as ExcludedSource[]).map((e) => ({ title: e.assetTitle, contributor: e.contributorName, code: e.code, reason: e.reason })),
@@ -285,31 +344,37 @@ export function answerOut(a: AnswerRow, keys: SigningKeys) {
 /** Publishers whose libraries can answer questions: at least one source licensed for AI answers. */
 export async function listLibraries(db: Db) {
   const grants = await db.licenseGrant.findMany({
-    where: { status: 'approved', terms: { path: ['aiAnswers', 'allowed'], equals: true } },
-    select: { licenseeId: true, licensee: { select: { name: true, role: true } } },
+    where: { status: 'approved', terms: { path: ['aiAnswers', 'allowed'], equals: true }, asset: { archivedAt: null } },
+    select: { licenseeId: true, assetId: true, licensee: { select: { name: true, role: true } } },
   });
-  const counts = new Map<string, { id: string; name: string; sources: number }>();
+  // Distinct live sources per library (several versions of one grant count once).
+  const libs = new Map<string, { id: string; name: string; assets: Set<string> }>();
   for (const g of grants) {
     if (g.licensee.role !== 'publisher') continue;
-    const c = counts.get(g.licenseeId) ?? { id: g.licenseeId, name: g.licensee.name, sources: 0 };
-    c.sources++;
-    counts.set(g.licenseeId, c);
+    const l = libs.get(g.licenseeId) ?? { id: g.licenseeId, name: g.licensee.name, assets: new Set<string>() };
+    l.assets.add(g.assetId);
+    libs.set(g.licenseeId, l);
   }
-  return [...counts.values()].sort((a, b) => b.sources - a.sources);
+  return [...libs.values()].map((l) => ({ id: l.id, name: l.name, sources: l.assets.size })).sort((a, b) => b.sources - a.sources || a.name.localeCompare(b.name));
 }
 
-/** Answers interrupted mid-way (a restart) release their hold and are marked failed, uncharged. */
-export async function releaseStaleAnswers(db: Db, keys: SigningKeys | null, cutoff: Date): Promise<number> {
-  const stale = await db.answer.findMany({ where: { status: 'answering', createdAt: { lt: cutoff } }, select: { id: true, accountId: true, reservedCents: true } });
+/** Answers interrupted mid-way (a restart, a hung model) release their hold and are marked failed, uncharged. */
+export async function releaseStaleAnswers(db: Db, _keys: SigningKeys | null, cutoff: Date): Promise<number> {
+  const stale = await db.answer.findMany({ where: { status: 'answering', createdAt: { lt: cutoff } }, select: { id: true, libraryId: true, account: { select: { ownerId: true } } } });
+  let released = 0;
   for (const a of stale) {
-    if (keys) {
-      await settle(db, keys, a.id, { status: 'failed', failureReason: 'Interrupted (the server restarted). You were not charged.' });
-      continue;
-    }
-    await db.$transaction(async (tx) => {
-      const moved = await tx.answer.updateMany({ where: { id: a.id, status: 'answering' }, data: { status: 'failed', failureReason: 'Interrupted (the server restarted). You were not charged.', finishedAt: new Date() } });
-      if (moved.count) await tx.creditAccount.update({ where: { id: a.accountId }, data: { reservedCents: { decrement: a.reservedCents } } });
+    released += await db.$transaction(async (tx) => {
+      // Same lock order as settle(): audit chain → account → answer.
+      await lockAuditChain(tx);
+      await lockAccount(tx, a.account.ownerId);
+      await tx.$queryRaw`SELECT id FROM "Answer" WHERE id = ${a.id} FOR UPDATE`;
+      const row = await tx.answer.findUnique({ where: { id: a.id }, select: { status: true, accountId: true, reservedCents: true } });
+      if (!row || row.status !== 'answering') return 0;
+      await tx.answer.update({ where: { id: a.id }, data: { status: 'failed', failureReason: 'Interrupted before it finished. You were not charged.', finishedAt: new Date() } });
+      await tx.creditAccount.update({ where: { id: row.accountId }, data: { reservedCents: { decrement: row.reservedCents } } });
+      await appendAudit(tx, { entityType: 'answer', entityId: a.id, tenantId: a.libraryId, eventType: 'answer.failed', payload: { chargedCents: 0, error: 'interrupted' } });
+      return 1;
     });
   }
-  return stale.length;
+  return released;
 }

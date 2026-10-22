@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { ShoppingBag, Users, Wallet, Wand2 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
-import { Button, ErrorNote } from '../components/ui';
+import { Button, ErrorNote, useDocumentTitle } from '../components/ui';
 import { useSession } from '../lib/session';
 
 function AuthShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
@@ -72,6 +72,7 @@ function DemoShortcut() {
 const input = 'h-11 w-full rounded-xl border border-line px-3 text-sm focus:border-ink focus:outline-none';
 
 export function SignInPage() {
+  useDocumentTitle('Sign in');
   const { signIn } = useSession();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
@@ -116,6 +117,7 @@ const ROLES = [
 ] as const;
 
 export function SignUpPage() {
+  useDocumentTitle('Create an account');
   const { signUp } = useSession();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'publisher' as (typeof ROLES)[number]['value'], paypalEmail: '' });
@@ -167,6 +169,11 @@ export function SignUpPage() {
           </label>
         )}
         <ErrorNote error={m.error} />
+        <p className="text-xs text-muted">
+          By creating an account you agree to the{' '}
+          <Link to="/terms" className="underline hover:text-ink">Terms</Link> and how we handle data in the{' '}
+          <Link to="/privacy" className="underline hover:text-ink">Privacy</Link> page.
+        </p>
         <Button className="h-11 w-full" loading={m.isPending}>
           Create account
         </Button>

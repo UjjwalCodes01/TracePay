@@ -201,6 +201,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
     process.env.ROYALTY_PAYOUT_MIN_CENTS = '100000';
     await request(a).post('/api/royalties/payouts').set(publisher).expect(409);
     process.env.ROYALTY_PAYOUT_MIN_CENTS = '1';
+    process.env.CREDIT_CLEARING_DAYS = '0'; // pay at once (the clearing period is tested separately)
     const { payout } = (await request(a).post('/api/royalties/payouts').set(publisher).expect(201)).body;
     expect(payout.totalCents).toBe(owed);
     expect(await db().citationCredit.count({ where: { status: 'accrued' } })).toBe(0);
@@ -219,6 +220,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
     // Other publishers can't touch this library's payouts.
     await request(a).post(`/api/royalties/payouts/${payout.id}/refresh`).set({ 'X-Demo-User': 'user_buyer' }).expect(403);
     delete process.env.ROYALTY_PAYOUT_MIN_CENTS;
+    delete process.env.CREDIT_CLEARING_DAYS;
   });
 
   it('takes the credit back when a top-up is refunded in PayPal', async () => {

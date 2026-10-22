@@ -175,7 +175,7 @@ export interface SettlementRun {
     id: string;
     status: string;
     amountCents: number;
-    payment: { orderId: string; captureId: string | null; captureStatus: string | null; capturedCents: number | null; paypalFeeCents: number | null; payerEmail: string | null } | null;
+    payment: { orderId: string; captureId: string | null; captureStatus: string | null; capturedCents: number | null; paypalFeeCents: number | null } | null;
     artifact: { id: string; title: string; buildJobId: string };
   };
 }

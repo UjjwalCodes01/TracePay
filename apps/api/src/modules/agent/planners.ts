@@ -1,6 +1,6 @@
 import type { Content, Part } from '@google/genai';
 import { aiReady } from '../../config/env';
-import { vertex } from '../../integrations/ai/vertex';
+import { AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS, vertex } from '../../integrations/ai/vertex';
 import { SHOPPER_SYSTEM_PROMPT, SHOPPER_TOOL_DECLARATIONS } from './buyer-tools';
 import { TOOL_DECLARATIONS } from './tools';
 
@@ -63,6 +63,8 @@ export class GeminiPlanner implements AgentPlanner {
       config: {
         systemInstruction: kind === 'buyer' ? SHOPPER_SYSTEM_PROMPT : AGENT_SYSTEM_PROMPT,
         temperature: 0,
+        httpOptions: { timeout: AI_TIMEOUT_MS },
+        maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
         tools: [{ functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: t.parameters })) }],
       },
     });

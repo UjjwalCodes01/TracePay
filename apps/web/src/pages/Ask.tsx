@@ -1,8 +1,9 @@
 import { PayPalButtons, PayPalScriptProvider } from '@paypal/react-paypal-js';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { BadgeCheck, CircleSlash, FileSignature, MessageSquareQuote, ShieldCheck, ShieldX, Sparkles, Wallet } from 'lucide-react';
+import { BadgeCheck, CircleSlash, FileSignature, MessageSquareQuote, RotateCw, ShieldCheck, ShieldX, Sparkles, Wallet } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner } from '../components/ui';
 import { api, post } from '../lib/api';
@@ -22,10 +23,12 @@ interface Credits {
   entries: Array<{ id: string; kind: string; amountCents: number; createdAt: string }>;
 }
 
+type AnswerStatus = 'answering' | 'answered' | 'not_covered' | 'failed';
+
 interface AnswerView {
   id: string;
   question: string;
-  status: 'answering' | 'answered' | 'not_covered' | 'failed';
+  status: AnswerStatus;
   library: { id: string; name: string };
   text: string | null;
   model: string | null;
@@ -49,8 +52,24 @@ interface Integrity {
   overpaidCents: number;
 }
 
+interface HistoryItem {
+  id: string;
+  question: string;
+  status: AnswerStatus;
+  chargedCents: number;
+  createdAt: string;
+  libraryName: string;
+}
+
 /** Same categorical order as the charts, so a source keeps its colour everywhere. */
 const SOURCE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+/** Light slots need dark text to stay readable (WCAG contrast); the rest take white. */
+const DARK_TEXT_ON = new Set(['#eb6834', '#1baf7a', '#eda100', '#e87ba4']);
+const UNKNOWN_COLOR = '#94a3b8';
+
+/** The server enforces its own fee as the floor; this mirrors it for the hint. */
+const MIN_PRICE_CENTS = 2;
+const MAX_PRICE_CENTS = 500;
 
 const SUGGESTIONS = [
   'How fast is spending on AI coding assistants growing, and how many developers use one weekly?',
@@ -60,11 +79,20 @@ const SUGGESTIONS = [
 
 const ENTRY_LABEL: Record<string, string> = { top_up: 'PayPal top-up', answer: 'Answer', top_up_reversal: 'Top-up refunded', demo_credit: 'Demo credit' };
 
+const STATUS_BADGE: Record<AnswerStatus, { text: string; tone: 'pass' | 'neutral' | 'block' | 'info' }> = {
+  answered: { text: 'Answered', tone: 'pass' },
+  not_covered: { text: 'Not covered — free', tone: 'neutral' },
+  failed: { text: 'Not charged', tone: 'block' },
+  answering: { text: 'Still answering', tone: 'info' },
+};
+
+const clampPrice = (cents: number) => Math.min(MAX_PRICE_CENTS, Math.max(MIN_PRICE_CENTS, cents));
+
 export function AskPage() {
   const qc = useQueryClient();
   const libraries = useQuery({ queryKey: ['libraries'], queryFn: () => api<{ libraries: Library[] }>('/libraries') });
   const credits = useQuery({ queryKey: ['credits'], queryFn: () => api<Credits>('/credits') });
-  const history = useQuery({ queryKey: ['answers'], queryFn: () => api<{ answers: Array<{ id: string; question: string; status: string; chargedCents: number; createdAt: string; libraryName: string }> }>('/answers') });
+  const history = useQuery({ queryKey: ['answers'], queryFn: () => api<{ answers: HistoryItem[] }>('/answers') });
   const [libraryId, setLibraryId] = useState<string | null>(null);
   const [question, setQuestion] = useState(SUGGESTIONS[0]!);
   const [maxPriceCents, setMaxPriceCents] = useState(50);
@@ -72,11 +100,11 @@ export function AskPage() {
 
   const library = libraryId ?? libraries.data?.libraries[0]?.id ?? null;
   const ask = useMutation({
-    mutationFn: () => post<{ answer: AnswerView }>('/answers', { libraryId: library, question, maxPriceCents }),
+    // Values are passed in, so a limit committed by pressing Enter is never read stale.
+    mutationFn: (vars: { libraryId: string; question: string; maxPriceCents: number }) => post<{ answer: AnswerView }>('/answers', vars),
     onSuccess: (r) => {
       setOpenId(r.answer.id);
       qc.setQueryData(['answer', r.answer.id], { answer: r.answer });
-      qc.invalidateQueries({ queryKey: ['credits'] });
       qc.invalidateQueries({ queryKey: ['answers'] });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['credits'] }),
@@ -96,7 +124,13 @@ export function AskPage() {
               className="space-y-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                ask.mutate();
+                if (!library) return;
+                // A limit typed but not yet committed (Enter in the field) is read from the form.
+                const field = (e.currentTarget.elements.namedItem('maxPrice') as HTMLInputElement | null)?.value;
+                const typed = field ? parseDollars(field) : null;
+                const limit = typed !== null ? clampPrice(typed) : maxPriceCents;
+                setMaxPriceCents(limit);
+                ask.mutate({ libraryId: library, question, maxPriceCents: limit });
               }}
             >
               {(libraries.data?.libraries.length ?? 0) > 1 && (
@@ -105,13 +139,14 @@ export function AskPage() {
                   <select className="h-10 w-full rounded-lg border border-line px-3" value={library ?? ''} onChange={(e) => setLibraryId(e.target.value)}>
                     {libraries.data!.libraries.map((l) => (
                       <option key={l.id} value={l.id}>
-                        {l.name} — {l.sources} licensed sources
+                        {l.name} — {l.sources} licensed {l.sources === 1 ? 'source' : 'sources'}
                       </option>
                     ))}
                   </select>
                 </label>
               )}
               {libraries.data && libraries.data.libraries.length === 0 && <p className="text-sm text-muted">No library has sources licensed for AI answers yet.</p>}
+              <ErrorNote error={libraries.error} />
               <textarea
                 aria-label="Your question"
                 className="h-24 w-full rounded-lg border border-line p-3 text-sm"
@@ -123,7 +158,7 @@ export function AskPage() {
               />
               <div className="flex flex-wrap gap-2">
                 {SUGGESTIONS.map((s) => (
-                  <button key={s} type="button" onClick={() => setQuestion(s)} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-ink hover:text-ink">
+                  <button key={s} type="button" onClick={() => setQuestion(s)} className="rounded-full border border-line px-3 py-1 text-left text-xs text-muted hover:border-ink hover:text-ink">
                     {s.length > 60 ? `${s.slice(0, 58)}…` : s}
                   </button>
                 ))}
@@ -132,42 +167,49 @@ export function AskPage() {
                 <label className="text-sm">
                   <span className="mb-1 block font-medium">Most this answer may cost</span>
                   <DraftInput
+                    name="maxPrice"
                     inputMode="decimal"
+                    aria-describedby="max-price-hint"
                     className="h-10 w-32 rounded-lg border border-line px-3 tabular-nums"
                     value={formatMoney(maxPriceCents)}
                     onCommit={(text) => {
                       const cents = parseDollars(text);
-                      if (cents !== null) setMaxPriceCents(Math.min(500, Math.max(1, cents)));
+                      if (cents !== null) setMaxPriceCents(clampPrice(cents));
                     }}
                   />
                 </label>
                 <Button type="submit" loading={ask.isPending} disabled={!library}>
-                  <Sparkles className="size-4" /> Ask
+                  <Sparkles className="size-4" aria-hidden /> Ask
                 </Button>
-                <span className="pb-2 text-xs text-muted">Checked before the AI runs: the answer is planned to fit your limit.</span>
+                <span id="max-price-hint" className="pb-2 text-xs text-muted">
+                  {formatMoney(MIN_PRICE_CENTS)}–{formatMoney(MAX_PRICE_CENTS)}. Checked before the AI runs: the answer is planned to fit your limit.
+                </span>
               </div>
               <ErrorNote error={ask.error} />
             </form>
           </Card>
 
-          {ask.isPending ? (
-            <Card>
-              <Spinner label="Checking licenses, reading licensed sources and writing a cited answer…" />
-            </Card>
-          ) : shown ? (
-            <AnswerCard key={shown} answerId={shown} />
-          ) : (
-            <Card>
-              <div className="py-8 text-center text-sm text-muted">
-                <MessageSquareQuote className="mx-auto mb-2 size-6" />
-                Ask something. You’ll see exactly who your money pays, and why.
-              </div>
-            </Card>
-          )}
+          <div aria-live="polite">
+            {ask.isPending ? (
+              <Card>
+                <Spinner label="Checking licenses, reading licensed sources and writing a cited answer…" />
+              </Card>
+            ) : shown ? (
+              <AnswerCard key={shown} answerId={shown} />
+            ) : (
+              <Card>
+                <div className="py-8 text-center text-sm text-muted">
+                  <MessageSquareQuote className="mx-auto mb-2 size-6" aria-hidden />
+                  Ask something. You’ll see exactly who your money pays, and why.
+                </div>
+              </Card>
+            )}
+          </div>
         </div>
 
         <div className="min-w-0 space-y-6">
-          <CreditCard credits={credits.data ?? null} loading={credits.isLoading} />
+          {/* A successful top-up clears a stale "top up to continue" error. */}
+          <CreditCard credits={credits.data ?? null} loading={credits.isLoading} loadError={credits.error} onToppedUp={() => ask.reset()} />
           <IntegrityCard />
           {history.data && history.data.answers.length > 0 && (
             <Card title="Your questions">
@@ -175,7 +217,12 @@ export function AskPage() {
                 {history.data.answers.slice(0, 8).map((a) => (
                   <li key={a.id}>
                     <button type="button" onClick={() => setOpenId(a.id)} className={clsx('flex w-full items-start justify-between gap-3 py-2 text-left', a.id === shown && 'font-medium')}>
-                      <span className="line-clamp-2 min-w-0">{a.question}</span>
+                      <span className="min-w-0">
+                        <span className="line-clamp-2">{a.question}</span>
+                        <Badge tone={STATUS_BADGE[a.status]?.tone ?? 'neutral'} className="mt-1">
+                          {STATUS_BADGE[a.status]?.text ?? a.status}
+                        </Badge>
+                      </span>
                       <span className="shrink-0 text-right text-xs text-muted tabular-nums">
                         {formatMoney(a.chargedCents)}
                         <span className="block">{timeAgo(a.createdAt)}</span>
@@ -193,53 +240,83 @@ export function AskPage() {
 }
 
 function AnswerCard({ answerId }: { answerId: string }) {
-  const q = useQuery({ queryKey: ['answer', answerId], queryFn: () => api<{ answer: AnswerView }>(`/answers/${answerId}`) });
+  const q = useQuery({
+    queryKey: ['answer', answerId],
+    queryFn: () => api<{ answer: AnswerView }>(`/answers/${answerId}`),
+    // Opened from another tab while still answering: follow it to the end.
+    refetchInterval: (query) => (query.state.data?.answer.status === 'answering' ? 2000 : false),
+  });
+  const [openChip, setOpenChip] = useState<number | null>(null);
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorNote error={q.error} />;
   const a = q.data!.answer;
   // A source keeps its colour across the text, the chips and the table.
   const order = [...new Set(a.citations.map((c) => c.assetVersionId).filter((x): x is string => !!x))];
-  const color = (id: string | null) => (id ? SOURCE_COLORS[order.indexOf(id) % SOURCE_COLORS.length] : '#94a3b8');
+  const color = (id: string | null) => (id ? SOURCE_COLORS[order.indexOf(id) % SOURCE_COLORS.length]! : UNKNOWN_COLOR);
   const handle = new Map(a.citations.map((c) => [c.handle, c]));
+  const handlesOf = (assetVersionId: string) => [...new Set(a.citations.filter((c) => c.assetVersionId === assetVersionId && c.paid).map((c) => c.handle))];
   const unpaid = a.notPaid.unsupported + a.notPaid.repeated + a.notPaid.overCap;
+  const parts = (a.text ?? '').split(/(\[C\d+\])/);
+  const open = openChip !== null ? handle.get(/^\[(C\d+)\]$/.exec(parts[openChip] ?? '')?.[1] ?? '') : undefined;
+  const badge = STATUS_BADGE[a.status];
 
   return (
     <Card
       title={
         <span className="flex flex-wrap items-center gap-2">
-          {a.status === 'answered' ? <Badge tone="pass">Answered</Badge> : a.status === 'not_covered' ? <Badge>Not covered — free</Badge> : <Badge tone="block">Not charged</Badge>}
+          <Badge tone={badge.tone}>{badge.text}</Badge>
           <span className="text-sm font-normal text-muted">{a.library.name}</span>
           {a.model && a.model !== 'none' && <Badge tone={a.fromFixture ? 'warn' : 'ai'}>{a.fromFixture ? 'Written without AI (no model configured)' : `Gemini (${a.model})`}</Badge>}
         </span>
       }
     >
       <p className="mb-3 text-sm text-muted">“{a.question}”</p>
-      {a.status === 'failed' ? (
+      {a.status === 'answering' ? (
+        <Spinner label="Still answering…" />
+      ) : a.status === 'failed' ? (
         <p className="text-sm text-block">{a.failureReason}</p>
       ) : (
-        <p className="text-[15px] leading-relaxed text-slate-800">
-          {(a.text ?? '').split(/(\[C\d+\])/).map((part, i) => {
-            const m = /^\[(C\d+)\]$/.exec(part);
-            if (!m) return <Fragment key={i}>{part}</Fragment>;
-            const c = handle.get(m[1]!);
-            return (
-              <span
-                key={i}
-                title={c?.title ? `${c.title}${c.paid ? '' : ' — not paid (didn’t support this sentence, or repeated)'}` : 'Unknown source'}
-                className={clsx('mx-0.5 inline-flex h-5 items-center rounded px-1.5 align-[1px] text-[11px] font-semibold text-white', !c?.paid && 'opacity-40 line-through')}
-                style={{ background: color(c?.assetVersionId ?? null) }}
-              >
-                {m[1]}
-              </span>
-            );
-          })}
-        </p>
+        <>
+          <p className="text-[15px] leading-relaxed text-slate-800">
+            {parts.map((part, i) => {
+              const m = /^\[(C\d+)\]$/.exec(part);
+              if (!m) return <Fragment key={i}>{part}</Fragment>;
+              const c = handle.get(m[1]!);
+              const bg = color(c?.assetVersionId ?? null);
+              const title = c?.title ?? 'a licensed source';
+              const paid = !!c?.paid;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  aria-label={`Citation ${m[1]}: ${title}, ${paid ? 'paid' : 'not paid'}`}
+                  aria-expanded={openChip === i}
+                  title={`${title}${paid ? '' : ' — not paid (didn’t support this sentence, or repeated)'}`}
+                  onClick={() => setOpenChip(openChip === i ? null : i)}
+                  className={clsx(
+                    'mx-0.5 inline-flex h-5 items-center rounded px-1.5 align-[1px] text-[11px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink',
+                    !paid && 'border border-dashed bg-white line-through',
+                  )}
+                  style={paid ? { background: bg, color: DARK_TEXT_ON.has(bg) ? '#0b0b0b' : '#ffffff' } : { borderColor: bg, color: '#334155' }}
+                >
+                  {m[1]}
+                </button>
+              );
+            })}
+          </p>
+          {open && (
+            <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700" role="note">
+              <strong>{open.handle}</strong>: {open.title ?? 'a licensed source'} —{' '}
+              {open.paid ? 'paid: the answer relies on this passage.' : 'not paid: it didn’t support its sentence, or repeated a passage already paid.'}
+            </p>
+          )}
+        </>
       )}
 
       {a.status === 'answered' && (
         <div className="mt-6">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-            <Wallet className="size-4" /> Where your {formatMoney(a.chargedCents)} went
+            <Wallet className="size-4" aria-hidden /> Where your {formatMoney(a.chargedCents)} went
           </div>
           <div className="overflow-x-auto rounded-lg border border-line">
             <table className="w-full text-sm">
@@ -252,22 +329,26 @@ function AnswerCard({ answerId }: { answerId: string }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {a.paid.map((p) => (
-                  <tr key={p.assetVersionId}>
-                    <td className="px-3 py-2">
-                      <span className="mr-2 inline-block size-2.5 rounded-sm align-middle" style={{ background: color(p.assetVersionId) }} />
-                      {p.contributor}
-                    </td>
-                    <td className="hidden px-3 py-2 text-muted sm:table-cell">{p.title}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {p.citations} × {formatMoney(p.centsPerCitation)}
-                    </td>
-                    <td className="px-3 py-2 text-right font-medium tabular-nums">{formatMoney(p.amountCents)}</td>
-                  </tr>
-                ))}
+                {a.paid.map((p) => {
+                  const cited = handlesOf(p.assetVersionId);
+                  return (
+                    <tr key={p.assetVersionId}>
+                      <td className="px-3 py-2">
+                        <span className="mr-2 inline-block size-2.5 rounded-sm align-middle" style={{ background: color(p.assetVersionId) }} aria-hidden />
+                        {p.contributor}
+                        {cited.length > 0 && <span className="block text-xs text-muted">Cited as {cited.join(', ')}</span>}
+                      </td>
+                      <td className="hidden px-3 py-2 text-muted sm:table-cell">{p.title}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {p.citations} × {formatMoney(p.centsPerCitation)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium tabular-nums">{formatMoney(p.amountCents)}</td>
+                    </tr>
+                  );
+                })}
                 <tr className="text-muted">
                   <td className="px-3 py-2" colSpan={3}>
-                    Answer fee (TracePay)
+                    Library fee ({a.library.name})
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{formatMoney(a.feeCents)}</td>
                 </tr>
@@ -302,7 +383,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
           <ul className="space-y-1 text-sm">
             {a.excluded.map((e) => (
               <li key={e.title} className="flex items-start gap-2">
-                {e.code === 'over_budget' ? <CircleSlash className="mt-0.5 size-4 shrink-0 text-muted" /> : <ShieldX className="mt-0.5 size-4 shrink-0 text-block" />}
+                {e.code === 'over_budget' ? <CircleSlash className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden /> : <ShieldX className="mt-0.5 size-4 shrink-0 text-block" aria-hidden />}
                 <span>
                   <span className="font-medium">{e.title}</span> <span className="text-muted">— {e.reason}</span>
                 </span>
@@ -323,91 +404,186 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
     const url = URL.createObjectURL(new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' }));
     const link = Object.assign(document.createElement('a'), { href: url, download: `tracepay-answer-${answerId}.json` });
     link.click();
-    URL.revokeObjectURL(url);
+    // Some browsers start the download asynchronously: release the URL afterwards.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-line pt-4 text-sm">
-      <FileSignature className="size-4" />
-      <span className="font-medium">Signed receipt</span>
-      <span className="text-muted">— who was paid, under which license terms, signed with Ed25519.</span>
-      <span className="ml-auto flex items-center gap-2">
-        {verify.data && (verify.data.valid ? <Badge tone="pass"><BadgeCheck className="size-3" /> Signature valid</Badge> : <Badge tone="block">Invalid</Badge>)}
-        <Button size="sm" variant="secondary" loading={verify.isPending} onClick={() => verify.mutate()}>
-          Verify
-        </Button>
-        <Button size="sm" variant="ghost" onClick={download}>
-          Download
-        </Button>
-      </span>
+    <div className="mt-6 border-t border-line pt-4 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <FileSignature className="size-4" aria-hidden />
+        <span className="font-medium">Signed receipt</span>
+        <span className="text-muted">— who was paid, under which license terms, signed with Ed25519.</span>
+        <span className="ml-auto flex items-center gap-2" aria-live="polite">
+          {verify.data &&
+            (verify.data.valid ? (
+              <Badge tone="pass">
+                <BadgeCheck className="size-3" aria-hidden /> Signature valid
+              </Badge>
+            ) : (
+              <Badge tone="block">Signature doesn’t match</Badge>
+            ))}
+          <Button size="sm" variant="secondary" loading={verify.isPending} onClick={() => verify.mutate()}>
+            Verify
+          </Button>
+          <Button size="sm" variant="ghost" onClick={download}>
+            Download
+          </Button>
+        </span>
+      </div>
+      {verify.error ? (
+        <div className="mt-2">
+          <ErrorNote error={verify.error} />
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function CreditCard({ credits, loading }: { credits: Credits | null; loading: boolean }) {
+function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Credits | null; loading: boolean; loadError: unknown; onToppedUp: () => void }) {
   const qc = useQueryClient();
   const { config } = useSession();
+  const [params, setParams] = useSearchParams();
   const [amount, setAmount] = useState(500);
+  const [paying, setPaying] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<ReactNode>(null);
-  const topUpRef = useRef<string | null>(null);
-  const refresh = () => qc.invalidateQueries({ queryKey: ['credits'] });
-  useEffect(() => setNotice(null), [amount]);
+  // Which top-up each PayPal order belongs to: onApprove looks it up by the order it approved.
+  const topUps = useRef(new Map<string, string>());
+  // Our own errors (raised in createOrder) are shown as-is; PayPal's generic onError mustn't replace them.
+  const shownRef = useRef(false);
+  const [retryTopUp, setRetryTopUp] = useState<string | null>(null);
+
+  const capture = useMutation({
+    mutationFn: (topUpId: string) => post<{ status: string; amountCents: number }>(`/credits/top-ups/${topUpId}/capture`),
+    onMutate: () => {
+      setError(null);
+      setNotice(null);
+    },
+    onSuccess: (r) => {
+      setRetryTopUp(null);
+      if (r.status === 'captured') {
+        setNotice(`Added ${formatMoney(r.amountCents)} — verified with PayPal.`);
+        onToppedUp();
+      } else if (r.status === 'pending_payment') setNotice('PayPal is still processing this payment. Your credit appears as soon as PayPal confirms it.');
+      else setError(new Error('PayPal didn’t complete this payment, so nothing was charged.'));
+    },
+    onError: (e, topUpId) => {
+      setError(e);
+      setRetryTopUp(topUpId);
+    },
+    onSettled: () => {
+      setPaying(false);
+      qc.invalidateQueries({ queryKey: ['credits'] });
+    },
+  });
+
+  // Back from a full-page PayPal redirect (?topup=…): finish the top-up, then tidy the URL.
+  const returned = params.get('topup');
+  useEffect(() => {
+    if (!returned) return;
+    setPaying(true);
+    capture.mutate(returned);
+    setParams(
+      (p) => {
+        p.delete('topup');
+        return p;
+      },
+      { replace: true },
+    );
+    // Runs once per returned id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returned]);
 
   return (
     <Card title="Answer credit">
       {loading ? (
         <Spinner />
+      ) : loadError ? (
+        <ErrorNote error={loadError} />
       ) : (
         <>
           <div className="text-3xl font-semibold tabular-nums">{formatMoney(Math.max(0, credits?.availableCents ?? 0))}</div>
           <p className="mt-1 text-xs text-muted">
-            Available{credits && credits.reservedCents > 0 ? ` · ${formatMoney(credits.reservedCents)} held for an answer in progress` : ''}. A typical answer costs a few cents.
+            Available
+            {credits && credits.reservedCents > 0 ? ` · ${formatMoney(credits.reservedCents)} held for an answer in progress` : ''}
+            {credits && credits.balanceCents < 0 ? ` · ${formatMoney(-credits.balanceCents)} owed after a refunded top-up` : ''}. A typical answer costs a few cents.
           </p>
-          <div className="mt-4 flex gap-2">
-            {[500, 1000, 2000].map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setAmount(c)}
-                className={clsx('h-9 flex-1 rounded-lg border text-sm font-medium', amount === c ? 'border-ink bg-ink text-white' : 'border-line hover:bg-slate-50')}
-              >
-                {formatMoney(c)}
-              </button>
-            ))}
-          </div>
+          <fieldset className="mt-4" disabled={paying}>
+            <legend className="sr-only">Top-up amount</legend>
+            <div className="flex gap-2">
+              {[500, 1000, 2000].map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={amount === c}
+                  onClick={() => {
+                    setAmount(c);
+                    setNotice(null);
+                  }}
+                  className={clsx('h-9 flex-1 rounded-lg border text-sm font-medium disabled:opacity-50', amount === c ? 'border-ink bg-ink text-white' : 'border-line hover:bg-slate-50')}
+                >
+                  {formatMoney(c)}
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <div className="mt-3">
             {!config?.paypalClientId ? (
               <ErrorNote error={new Error('PayPal sandbox is not configured on the server.')} />
             ) : (
               <PayPalScriptProvider options={{ clientId: config.paypalClientId, currency: 'USD', intent: 'capture', components: 'buttons' }}>
                 <PayPalButtons
-                  forceReRender={[amount]}
                   style={{ layout: 'vertical', shape: 'rect', label: 'pay', height: 40 }}
+                  disabled={capture.isPending}
                   createOrder={async () => {
                     setError(null);
-                    const r = await post<{ topUpId: string; orderId: string }>('/credits/top-ups', { amountCents: amount });
-                    topUpRef.current = r.topUpId;
-                    return r.orderId;
-                  }}
-                  onApprove={async () => {
+                    setNotice(null);
+                    setRetryTopUp(null);
+                    shownRef.current = false;
+                    setPaying(true);
                     try {
-                      const r = await post<{ status: string; amountCents: number }>(`/credits/top-ups/${topUpRef.current}/capture`);
-                      setNotice(r.status === 'captured' ? `Added ${formatMoney(r.amountCents)} — verified with PayPal.` : 'PayPal is still processing this payment.');
+                      const r = await post<{ topUpId: string; orderId: string }>('/credits/top-ups', { amountCents: amount });
+                      topUps.current.set(r.orderId, r.topUpId);
+                      return r.orderId;
                     } catch (e) {
+                      shownRef.current = true;
                       setError(e);
-                    } finally {
-                      refresh();
+                      setPaying(false);
+                      throw e;
                     }
                   }}
-                  onCancel={() => setError(new Error('Top-up cancelled. Nothing was charged.'))}
-                  onError={() => setError(new Error('PayPal reported a problem. Nothing was charged.'))}
+                  onApprove={async (data) => {
+                    const topUpId = topUps.current.get(data.orderID);
+                    if (!topUpId) {
+                      setPaying(false);
+                      setError(new Error('We couldn’t match this PayPal payment to your top-up. Reload the page: if PayPal took the money, your credit appears shortly.'));
+                      return;
+                    }
+                    await capture.mutateAsync(topUpId).catch(() => undefined);
+                  }}
+                  onCancel={() => {
+                    setPaying(false);
+                    setError(new Error('Top-up cancelled. Nothing was charged.'));
+                  }}
+                  onError={() => {
+                    setPaying(false);
+                    if (!shownRef.current) setError(new Error('PayPal reported a problem. Nothing was charged.'));
+                  }}
                 />
               </PayPalScriptProvider>
             )}
             {config?.sandboxBuyerHint && <p className="mt-2 text-xs text-muted">Test buyer: {config.sandboxBuyerHint}</p>}
           </div>
-          {notice && <p className="mt-2 text-sm text-pass">{notice}</p>}
+          <div aria-live="polite">
+            {capture.isPending && <Spinner label="Confirming the payment with PayPal…" />}
+            {notice && <p className="mt-2 text-sm text-pass">{notice}</p>}
+          </div>
           <ErrorNote error={error} />
+          {retryTopUp && (
+            <Button size="sm" variant="secondary" className="mt-2" loading={capture.isPending} onClick={() => capture.mutate(retryTopUp)}>
+              <RotateCw className="size-3.5" aria-hidden /> Try again
+            </Button>
+          )}
           {credits && credits.entries.length > 0 && (
             <ul className="mt-4 space-y-1 border-t border-line pt-3 text-xs">
               {credits.entries.slice(0, 6).map((e) => (
@@ -432,23 +608,49 @@ function CreditCard({ credits, loading }: { credits: Credits | null; loading: bo
 /** The payment rules, attacked live — the same suite the tests run. */
 function IntegrityCard() {
   const q = useQuery({ queryKey: ['answer-integrity'], queryFn: () => api<Integrity>('/answers/integrity'), staleTime: Infinity });
-  if (!q.data) return null;
-  const allCaught = q.data.caught === q.data.total;
+  const title = (icon: ReactNode) => (
+    <span className="flex items-center gap-2">
+      {icon} Can the AI overcharge you?
+    </span>
+  );
+  if (q.isLoading) {
+    return (
+      <Card title={title(<ShieldCheck className="size-4" aria-hidden />)}>
+        <Spinner label="Running the attacks…" />
+      </Card>
+    );
+  }
+  if (q.error || !q.data) {
+    return (
+      <Card title={title(<ShieldX className="size-4" aria-hidden />)}>
+        <ErrorNote error={q.error ?? new Error('The integrity check didn’t run.')} />
+      </Card>
+    );
+  }
+  // The honest answer is the control case, not an attack: shown apart, not counted.
+  const control = q.data.attacks.find((t) => t.id === 'honest');
+  const attacks = q.data.attacks.filter((t) => t.id !== 'honest');
+  const caught = attacks.filter((t) => t.caught).length;
+  const allCaught = caught === attacks.length && (control?.caught ?? true);
   return (
-    <Card
-      title={
-        <span className="flex items-center gap-2">
-          {allCaught ? <ShieldCheck className="size-4 text-pass" /> : <ShieldX className="size-4 text-block" />} Can the AI overcharge you?
-        </span>
-      }
-    >
+    <Card title={title(allCaught ? <ShieldCheck className="size-4 text-pass" aria-hidden /> : <ShieldX className="size-4 text-block" aria-hidden />)}>
       <p className="text-sm text-muted">
-        These attacks run against the payment rules right now. <strong className="text-ink">{q.data.caught} of {q.data.total} caught</strong>; overpaid: {formatMoney(q.data.overpaidCents)}.
+        These attacks run against the payment rules right now.{' '}
+        <strong className="text-ink">
+          {caught} of {attacks.length} caught
+        </strong>
+        ; overpaid: {formatMoney(q.data.overpaidCents)}.
       </p>
+      {control && (
+        <p className="mt-2 flex items-start gap-2 text-xs">
+          {control.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" aria-hidden /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" aria-hidden />}
+          <span>Control: an honest answer is {control.caught ? 'paid correctly' : 'not paid correctly'}.</span>
+        </p>
+      )}
       <ul className="mt-3 space-y-1.5 text-xs">
-        {q.data.attacks.map((t) => (
+        {attacks.map((t) => (
           <li key={t.id} className="flex items-start gap-2">
-            {t.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" />}
+            {t.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" aria-label="Caught" /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" aria-label="Not caught" />}
             <span>
               {t.attack} <span className="text-muted">→ {t.expected}</span>
             </span>

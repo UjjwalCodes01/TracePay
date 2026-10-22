@@ -736,6 +736,8 @@ model CreditEntry {
   amountCents Int
   topUpId     String?
   answerId    String?
+  /// A PayPal refund applied to a top-up: each refund is debited once, however often it is reported.
+  refundId    String?       @unique
   createdAt   DateTime      @default(now())
 
   @@index([accountId, createdAt])
@@ -751,16 +753,25 @@ enum TopUpStatus {
 /// Money added to a credit account through a PayPal checkout. The id is also the
 /// order's custom_id ("topup_…"), so PayPal webhooks find it.
 model CreditTopUp {
-  id          String        @id
-  accountId   String
-  account     CreditAccount @relation(fields: [accountId], references: [id])
-  amountCents Int
-  currency    String        @default("USD")
-  status      TopUpStatus   @default(pending_payment)
-  orderId     String?       @unique
-  captureId   String?       @unique
-  createdAt   DateTime      @default(now())
-  capturedAt  DateTime?
+  id               String        @id
+  accountId        String
+  account          CreditAccount @relation(fields: [accountId], references: [id])
+  amountCents      Int
+  currency         String        @default("USD")
+  status           TopUpStatus   @default(pending_payment)
+  orderId          String?       @unique
+  captureId        String?       @unique
+  /// What PayPal verifiably captured (credited), and how much of it was refunded since.
+  creditedCents    Int           @default(0)
+  refundedCents    Int           @default(0)
+  /// Reconciliation: when to ask PayPal about this top-up next (null = nothing left to learn).
+  nextCheckAt      DateTime?
+  checkCount       Int           @default(0)
+  checkLockedUntil DateTime?
+  createdAt        DateTime      @default(now())
+  capturedAt       DateTime?
+
+  @@index([nextCheckAt])
 }
 
 enum AnswerStatus {
@@ -808,6 +819,8 @@ enum CreditStatus {
   accrued
   in_payout
   paid
+  /// Clawed back: the buyer's money behind it was refunded or charged back before it was paid out.
+  reversed
 }
 
 /// What one contributor earned from one answer: verified citations × their rate.
@@ -837,18 +850,26 @@ model CitationCredit {
 /// A PayPal Payouts batch paying accrued answer royalties. senderBatchId is the
 /// idempotency key: a resend after a lost response can never pay twice.
 model RoyaltyPayout {
-  id            String    @id @default(cuid())
-  libraryId     String
-  library       User      @relation(fields: [libraryId], references: [id])
-  senderBatchId String    @unique
-  paypalBatchId String?   @unique
-  /// SUBMITTING | SUBMIT_FAILED | PENDING | PROCESSING | SUCCESS | DENIED | CANCELED
-  status        String
-  totalCents    Int
-  createdAt     DateTime  @default(now())
-  lastCheckedAt DateTime?
+  id              String    @id @default(cuid())
+  libraryId       String
+  library         User      @relation(fields: [libraryId], references: [id])
+  senderBatchId   String    @unique
+  paypalBatchId   String?   @unique
+  /// SUBMITTING | SUBMIT_FAILED | AWAITING_CONFIRMATION | REJECTED | PENDING | PROCESSING | SUCCESS | DENIED | CANCELED
+  status          String
+  totalCents      Int
+  /// When the current send started (a send older than a few minutes was interrupted).
+  sendingSince    DateTime?
+  createdAt       DateTime  @default(now())
+  lastCheckedAt   DateTime?
+  /// Reconciliation: when to read the batch from PayPal next (null = final).
+  nextPollAt      DateTime?
+  pollCount       Int       @default(0)
+  pollLockedUntil DateTime?
 
   items RoyaltyPayoutItem[]
+
+  @@index([nextPollAt])
 }
 
 model RoyaltyPayoutItem {

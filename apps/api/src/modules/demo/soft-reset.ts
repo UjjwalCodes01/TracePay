@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
-import { appendAudit } from '../audit/audit-log';
+import { appendAudit, lockAuditChain } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
 import { chunkContent, DEMO_ASSETS, DEMO_IDS, DEMO_USERS } from './world';
 
@@ -49,6 +49,8 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
 
   return db.$transaction(
     async (tx) => {
+      // The audit chain first, like every money path (audit chain → accounts/sales → the rest).
+      await lockAuditChain(tx);
       // 0. Lock first, in the order the money paths use (sale rows, then the rest): an
       // in-flight capture finishes before we delete, and no new sale, settlement or
       // agent step can attach to rows we are removing.
@@ -82,11 +84,12 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
       await tx.agentStep.deleteMany({ where: { run: { publisherId: { in: buyerIds } } } });
       await tx.agentRun.deleteMany({ where: { publisherId: { in: buyerIds } } });
       await tx.apiKey.updateMany({ where: { userId: { in: buyerIds }, revokedAt: null }, data: { revokedAt: new Date() } });
-      // Pay-per-citation: the demo library's answers and royalty payouts, and the demo buyer's credits.
-      await tx.citationCredit.deleteMany({ where: { OR: [{ libraryId: { in: publisherIds } }, { answer: { account: { ownerId: { in: buyerIds } } } }] } });
-      await tx.royaltyPayoutItem.deleteMany({ where: { payout: { libraryId: { in: publisherIds } } } });
-      await tx.royaltyPayout.deleteMany({ where: { libraryId: { in: publisherIds } } });
-      await tx.answer.deleteMany({ where: { OR: [{ libraryId: { in: publisherIds } }, { account: { ownerId: { in: buyerIds } } }] } });
+      // Pay-per-citation: the demo buyer's own answers and credits. Answers real accounts asked of the
+      // demo library stay (with their credits and the payouts that paid them): real money, real records.
+      await tx.citationCredit.deleteMany({ where: { answer: { account: { ownerId: { in: buyerIds } } } } });
+      await tx.royaltyPayoutItem.deleteMany({ where: { payout: { libraryId: { in: publisherIds } }, credits: { none: {} } } });
+      await tx.royaltyPayout.deleteMany({ where: { libraryId: { in: publisherIds }, items: { none: {} } } });
+      await tx.answer.deleteMany({ where: { account: { ownerId: { in: buyerIds } } } });
       await tx.creditEntry.deleteMany({ where: { account: { ownerId: { in: buyerIds } } } });
       await tx.creditTopUp.deleteMany({ where: { account: { ownerId: { in: buyerIds } } } });
       await tx.creditAccount.deleteMany({ where: { ownerId: { in: buyerIds } } });

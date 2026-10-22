@@ -14,6 +14,8 @@ reports on TracePay **for a buyer** — through the Platform API, with the buyer
 | `list_libraries` · `credit_balance` | Libraries that answer questions; the user's answer credit |
 | `top_up_credits` · `complete_top_up` | Buy answer credit with PayPal: returns the approve link for the user |
 
+**Spending is capped three ways:** per answer (`TRACEPAY_MAX_ANSWER_CENTS`), per session (`TRACEPAY_MAX_SESSION_CENTS`) and per purchase (`TRACEPAY_MAX_PRICE_CENTS`); an invalid value stops the server rather than disabling a cap. The agent only asks a library you name (`TRACEPAY_LIBRARY_ID` or `library_id`) unless exactly one exists. Every paying request carries a fresh `Idempotency-Key`, and text from sources is marked as data, not instructions.
+
 **The agent can never pay.** PayPal asks the buyer to approve every payment; the agent only
 completes a checkout the buyer already approved. `start_checkout` also refuses anything over
 `TRACEPAY_MAX_PRICE_CENTS`, reports the buyer already owns, and reports whose licenses no
@@ -34,7 +36,9 @@ longer permit a sale.
       "env": {
         "TRACEPAY_API_KEY": "tp_…",
         "TRACEPAY_MAX_PRICE_CENTS": "5000",
-        "TRACEPAY_MAX_ANSWER_CENTS": "50"
+        "TRACEPAY_MAX_ANSWER_CENTS": "50",
+        "TRACEPAY_MAX_SESSION_CENTS": "200",
+        "TRACEPAY_LIBRARY_ID": "user_atlas"
       }
     }
   }

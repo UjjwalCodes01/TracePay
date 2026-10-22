@@ -72,6 +72,12 @@ export class VertexReportWriter implements ReportWriter {
 
 // ---------------------------------------------------------------- Fixture writer
 
+/** At most `n` words, ending in a full stop. */
+const clipWords = (text: string, n: number) => {
+  const words = text.trim().split(/\s+/);
+  return words.length <= n ? text.trim() : `${words.slice(0, n).join(' ').replace(/[,;:]$/, '')}…`;
+};
+
 const firstSentence = (text: string) => (text.match(/^.*?[.!?](\s|$)/)?.[0] ?? text).trim();
 
 /**
@@ -199,7 +205,8 @@ export class FixtureAnswerWriter implements AnswerWriter {
     if (picks.length === 0) return { covered: false, text: 'No licensed source covers this question.', model: 'fixture/extractive-v1', fromFixture: true };
     return {
       covered: true,
-      text: picks.map((p) => `${firstSentence(p.text).replace(/\s*$/, '')} [${p.handle}]`).join(' '),
+      // Short extracts only: licenses forbid redistributing raw text, and answers are checked for copying.
+      text: picks.map((p) => `${clipWords(firstSentence(p.text), 20)} [${p.handle}]`).join(' '),
       model: 'fixture/extractive-v1',
       fromFixture: true,
     };

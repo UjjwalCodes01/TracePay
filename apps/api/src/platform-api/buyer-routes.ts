@@ -6,10 +6,10 @@ import { matchScore } from '../modules/agent/buyer-tools';
 import type { CitationReport } from '../modules/generation/citations';
 import type { ArtifactContent } from '../modules/generation/generation.service';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
-import { askLibrary, getAnswer, listAnswers, listLibraries } from '../modules/answers/answers.service';
+import { askLibrary, getAnswer, listLibraries } from '../modules/answers/answers.service';
 import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, startTopUp } from '../modules/answers/credits.service';
 import { checkSaleRights } from '../modules/sales/rights.service';
-import { defineRoute, listOf, named, type AnyRoute } from './framework';
+import { cursorWhere, defineRoute, ListQuery, listOf, named, pageOrder, toPage, type AnyRoute } from './framework';
 
 /**
  * Buying through the API — for a buyer's own software or AI agent (see the MCP
@@ -287,14 +287,17 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
         answerOutV1(await askLibrary(db, answerWriter(), signingKeys(), { askerId: user.id, libraryId: body.library_id, question: body.question, maxPriceCents: body.max_price_cents })),
     }),
     defineRoute({
-      method: 'get', path: '/answers', operationId: 'listAnswers', roles: ['buyer'], tag: ANSWERS, summary: 'Your recent answers',
-      response: AnswerSummaryList,
-      handler: async ({ user }) => ({
-        object: 'list' as const,
-        data: (await listAnswers(db, user.id)).map((a) => ({ id: a.id, object: 'answer' as const, question: a.question, status: a.status, library_name: a.libraryName, charged_cents: a.chargedCents, created: a.createdAt.toISOString() })),
-        has_more: false,
-        next_cursor: null,
-      }),
+      method: 'get', path: '/answers', operationId: 'listAnswers', roles: ['buyer'], tag: ANSWERS, summary: 'Your answers, newest first',
+      query: ListQuery, response: AnswerSummaryList,
+      handler: async ({ user, query }) => {
+        const rows = await db.answer.findMany({
+          where: { account: { ownerId: user.id }, ...cursorWhere(query.starting_after) },
+          orderBy: pageOrder,
+          take: query.limit + 1,
+          select: { id: true, question: true, status: true, chargedCents: true, createdAt: true, library: { select: { name: true } } },
+        });
+        return toPage(rows, query.limit, (a) => ({ id: a.id, object: 'answer' as const, question: a.question, status: a.status, library_name: a.library.name, charged_cents: a.chargedCents, created: a.createdAt.toISOString() }));
+      },
     }),
     defineRoute({
       method: 'get', path: '/answers/:id', operationId: 'getAnswer', roles: ['buyer'], tag: ANSWERS, summary: 'Retrieve an answer and its signed receipt',

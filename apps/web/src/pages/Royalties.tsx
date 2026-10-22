@@ -35,6 +35,8 @@ const STATUS: Record<string, { text: string; tone: 'pass' | 'warn' | 'block' | '
   BLOCKED: { text: 'Blocked — back in the next payout', tone: 'block' },
   DENIED: { text: 'Declined by PayPal — back in the next payout', tone: 'block' },
   CANCELED: { text: 'Cancelled', tone: 'block' },
+  REFUNDED: { text: 'Taken back by PayPal — back in the next payout', tone: 'block' },
+  REVERSED: { text: 'Reversed — back in the next payout', tone: 'block' },
 };
 const label = (s: string) => STATUS[s] ?? { text: s, tone: 'neutral' as const };
 
@@ -66,14 +68,14 @@ export function RoyaltiesPage() {
         <Stat label="Answers sold" value={s.answers} />
         <Stat label="Paid by askers" value={formatMoney(s.revenueCents)} />
         <Stat label="Owed to authors" value={formatMoney(owed)} />
-        <Stat label="Your answer fees" value={formatMoney(s.feesCents)} tone="pass" />
+        <Stat label="Library fees (yours)" value={formatMoney(s.feesCents)} tone="pass" />
       </div>
 
       <Card
         title="Ready to pay"
         action={
           <Button size="sm" loading={send.isPending} disabled={payable.length === 0} onClick={() => send.mutate()}>
-            <Send className="size-4" /> Pay {payable.length ? formatMoney(payable.reduce((n, a) => n + a.amountCents, 0)) : ''} with PayPal
+            <Send className="size-4" aria-hidden /> {payable.length ? `Pay ${formatMoney(payable.reduce((n, a) => n + a.amountCents, 0))} with PayPal` : 'Pay with PayPal'}
           </Button>
         }
       >
@@ -81,30 +83,39 @@ export function RoyaltiesPage() {
         {s.accrued.length === 0 ? (
           <Empty>Nothing owed right now. When buyers or their AI agents ask questions, the authors they rely on earn here.</Empty>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs text-muted">
-              <tr>
-                <th className="pb-2 font-medium">Author</th>
-                <th className="pb-2 text-right font-medium">Answers</th>
-                <th className="pb-2 text-right font-medium">Passages cited</th>
-                <th className="pb-2 text-right font-medium">Owed</th>
-                <th className="pb-2 pl-4 font-medium" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {s.accrued.map((a) => (
-                <tr key={a.contributorId}>
-                  <td className="py-2 font-medium">{a.name}</td>
-                  <td className="py-2 text-right tabular-nums">{a.answers}</td>
-                  <td className="py-2 text-right tabular-nums">{a.citations}</td>
-                  <td className="py-2 text-right font-medium tabular-nums">{formatMoney(a.amountCents)}</td>
-                  <td className="py-2 pl-4">
-                    {a.payable ? <Badge tone="pass">Ready</Badge> : !a.hasPayee ? <Badge tone="warn">No PayPal account on file</Badge> : <Badge>Below {formatMoney(s.minimumCents)} minimum</Badge>}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs text-muted">
+                <tr>
+                  <th className="pb-2 font-medium">Author</th>
+                  <th className="hidden pb-2 text-right font-medium sm:table-cell">Answers</th>
+                  <th className="hidden pb-2 text-right font-medium sm:table-cell">Passages cited</th>
+                  <th className="pb-2 text-right font-medium">Owed</th>
+                  <th className="pb-2 pl-4 font-medium">
+                    <span className="sr-only">Status</span>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {s.accrued.map((a) => (
+                  <tr key={a.contributorId}>
+                    <td className="py-2 font-medium">
+                      {a.name}
+                      <span className="block text-xs font-normal text-muted sm:hidden">
+                        {a.answers} {a.answers === 1 ? 'answer' : 'answers'} · {a.citations} {a.citations === 1 ? 'passage' : 'passages'}
+                      </span>
+                    </td>
+                    <td className="hidden py-2 text-right tabular-nums sm:table-cell">{a.answers}</td>
+                    <td className="hidden py-2 text-right tabular-nums sm:table-cell">{a.citations}</td>
+                    <td className="py-2 text-right font-medium tabular-nums">{formatMoney(a.amountCents)}</td>
+                    <td className="py-2 pl-4">
+                      {a.payable ? <Badge tone="pass">Ready</Badge> : !a.hasPayee ? <Badge tone="warn">No PayPal account</Badge> : <Badge>Below {formatMoney(s.minimumCents)}</Badge>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         <p className="mt-3 text-xs text-muted">
           Each batch has a fixed PayPal batch id before it is sent, so a retry can never pay twice. A payment that fails goes back into the pool for the next batch.

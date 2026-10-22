@@ -12,6 +12,7 @@ import { todayUtc } from '../builds/preflight.service';
 import { checkSaleRights, withdrawArtifact } from '../sales/rights.service';
 import { SettlementError } from '../settlements/engine';
 import { calculateForSale, recordFailedSettlement, SettlementStateError } from '../settlements/settlement.service';
+import { logger } from '../../http/logger';
 
 export class PaymentError extends Error {
   constructor(message: string, readonly code: 'not_found' | 'not_for_sale' | 'state' | 'verification' | 'provider') {
@@ -149,7 +150,8 @@ export async function startCheckout(
     );
   } catch (err) {
     await db.sale.update({ where: { id: sale.id }, data: { status: 'payment_failed' } });
-    throw new PaymentError(`PayPal order creation failed: ${(err as Error).message}`, 'provider');
+    logger.warn({ err, saleId: sale.id }, 'PayPal order creation failed');
+    throw new PaymentError('PayPal couldn’t start this checkout right now. Nothing was charged; please try again.', 'provider');
   }
 
   // Reconciliation checks on it if the buyer never comes back (approved and closed the tab, or abandoned it).

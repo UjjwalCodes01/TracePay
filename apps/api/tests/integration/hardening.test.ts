@@ -111,7 +111,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
       expect(contribReceipt.document.sales[0].settlement.lines.map((l: { recipientId: string }) => l.recipientId)).toEqual(['user_okafor']);
       expect(contribReceipt.document.sales[0].settlement.lines[0].recipientName).toBe('Mara Okafor (independent analyst)');
       // Each view is still a valid signed document.
-      await request(app).post('/api/receipts/verify').send({ document: contribReceipt.document, signature: contribReceipt.signature }).expect(200, { valid: true });
+      expect((await request(app).post('/api/receipts/verify').send({ document: contribReceipt.document, signature: contribReceipt.signature }).expect(200)).body).toMatchObject({ valid: true, signedBy: 'TracePay' });
     });
   });
 

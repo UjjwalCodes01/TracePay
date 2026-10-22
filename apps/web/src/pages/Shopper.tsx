@@ -206,7 +206,7 @@ function RunView({ runId }: { runId: string }) {
       }
     >
       <p className="mb-4 text-sm text-slate-700">“{run.goal}”</p>
-      <ol className="space-y-2.5">
+      <ol className="space-y-2.5" aria-live="polite">
         {run.steps.map((s) => {
           const line = describe(s);
           return line ? (
@@ -218,7 +218,7 @@ function RunView({ runId }: { runId: string }) {
         })}
         {run.status === 'running' && (
           <li className="flex gap-2.5 text-sm text-muted">
-            <span className="mt-1.5 size-1.5 shrink-0 animate-pulse rounded-full bg-current" /> Working…
+            <span className="mt-1.5 size-1.5 shrink-0 animate-pulse rounded-full bg-current motion-reduce:animate-none" aria-hidden /> Working…
           </li>
         )}
       </ol>
@@ -244,6 +244,7 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
   const saleRef = useRef<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [processing, setProcessing] = useState(false);
+  const shownRef = useRef(false);
   const decide = useMutation({
     mutationFn: (approved: boolean) => post(`/shopper/runs/${runId}/decision`, { approved }),
     onSuccess: onDone,
@@ -273,15 +274,24 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
                 disabled={decide.isPending}
                 createOrder={async () => {
                   setError(null);
-                  const r = await post<{ saleId: string; orderId: string }>('/checkout/orders', { artifactId: pending.artifactId });
-                  saleRef.current = r.saleId;
-                  return r.orderId;
+                  shownRef.current = false;
+                  try {
+                    const r = await post<{ saleId: string; orderId: string }>('/checkout/orders', { artifactId: pending.artifactId });
+                    saleRef.current = r.saleId;
+                    return r.orderId;
+                  } catch (e) {
+                    // Our own message (e.g. "already owned", rate limit) — PayPal's generic onError mustn't replace it.
+                    shownRef.current = true;
+                    setError(e);
+                    throw e;
+                  }
                 }}
                 onApprove={async () => {
                   try {
                     // The server captures and verifies the payment, then the assistant continues.
                     const r = await post<{ saleStatus: string }>(`/checkout/${saleRef.current}/capture`);
                     qc.invalidateQueries({ queryKey: ['artifacts'] });
+                    qc.invalidateQueries({ queryKey: ['my-purchases'] });
                     if (r.saleStatus === 'pending_payment') setProcessing(true);
                     else if (r.saleStatus === 'captured') decide.mutate(true);
                     else setError(new Error('PayPal didn’t complete this payment, so nothing was charged.'));
@@ -290,7 +300,9 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
                   }
                 }}
                 onCancel={() => setError(new Error('Payment cancelled. Nothing was charged.'))}
-                onError={() => setError(new Error('PayPal reported a problem. Nothing was charged.'))}
+                onError={() => {
+                  if (!shownRef.current) setError(new Error('PayPal reported a problem. Nothing was charged.'));
+                }}
               />
             </PayPalScriptProvider>
           )}

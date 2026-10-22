@@ -1,6 +1,7 @@
 import { ArrowLeft, FileJson } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { useDocumentTitle } from '../components/ui';
 
 // Pinned: the interactive reference renders the live OpenAPI document of this deployment.
 const SCALAR_SRC = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.4/dist/browser/standalone.js';
@@ -35,6 +36,7 @@ function loadScalar(): Promise<void> {
 }
 
 export function ApiReferencePage() {
+  useDocumentTitle('API reference');
   const host = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 

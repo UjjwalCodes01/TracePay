@@ -1,0 +1,7 @@
+# TracePay: the public pages may be indexed; the app itself needs a sign-in.
+User-agent: *
+Allow: /$
+Allow: /login
+Allow: /signup
+Disallow: /api/
+Disallow: /

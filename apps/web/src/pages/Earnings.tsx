@@ -3,7 +3,7 @@ import { LicenseTermsSchema } from '@tracepay/shared';
 import { lazy, Suspense } from 'react';
 import { Badge, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
-import { economicsLabel, formatMoney } from '../lib/format';
+import { economicsLabel, formatMoney, localDate } from '../lib/format';
 import type { PayoutItem } from '../lib/types';
 
 // AG Grid loads only on this page.
@@ -65,10 +65,10 @@ export function EarningsPage() {
 
   return (
     <>
-      <PageHeader title="My Earnings" subtitle="Every sale that used your licensed work, the calculation applied, and what PayPal reports for your payout." />
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <PageHeader title="My earnings" subtitle="Every sale and AI answer that used your licensed work, the calculation applied, and what PayPal reports for your payout." />
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="Paid to you" value={formatMoney(paid)} tone="pass" />
-        <Stat label="Pending" value={formatMoney(owed)} />
+        <Stat label="Owed to you" value={formatMoney(owed)} />
         <Stat label="Sales using your work" value={lines.length} />
       </div>
 
@@ -80,7 +80,7 @@ export function EarningsPage() {
             <EarningsGrid
               rows={lines.map((l) => ({
                 id: l.id,
-                date: l.run.createdAt.slice(0, 10),
+                date: localDate(l.run.createdAt),
                 reportId: l.run.sale.artifact.id,
                 report: l.run.sale.artifact.title,
                 formula: l.formula,
@@ -135,13 +135,26 @@ const CREDIT_TEXT: Record<AnswerEarningsData['credits'][number]['status'], { tex
 /** Pay-per-citation: what AI answers that relied on your work have earned you. */
 function AnswerEarnings() {
   const q = useQuery({ queryKey: ['answer-earnings'], queryFn: () => api<AnswerEarningsData>('/contributor/answer-earnings') });
-  if (!q.data) return null;
+  if (q.isLoading) {
+    return (
+      <Card title="From AI answers — paid per cited passage" className="mt-6">
+        <Spinner />
+      </Card>
+    );
+  }
+  if (q.error || !q.data) {
+    return (
+      <Card title="From AI answers — paid per cited passage" className="mt-6">
+        <ErrorNote error={q.error ?? new Error('Your AI answer earnings couldn’t be loaded.')} />
+      </Card>
+    );
+  }
   const d = q.data;
   return (
     <Card title="From AI answers — paid per cited passage" className="mt-6">
-      <div className="mb-4 grid grid-cols-3 gap-3">
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="Paid to you" value={formatMoney(d.paidCents)} tone="pass" />
-        <Stat label="Owed" value={formatMoney(d.owedCents)} />
+        <Stat label="Owed to you" value={formatMoney(d.owedCents)} />
         <Stat label="Passages cited" value={d.citations} />
       </div>
       {d.credits.length === 0 ? (

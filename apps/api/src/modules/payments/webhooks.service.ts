@@ -6,6 +6,7 @@ import { decimalToCents } from '@tracepay/shared';
 import { applyCapture, markSaleReversed, declineCapture } from './payments.service';
 import { refreshBatch } from '../settlements/settlement.service';
 import { applyTopUpCapture, isTopUpId, reverseTopUp } from '../answers/credits.service';
+import { royaltyPayoutFromWebhook } from '../answers/royalties.service';
 
 export type WebhookResult =
   | { status: 'rejected'; reason: string }
@@ -91,7 +92,7 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
       // buyer was never charged — not a reversal of money we held.
       const capture = event.resource as Capture;
       if (isTopUpId(capture.custom_id)) {
-        const reversed = await reverseTopUp(db, capture.id, null, event.event_type);
+        const reversed = await reverseTopUp(db, capture.id, { id: `${event.event_type}:${capture.id}`, cents: null }, event.event_type);
         return reversed ?? applyTopUpCapture(db, capture.custom_id, capture, 'webhook');
       }
       const paid = await db.payPalPayment.findUnique({ where: { captureId: capture.id }, include: { sale: true } });
@@ -112,7 +113,13 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
       const isRefund = event.event_type === 'PAYMENT.CAPTURE.REFUNDED';
       // A refund resource's id is the refund id; the capture id is in its "up" link.
       const captureId = isRefund ? resource.links?.find((l) => l.rel === 'up')?.href.split('/').pop() ?? resource.id : resource.id;
-      const topUp = await reverseTopUp(db, captureId, isRefund && resource.amount ? decimalToCents(resource.amount.value) : null, event.event_type);
+      const topUp = await reverseTopUp(
+        db,
+        captureId,
+        // A refund is debited once by its own id; a reversal takes back what is left.
+        { id: isRefund ? resource.id : `${event.event_type}:${captureId}`, cents: isRefund && resource.amount ? decimalToCents(resource.amount.value) : null },
+        event.event_type,
+      );
       if (topUp) return topUp;
       const saleId = await db.$transaction((tx) =>
         markSaleReversed(tx, {
@@ -139,7 +146,11 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
         if (!batch && r.payout_item?.sender_item_id) {
           batch = (await db.payoutItem.findUnique({ where: { senderItemId: r.payout_item.sender_item_id }, include: { batch: true } }))?.batch ?? null;
         }
-        if (!batch) return 'ignored: unknown payout batch';
+        if (!batch) {
+          // A pay-per-citation royalty batch?
+          const royalty = await royaltyPayoutFromWebhook(db, paypal, { paypalBatchId, senderBatchId, senderItemId: r.payout_item?.sender_item_id ?? null });
+          return royalty ?? 'ignored: unknown payout batch';
+        }
         if (!batch.paypalBatchId && paypalBatchId) {
           await db.payoutBatch.update({ where: { id: batch.id }, data: { paypalBatchId, status: 'PENDING' } });
           await db.payoutItem.updateMany({ where: { batchId: batch.id, status: 'SUBMITTING' }, data: { status: 'PENDING' } });

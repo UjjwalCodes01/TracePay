@@ -1,3 +1,4 @@
+import { nextAnswersReconcileAt, reconcileAnswersDue } from '../answers/reconcile';
 import type { Db } from '../../db';
 import { logger } from '../../http/logger';
 import { PayPalApiError } from '../../integrations/paypal/client';
@@ -353,6 +354,8 @@ export async function checkPayment(db: Db, paypal: PayPalGateway, claim: Claim |
 export interface PassResult {
   batches: number;
   payments: number;
+  /** Pay-per-citation: credit top-ups and royalty payout batches checked. */
+  answerMoney?: number;
   outcomes: string[];
 }
 
@@ -385,18 +388,27 @@ export async function reconcileDue(
     result.outcomes.push(...(await Promise.all(claims.map((c) => checkPayment(db, paypal, c, now())))));
     if (only) only.paymentIds = only.paymentIds.filter((id) => !claims.some((c) => c.id === id));
   }
+  if (!only) {
+    const answers = await reconcileAnswersDue(db, paypal, now, limit, go);
+    if (answers.topUps || answers.royaltyPayouts || answers.outcomes.length) {
+      result.answerMoney = answers.topUps + answers.royaltyPayouts;
+      result.outcomes.push(...answers.outcomes);
+    }
+  }
   return result;
 }
 
 /** When something next needs checking (leased items count from their lease expiry). */
 export async function nextReconcileAt(db: Db, now = new Date()): Promise<Date | null> {
-  const [batch, payment] = await Promise.all([
+  const [batch, payment, answers] = await Promise.all([
     db.payoutBatch.findFirst({ where: { nextPollAt: { not: null } }, orderBy: { nextPollAt: 'asc' }, select: { nextPollAt: true, pollLockedUntil: true } }),
     db.payPalPayment.findFirst({ where: { nextCheckAt: { not: null } }, orderBy: { nextCheckAt: 'asc' }, select: { nextCheckAt: true, checkLockedUntil: true } }),
+    nextAnswersReconcileAt(db, now),
   ]);
   const times = [
     batch ? Math.max(batch.nextPollAt!.getTime(), batch.pollLockedUntil && batch.pollLockedUntil > now ? batch.pollLockedUntil.getTime() : 0) : null,
     payment ? Math.max(payment.nextCheckAt!.getTime(), payment.checkLockedUntil && payment.checkLockedUntil > now ? payment.checkLockedUntil.getTime() : 0) : null,
+    answers ? answers.getTime() : null,
   ].filter((t): t is number => t !== null);
   return times.length ? new Date(Math.min(...times)) : null;
 }
@@ -474,7 +486,7 @@ export class ReconciliationWorker {
     if (!deps) return; // PayPal isn't configured: nothing to reconcile against.
     try {
       const result = await reconcileDue(deps.db, deps.paypal, { shouldContinue: () => !this.stopped });
-      if (result.batches || result.payments) logger.info(result, 'reconciliation pass');
+      if (result.batches || result.payments || result.answerMoney) logger.info(result, 'reconciliation pass');
       this.failures = 0;
       const next = await nextReconcileAt(deps.db);
       if (next) this.schedule(next.getTime() - Date.now());

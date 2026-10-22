@@ -4,7 +4,7 @@ import { AgGridReact } from 'ag-grid-react';
 import type { AgCartesianChartOptions } from 'ag-charts-community';
 import { AgCharts } from 'ag-charts-react';
 import { Plus, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { chartTheme, KEPT_COLOR, SERIES_COLORS } from '../lib/charts';
 import { formatMoney } from '../lib/format';
 import { gridTheme } from '../lib/grid';
@@ -40,7 +40,14 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
   const key = sources.map((s) => `${s.assetVersionId}:${s.license?.id ?? ''}`).join(',');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const licensed = useMemo(() => sources.filter((s) => s.license), [key]);
-  const [scenarios, setScenarios] = useState<Scenario[]>(() => [scenario(Math.max(100, Math.round(priceCents / 200) * 100)), scenario(priceCents), scenario(priceCents * 2)]);
+  // Half, current and double — without repeats (a $1.50 report would otherwise get $1.00 twice).
+  const [scenarios, setScenarios] = useState<Scenario[]>(() =>
+    [...new Set([Math.max(100, Math.round(priceCents / 200) * 100), priceCents, priceCents * 2].filter((c) => c <= 1_000_000))].map(scenario),
+  );
+  const [note, setNote] = useState<string | null>(null);
+  // The grid's parser reads the latest list without rebuilding its columns.
+  const scenariosRef = useRef(scenarios);
+  scenariosRef.current = scenarios;
   const [assumeCited, setAssumeCited] = useState(true);
 
   const rows = useMemo<Row[]>(
@@ -84,7 +91,16 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
         valueFormatter: (p) => formatMoney(p.value ?? 0),
         valueParser: (p) => {
           const cents = parseDollars(String(p.newValue ?? ''));
-          return cents !== null && cents <= 1_000_000 ? cents : p.oldValue;
+          if (cents === null || cents === 0 || cents > 1_000_000) {
+            setNote('Enter a price between $0.01 and $10,000, for example 25 or 19.99.');
+            return p.oldValue;
+          }
+          if (cents !== p.oldValue && scenariosRef.current.some((x) => x.priceCents === cents)) {
+            setNote(`${formatMoney(cents)} is already in the table.`);
+            return p.oldValue;
+          }
+          setNote(null);
+          return cents;
         },
       },
       ...licensed.map<ColDef<Row>>((src) => ({
@@ -147,7 +163,10 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
   );
 
   const chart = useMemo<AgCartesianChartOptions>(() => {
-    const data = rows.filter((r) => !r.problem).map((r) => ({ label: r.label, kept: r.keptCents / 100, ...Object.fromEntries(licensed.map((s) => [s.assetVersionId, (r.shares[s.assetVersionId] ?? 0) / 100])) }));
+    const valid = rows.filter((r) => !r.problem);
+    // One bar per scenario (keyed by id), labelled with its price.
+    const labelOf = new Map(valid.map((r) => [r.id, r.label]));
+    const data = valid.map((r) => ({ id: r.id, label: r.label, kept: r.keptCents / 100, ...Object.fromEntries(licensed.map((s) => [s.assetVersionId, (r.shares[s.assetVersionId] ?? 0) / 100])) }));
     const money = (v: number) => formatMoney(Math.round(v * 100));
     return {
       theme: chartTheme,
@@ -156,7 +175,7 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
       series: [
         ...licensed.map((s, i) => ({
           type: 'bar' as const,
-          xKey: 'label',
+          xKey: 'id',
           yKey: s.assetVersionId,
           yName: s.owner.name,
           stacked: true,
@@ -165,7 +184,7 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
         })),
         {
           type: 'bar' as const,
-          xKey: 'label',
+          xKey: 'id',
           yKey: 'kept',
           yName: 'You keep',
           stacked: true,
@@ -174,7 +193,7 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
         },
       ],
       axes: {
-        x: { type: 'category', position: 'bottom', title: { text: 'Price per sale' } },
+        x: { type: 'category', position: 'bottom', title: { text: 'Price per sale' }, label: { formatter: ({ value }: { value: string }) => labelOf.get(value) ?? value } },
         y: { type: 'number', position: 'left', label: { formatter: ({ value }: { value: number }) => money(value) } },
       },
       legend: { position: 'bottom' },
@@ -187,7 +206,18 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
     <Card
       title="Price & royalty simulator"
       action={
-        <Button size="sm" variant="secondary" onClick={() => setScenarios((all) => [...all, scenario((all.at(-1)?.priceCents ?? priceCents) + 1000)])}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() =>
+            setScenarios((all) => {
+              // The next round $10 step not already in the table.
+              let next = (all.at(-1)?.priceCents ?? priceCents) + 1000;
+              while (all.some((x) => x.priceCents === next)) next += 1000;
+              return next <= 1_000_000 ? [...all, scenario(next)] : all;
+            })
+          }
+        >
           <Plus className="size-3.5" /> Add a price
         </Button>
       }
@@ -199,6 +229,11 @@ export default function PriceSimulator({ sources, priceCents, onUsePrice }: { so
         <input type="checkbox" checked={assumeCited} onChange={(e) => setAssumeCited(e.target.checked)} />
         Assume the report cites every source (some licenses pay only when cited)
       </label>
+      {note && (
+        <p role="status" className="mb-2 text-sm text-contract">
+          {note}
+        </p>
+      )}
       <div className="h-[220px]">
         <AgGridReact<Row>
           theme={gridTheme}

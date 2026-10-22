@@ -1,4 +1,4 @@
-import type { Options, Store } from 'express-rate-limit';
+import { MemoryStore, type Options, type Store } from 'express-rate-limit';
 import { createClient } from 'redis';
 import { logger } from './logger';
 
@@ -7,8 +7,9 @@ import { logger } from './logger';
  * Key Value instance, REDIS_URL). Without it each instance counts in its own
  * memory, so running two would double every limit and quota.
  *
- * Limits fail OPEN: if Redis is unreachable a request is let through (and logged)
- * rather than the API going down with it. Every call is bounded by a short timeout.
+ * If Redis is unreachable, each instance falls back to counting in its own memory
+ * (logged), so limits — login brute-force limits included — keep working, just per
+ * instance, instead of the API failing with Redis. Every call is bounded by a short timeout.
  */
 
 const TIMEOUT_MS = 500;
@@ -65,6 +66,8 @@ async function send<T>(c: Client, args: string[]): Promise<T> {
 class RedisLimitStore implements Store {
   readonly prefix: string;
   private windowMs = 60_000;
+  /** Used while Redis is unreachable. */
+  private readonly fallback = new MemoryStore();
 
   constructor(
     private readonly c: Client,
@@ -75,19 +78,28 @@ class RedisLimitStore implements Store {
 
   init(options: Options) {
     this.windowMs = options.windowMs;
+    this.fallback.init(options);
   }
 
   async increment(key: string) {
-    const [hits, ttl] = await send<[number, number]>(this.c, ['EVAL', INCREMENT, '1', this.prefix + key, String(this.windowMs)]);
-    return { totalHits: Number(hits), resetTime: new Date(Date.now() + Number(ttl)) };
+    try {
+      const [hits, ttl] = await send<[number, number]>(this.c, ['EVAL', INCREMENT, '1', this.prefix + key, String(this.windowMs)]);
+      return { totalHits: Number(hits), resetTime: new Date(Date.now() + Number(ttl)) };
+    } catch {
+      return this.fallback.increment(key);
+    }
   }
 
   async decrement(key: string) {
-    await send(this.c, ['DECR', this.prefix + key]);
+    await send(this.c, ['DECR', this.prefix + key]).catch(() => this.fallback.decrement(key));
   }
 
   async resetKey(key: string) {
-    await send(this.c, ['DEL', this.prefix + key]);
+    await Promise.all([send(this.c, ['DEL', this.prefix + key]).catch(() => undefined), this.fallback.resetKey(key)]);
+  }
+
+  shutdown() {
+    this.fallback.shutdown();
   }
 }
 

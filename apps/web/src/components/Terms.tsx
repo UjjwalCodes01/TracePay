@@ -108,7 +108,7 @@ function Evidence({ e }: { e: FieldEvidence | undefined }) {
   );
 }
 
-const field = 'h-10 w-full rounded-lg border border-line px-3 text-sm focus:border-ink focus:outline-none';
+const field = 'h-10 w-full rounded-lg border border-line px-3 text-sm focus:border-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/30';
 
 // Top-level so React keeps the same component identity between renders (inputs keep focus).
 function EditorRow({ label, evidence, children }: { label: string; evidence: FieldEvidence | undefined; children: ReactNode }) {
@@ -175,7 +175,7 @@ export function TermsEditor({ terms, onChange, evidence = [] }: { terms: License
           </select>
           {terms.economics.kind === 'percent_of_gross' && (
             <label className="flex items-center gap-1 text-sm">
-              <input type="number" min={0} max={100} step={0.5} className={clsx(field, 'w-24')} value={terms.economics.bps / 100} onChange={(e) => set('economics', { kind: 'percent_of_gross', bps: Math.round(Number(e.target.value) * 100) })} />%
+              <input type="number" min={0} max={100} step={0.5} aria-label="Share of every sale, in percent" className={clsx(field, 'w-24')} value={terms.economics.bps / 100} onChange={(e) => set('economics', { kind: 'percent_of_gross', bps: Math.round(Number(e.target.value) * 100) })} />%
             </label>
           )}
           {terms.economics.kind === 'fixed_per_sale' && (

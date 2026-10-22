@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import type { AppDeps } from '../app';
 import { sandboxBuyerHint } from '../config/env';
 import { currentUser, requireRole } from '../http/auth';
@@ -7,7 +8,7 @@ import { verifyAuditChain, verifyAuditChainCached } from '../modules/audit/audit
 import { publicKeyPem } from '../modules/audit/signing';
 import { softResetDemo } from '../modules/demo/soft-reset';
 import { DEMO_USERS } from '../modules/demo/world';
-import { limitStoreStatus } from '../http/rate-store';
+import { limitStore, limitStoreStatus } from '../http/rate-store';
 
 export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDeps) {
   const r = Router();
@@ -56,7 +57,16 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
    * Restores the demo publisher's world. Scoped: real accounts and their data are
    * never touched, and PayPal sandbox history is not reversed.
    */
-  r.post('/demo/reset', requireRole('publisher', 'admin'), async (req, res) => {
+  // A reset wipes everyone's shared demo state: a few per visitor (by IP) per 10 minutes.
+  const resetLimiter = rateLimit({
+    ...limitStore('demo-reset'),
+    windowMs: 10 * 60_000,
+    limit: 5,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler: (_req, _res, next) => next(new HttpError(429, 'The demo was reset several times just now. Try again in a few minutes.', { code: 'rate_limited' }, 600)),
+  });
+  r.post('/demo/reset', requireRole('publisher', 'admin'), resetLimiter, async (req, res) => {
     if (!config.demoMode) throw new HttpError(404, 'Not found.');
     if (req.authMethod !== 'demo' && req.user?.role !== 'admin') throw new HttpError(403, 'Only demo users can reset the demo.');
     const result = await softResetDemo(db);

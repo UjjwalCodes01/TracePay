@@ -8,7 +8,8 @@
   --color-muted: #64748b;
   --color-line: #e2e8f0;
   --color-canvas: #f8fafc;
-  --color-brand: #0d9488;
+  /* teal-700: AA contrast for small link text on white */
+  --color-brand: #0f766e;
   --color-brand-soft: #ccfbf1;
 
   /* Evidence classes used across the graph, ledger and receipt */
@@ -49,4 +50,19 @@ body {
 
 .ag-theme-tracepay {
   --ag-font-family: var(--font-sans);
+}
+
+/* Respect reduced motion everywhere, including AG Grid's cell flash. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .ag-cell-data-changed,
+  .ag-cell-data-changed-animation {
+    background-color: transparent !important;
+  }
 }

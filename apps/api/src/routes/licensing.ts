@@ -11,6 +11,8 @@ import { todayUtc } from '../modules/builds/preflight.service';
 import { extractTerms, MAX_LICENSE_TEXT } from '../modules/licenses/extract';
 import { acceptOffer, declineOffer, declineRequest, offerLicense, requestLicense, revokeLicense, withdrawOffer } from '../modules/licenses/license.service';
 import { limitStore } from '../http/rate-store';
+import { appendAudit } from '../modules/audit/audit-log';
+import { logIn } from '../modules/auth/auth.service';
 
 const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 const Reason = z.object({ reason: z.string().max(500).optional().nullable() });
@@ -37,13 +39,35 @@ export function licensingRoutes({ db, config }: AppDeps) {
 
   r.patch('/me', async (req, res) => {
     const user = currentUser(req);
+    // Shared demo personas: anyone could otherwise point a demo contributor's payouts at themselves.
+    if (req.authMethod === 'demo') throw new HttpError(403, 'Demo profiles can’t be changed. Sign up for your own account.');
     const body = z
-      .object({ name: z.string().trim().min(2).max(120).optional(), paypalEmail: z.email().max(254).nullable().optional() })
+      .object({
+        name: z.string().trim().min(2).max(120).optional(),
+        paypalEmail: z.email().max(254).nullable().optional(),
+        /** Required to change where payouts go: a stolen session alone can't redirect someone's money. */
+        currentPassword: z.string().min(1).max(200).optional(),
+      })
       .parse(req.body);
-    const updated = await db.user.update({
-      where: { id: user.id },
-      data: { ...(body.name ? { name: body.name } : {}), ...(body.paypalEmail !== undefined ? { paypalEmail: body.paypalEmail?.toLowerCase() ?? null } : {}) },
-      select: { id: true, name: true, email: true, role: true, paypalEmail: true },
+    const current = await db.user.findUniqueOrThrow({ where: { id: user.id }, select: { paypalEmail: true } });
+    const newPayee = body.paypalEmail === undefined ? undefined : (body.paypalEmail?.toLowerCase() ?? null);
+    const payeeChanges = newPayee !== undefined && newPayee !== current.paypalEmail;
+    if (payeeChanges) {
+      if (req.authMethod !== 'session') throw new HttpError(403, 'Sign in with your password to change where payouts go.');
+      if (!body.currentPassword) throw new HttpError(400, 'Enter your current password to change where payouts go.', { code: 'password_required' });
+      await logIn(db, user.email, body.currentPassword).catch(() => {
+        throw new HttpError(401, 'Your current password is incorrect.');
+      });
+    }
+    const updated = await db.$transaction(async (tx) => {
+      const u = await tx.user.update({
+        where: { id: user.id },
+        data: { ...(body.name ? { name: body.name } : {}), ...(payeeChanges ? { paypalEmail: newPayee } : {}) },
+        select: { id: true, name: true, email: true, role: true, paypalEmail: true },
+      });
+      // Audited without the addresses themselves (the audit log can't be erased; it stays pseudonymous).
+      if (payeeChanges) await appendAudit(tx, { entityType: 'user', entityId: user.id, eventType: 'account.payout_email_changed', payload: { hadPayee: !!current.paypalEmail, hasPayee: !!newPayee } });
+      return u;
     });
     res.json({ user: updated });
   });

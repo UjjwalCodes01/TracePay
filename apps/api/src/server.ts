@@ -1,5 +1,5 @@
 import { createApp } from './app';
-import { aiReady, paypalEnv, serverEnv, signingEnv } from './config/env';
+import { aiReady, answersEnv, paypalEnv, productionConfigProblems, serverEnv, signingEnv } from './config/env';
 import { db } from './db';
 import { HttpError } from './http/errors';
 import { logger } from './http/logger';
@@ -8,6 +8,7 @@ import { pickPlanner } from './modules/agent/planners';
 import { loadSigningKeys, type SigningKeys } from './modules/audit/signing';
 import { pickAnswerWriter, pickWriter } from './modules/generation/writers';
 import { recoverStaleWork, STALE_WORK_MS } from './modules/maintenance/recovery';
+import { pruneRetention } from './modules/maintenance/retention';
 import { ReconciliationWorker } from './modules/reconciliation/sync';
 import { setReconcileListener } from './modules/reconciliation/schedule';
 import { setOutboxListener } from './modules/platform/events';
@@ -19,9 +20,17 @@ import { closeLimitStore } from './http/rate-store';
 const env = serverEnv();
 
 // Fail fast on a misconfigured production deployment rather than at first use.
+answersEnv();
 if (env.NODE_ENV === 'production') {
+  const problems = productionConfigProblems();
+  if (problems.length) {
+    logger.fatal({ problems }, 'refusing to start: production configuration is incomplete');
+    throw new Error(`Production configuration is incomplete:\n- ${problems.join('\n- ')}`);
+  }
   signingEnv();
-  if (env.DEMO_MODE) logger.warn('DEMO_MODE is ON in production: the demo role switcher is enabled.');
+  if (env.DEMO_MODE) logger.warn('DEMO_MODE is ON in production: anyone can act as the demo personas. Turn it off before real users arrive.');
+  if (!process.env.WEBHOOK_SECRET_KEY) logger.warn('WEBHOOK_SECRET_KEY is not set: webhook secrets are encrypted with a key derived from the audit signing key.');
+  if (!process.env.REDIS_URL) logger.warn('REDIS_URL is not set: rate limits are counted per instance.');
 }
 
 let paypal: PayPalClient | null = null;
@@ -113,6 +122,7 @@ const sweep = () =>
   Promise.all([
     recoverStaleWork(db()).then((r) => (r.agentRuns || r.builds || r.answers) && logger.warn(r, 'recovered interrupted work')),
     pruneWebhookData(db()).then((r) => (r.events || r.idempotencyKeys) && logger.info(r, 'pruned old platform API data')),
+    pruneRetention(db()).then((r) => (r.sessions || r.webhookPayloads) && logger.info(r, 'retention: pruned expired personal data')),
   ]).catch((err) => logger.error({ err }, 'maintenance sweep failed'));
 void sweep();
 
