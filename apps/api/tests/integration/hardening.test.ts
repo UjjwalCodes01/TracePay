@@ -247,10 +247,10 @@ describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
       const { buildId } = await db().$transaction((tx) => preflightAndRecord(tx, { publisherId: DEMO_IDS.publisher, intent, assetVersionIds: [A, D] }));
       await db().$executeRaw`UPDATE "BuildJob" SET status = 'generating', "updatedAt" = now() - interval '1 hour' WHERE id = ${buildId}`;
 
-      expect(await recoverStaleWork(db())).toEqual({ agentRuns: 1, builds: 1 });
+      expect(await recoverStaleWork(db())).toEqual({ agentRuns: 1, builds: 1, answers: 0 });
       expect((await db().agentRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe('failed');
       expect((await db().buildJob.findUniqueOrThrow({ where: { id: buildId } })).status).toBe('generation_failed');
-      expect(await recoverStaleWork(db())).toEqual({ agentRuns: 0, builds: 0 });
+      expect(await recoverStaleWork(db())).toEqual({ agentRuns: 0, builds: 0, answers: 0 });
     });
   });
 

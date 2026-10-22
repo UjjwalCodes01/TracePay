@@ -18,7 +18,8 @@ export type TermField =
   | 'payableOn'
   | 'territories'
   | 'validFrom'
-  | 'validUntil';
+  | 'validUntil'
+  | 'aiAnswers';
 
 export interface FieldEvidence {
   field: TermField;
@@ -202,6 +203,21 @@ export function extractWithRules(text: string, today: string): ExtractionResult 
     warnings.unshift(`This license ended on ${validUntil}. It can't be offered as-is; set a new end date if it has been renewed.`);
   }
 
+  // AI answers, paid per cited passage
+  const aiSentence = find(/\b(?:AI|artificial intelligence)\b[^.]*\b(?:answer\w*|assistant\w*|agent\w*|chat\w*)/i);
+  let aiAnswers: LicenseTerms['aiAnswers'];
+  if (aiSentence) {
+    const denied = /\b(?:may not|must not|cannot|can't|not permitted|prohibited|not allowed|no ai)\b/i.test(aiSentence);
+    const dollars = /(?:USD|US\$|\$)\s?(\d{1,3}(?:\.\d{1,2})?)\s*(?:per|for each|each)\s+(?:cited\s+)?(?:passage|citation|excerpt|quote)/i.exec(aiSentence);
+    const cents = /(\d{1,3})\s*(?:cents?|¢)\s*(?:per|for each|each)\s+(?:cited\s+)?(?:passage|citation|excerpt|quote)/i.exec(aiSentence);
+    const rate = dollars ? Math.round(Number(dollars[1]) * 100) : cents ? Number(cents[1]) : 0;
+    aiAnswers = denied ? { allowed: false, centsPerCitation: 0 } : { allowed: true, centsPerCitation: Math.min(rate, 500) };
+    ev('aiAnswers', aiSentence, denied || dollars || cents ? 'high' : 'medium');
+    if (!denied && !dollars && !cents) warnings.push('AI answers are allowed, but no fee per cited passage was found, so they would pay nothing. Add the agreed rate.');
+  } else {
+    ev('aiAnswers', null, 'medium', 'Not mentioned; AI answers are not allowed.');
+  }
+
   if (/\b(?:EUR|GBP|INR|€|£|₹)/.test(text)) warnings.push('Only USD payment terms are supported; amounts in other currencies were not converted.');
 
   const terms: LicenseTerms = {
@@ -214,6 +230,7 @@ export function extractWithRules(text: string, today: string): ExtractionResult 
     validUntil,
     attributionText,
     economics,
+    ...(aiAnswers ? { aiAnswers } : {}),
     payableOn,
     currency: 'USD',
   };
@@ -232,12 +249,15 @@ const AiExtraction = z.object({
   percentOfGross: z.number().min(0).max(100).nullable(),
   fixedFeeUsd: z.number().min(0).max(100_000).nullable(),
   payableOn: z.enum(['included_in_build', 'cited_in_output']),
+  /** null when the document doesn't mention AI answers (then they're not allowed). */
+  aiAnswersAllowed: z.boolean().nullable(),
+  aiCentsPerCitation: z.number().min(0).max(500).nullable(),
   territories: z.array(z.string().length(2)).nullable(),
   validFrom: z.string().nullable(),
   validUntil: z.string().nullable(),
   evidence: z.array(
     z.object({
-      field: z.enum(['commercialUse', 'allowedPurposes', 'derivativeReports', 'attributionText', 'rawRedistribution', 'economics', 'payableOn', 'territories', 'validFrom', 'validUntil']),
+      field: z.enum(['commercialUse', 'allowedPurposes', 'derivativeReports', 'attributionText', 'rawRedistribution', 'economics', 'payableOn', 'territories', 'validFrom', 'validUntil', 'aiAnswers']),
       quote: z.string().nullable(),
       confidence: z.enum(['high', 'medium', 'low']),
     }),
@@ -254,6 +274,7 @@ const SYSTEM = [
   '- percentOfGross is a percentage (25 means 25%). fixedFeeUsd is dollars per sale.',
   '- "cited_in_output" only when payment explicitly depends on the source being cited or used in the final output.',
   '- Never invent attribution text; copy it exactly if the document specifies it.',
+  '- aiAnswersAllowed: whether AI assistants/agents may use the work to answer questions; null if the document is silent. aiCentsPerCitation is the fee in US cents per cited passage (USD 0.03 = 3).',
 ].join('\n');
 
 export async function extractWithVertex(text: string, today: string): Promise<ExtractionResult> {
@@ -281,6 +302,7 @@ export async function extractWithVertex(text: string, today: string): Promise<Ex
     validUntil: data.validUntil ? findDate(data.validUntil) : null,
     attributionText: data.derivativeReports === 'allowed_with_attribution' ? data.attributionText : null,
     economics,
+    ...(data.aiAnswersAllowed === null ? {} : { aiAnswers: { allowed: data.aiAnswersAllowed, centsPerCitation: data.aiAnswersAllowed ? Math.round(data.aiCentsPerCitation ?? 0) : 0 } }),
     payableOn: data.payableOn,
     currency: 'USD' as const,
   };

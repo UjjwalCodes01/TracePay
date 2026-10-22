@@ -37,6 +37,7 @@ export function listOf<T extends z.ZodType>(id: string, item: T) {
 const ERROR_TYPES: Record<number, string> = {
   400: 'invalid_request_error',
   401: 'authentication_error',
+  402: 'invalid_request_error',
   403: 'permission_error',
   404: 'not_found_error',
   409: 'conflict_error',

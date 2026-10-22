@@ -3,7 +3,7 @@ import { db } from '../src/db';
 import type { PayPalGateway } from '../src/integrations/paypal/gateway';
 import { RuleBasedPlanner } from '../src/modules/agent/planners';
 import { generateSigningKeys, loadSigningKeys } from '../src/modules/audit/signing';
-import { FixtureReportWriter } from '../src/modules/generation/writers';
+import { FixtureAnswerWriter, FixtureReportWriter } from '../src/modules/generation/writers';
 import { SecretBox } from '../src/modules/platform/webhook-crypto';
 import type { WebhookDeps } from '../src/modules/platform/webhooks';
 
@@ -22,6 +22,7 @@ export function testDeps(paypal: PayPalGateway, config: Partial<AppDeps['config'
     paypal: () => paypal,
     signingKeys: () => keys,
     writer: () => new FixtureReportWriter(),
+    answerWriter: () => new FixtureAnswerWriter(),
     planner: () => new RuleBasedPlanner(),
     webhooks: () => testWebhookDeps(webhookOverrides),
     config: {

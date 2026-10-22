@@ -10,6 +10,7 @@ import { BuildStateError } from '../modules/generation/generation.service';
 import { PaymentError } from '../modules/payments/payments.service';
 import { SettlementError } from '../modules/settlements/engine';
 import { SettlementStateError } from '../modules/settlements/settlement.service';
+import { CreditError } from '../modules/answers/credits.service';
 
 export class HttpError extends Error {
   constructor(readonly status: number, message: string, readonly details?: unknown, readonly retryAfterSeconds?: number) {
@@ -25,6 +26,7 @@ const PAYMENT_STATUS = { not_found: 404, not_for_sale: 409, state: 409, verifica
 const SETTLEMENT_STATUS = { not_found: 404, state: 409, payouts_unavailable: 503, provider: 502 } as const;
 const LICENSE_STATUS = { not_found: 404, forbidden: 404, state: 409, invalid: 400 } as const;
 const ASSET_STATUS = { not_found: 404, invalid: 400, unchanged: 409 } as const;
+const CREDIT_STATUS = { insufficient_credit: 402, not_found: 404, invalid: 400 } as const;
 const WEBHOOK_STATUS = { not_found: 404, invalid: 400, limit: 409, conflict: 409, state: 409 } as const;
 
 export function toHttp(err: unknown): HttpError {
@@ -46,6 +48,8 @@ export function toHttp(err: unknown): HttpError {
     return new HttpError(503, 'The server is busy. Please try again in a moment.', undefined, 2);
   }
   if (err instanceof AssetError) return new HttpError(ASSET_STATUS[err.code], err.message, { code: err.code });
+  // 402 Payment Required: an agent can top up and retry.
+  if (err instanceof CreditError) return new HttpError(CREDIT_STATUS[err.code], err.message, { code: err.code });
   if (err instanceof WebhookError) return new HttpError(WEBHOOK_STATUS[err.code], err.message, { code: err.code === 'limit' ? 'resource_limit' : err.code });
   return new HttpError(500, 'Internal error.');
 }

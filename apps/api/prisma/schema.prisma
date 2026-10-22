@@ -22,15 +22,15 @@ enum Role {
 }
 
 model User {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  name        String
-  role        Role
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  role         Role
   /// PayPal account that receives payouts (sandbox personal account in the demo).
-  paypalEmail String?
+  paypalEmail  String?
   /// scrypt hash; null for demo users who can only be reached via the demo role switcher.
   passwordHash String?
-  createdAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   sessions Session[]
   apiKeys  ApiKey[]
@@ -43,6 +43,11 @@ model User {
   buildJobs    BuildJob[]
   agentRuns    AgentRun[]
   purchases    Sale[]
+
+  creditAccount   CreditAccount?
+  libraryAnswers  Answer[]         @relation("library")
+  citationCredits CitationCredit[] @relation("creditContributor")
+  royaltyPayouts  RoyaltyPayout[]
 }
 
 /// Server-side session. The cookie holds a random token; only its SHA-256 is stored.
@@ -180,33 +185,33 @@ enum TermsOrigin {
 /// A grant of rights from an asset owner to a licensee. Terms are frozen once
 /// approved; editing creates a new version and supersedes the old one.
 model LicenseGrant {
-  id           String        @id @default(cuid())
-  assetId      String
-  asset        Asset         @relation(fields: [assetId], references: [id])
-  licenseeId   String
-  licensee     User          @relation("licensee", fields: [licenseeId], references: [id])
-  version      Int
-  status       LicenseStatus @default(draft)
+  id             String        @id @default(cuid())
+  assetId        String
+  asset          Asset         @relation(fields: [assetId], references: [id])
+  licenseeId     String
+  licensee       User          @relation("licensee", fields: [licenseeId], references: [id])
+  version        Int
+  status         LicenseStatus @default(draft)
   /// Normalized terms; null only while a publisher's request awaits the contributor's offer.
-  terms        Json?
-  termsHash    String?
-  origin       TermsOrigin   @default(manual)
+  terms          Json?
+  termsHash      String?
+  origin         TermsOrigin   @default(manual)
   /// Raw AI/rules extraction kept for comparison; never enforced.
-  aiExtraction Json?
-  sourceText   String?
+  aiExtraction   Json?
+  sourceText     String?
   /// The publisher's note when requesting a license.
   requestMessage String?
   /// Contributor (licensor) confirmed these exact terms.
-  offeredAt    DateTime?
+  offeredAt      DateTime?
   /// Licensee accepted; the grant became enforceable.
-  approvedAt   DateTime?
-  approvedById String?
+  approvedAt     DateTime?
+  approvedById   String?
   /// Who closed the grant (declined, withdrawn or revoked) and when.
-  closedAt     DateTime?
-  closedById   String?
-  closedReason String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @default(now()) @updatedAt
+  closedAt       DateTime?
+  closedById     String?
+  closedReason   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @default(now()) @updatedAt
 
   buildSources BuildSource[]
 
@@ -401,21 +406,21 @@ enum SaleStatus {
 }
 
 model Sale {
-  id          String     @id @default(cuid())
-  artifactId  String
-  artifact    Artifact   @relation(fields: [artifactId], references: [id])
-  buyerId     String?
-  buyer       User?      @relation(fields: [buyerId], references: [id])
-  amountCents Int
-  currency    String     @default("USD")
-  status      SaleStatus @default(pending_payment)
+  id            String     @id @default(cuid())
+  artifactId    String
+  artifact      Artifact   @relation(fields: [artifactId], references: [id])
+  buyerId       String?
+  buyer         User?      @relation(fields: [buyerId], references: [id])
+  amountCents   Int
+  currency      String     @default("USD")
+  status        SaleStatus @default(pending_payment)
   /// Rights re-checked when the buyer started checkout (licenses can be revoked or expire after a build).
   rightsCheck   Json?
   /// The license terms in force at the moment of sale; the settlement applies exactly these.
   termsSnapshot Json?
   snapshotHash  String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
   payment    PayPalPayment?
   settlement SettlementRun?
@@ -437,9 +442,9 @@ model PayPalPayment {
   updatedAt      DateTime @updatedAt
 
   /// Reconciliation: when TracePay next asks PayPal about this payment (null = nothing left to check).
-  nextCheckAt    DateTime?
-  checkCount     Int       @default(0)
-  lastCheckedAt  DateTime?
+  nextCheckAt      DateTime?
+  checkCount       Int       @default(0)
+  lastCheckedAt    DateTime?
   /// Lease held by the worker checking it right now.
   checkLockedUntil DateTime?
 
@@ -526,10 +531,10 @@ model PayoutBatch {
   updatedAt     DateTime      @default(now()) @updatedAt
 
   /// When the current send to PayPal started (status SUBMITTING): how an interrupted send is recognised.
-  sendingSince   DateTime?
+  sendingSince    DateTime?
   /// Reconciliation: when TracePay next asks PayPal about this batch (null = every payout is final).
-  nextPollAt     DateTime?
-  pollCount      Int           @default(0)
+  nextPollAt      DateTime?
+  pollCount       Int       @default(0)
   /// Lease held by the worker polling it right now.
   pollLockedUntil DateTime?
 
@@ -680,24 +685,184 @@ enum ReconciliationIssueStatus {
 /// reconciliation worker (or by webhooks), resolved automatically when the cause
 /// clears, or by the publisher with a note.
 model ReconciliationIssue {
-  id           String                    @id @default(cuid())
+  id          String                    @id @default(cuid())
   /// The publisher who must act.
-  ownerId      String
+  ownerId     String
   /// Stable machine code, e.g. "sale_refunded", "payout_failed".
-  kind         String
-  subjectType  String
-  subjectId    String
+  kind        String
+  subjectType String
+  subjectId   String
   /// Plain-language summary and what to do.
-  title        String
-  detail       String
-  data         Json                      @default("{}")
-  status       ReconciliationIssueStatus @default(open)
-  openedAt     DateTime                  @default(now())
-  resolvedAt   DateTime?
+  title       String
+  detail      String
+  data        Json                      @default("{}")
+  status      ReconciliationIssueStatus @default(open)
+  openedAt    DateTime                  @default(now())
+  resolvedAt  DateTime?
   /// "auto" when the cause cleared by itself; otherwise the user who resolved it.
-  resolvedBy   String?
-  resolution   String?
+  resolvedBy  String?
+  resolution  String?
 
   @@index([ownerId, status, openedAt])
   @@index([kind, subjectId, status])
+}
+
+// ---- Pay-per-citation: AI answers that pay the people whose work they cite ----------------
+
+/// A prepaid balance, topped up with PayPal, that pays for answers.
+/// balanceCents always equals the sum of the account's entries; reservedCents is held
+/// for answers in progress (worst-case price), so concurrent answers can't overspend.
+model CreditAccount {
+  id            String   @id @default(cuid())
+  ownerId       String   @unique
+  owner         User     @relation(fields: [ownerId], references: [id])
+  balanceCents  Int      @default(0)
+  reservedCents Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  entries CreditEntry[]
+  topUps  CreditTopUp[]
+  answers Answer[]
+}
+
+/// Append-only ledger of a credit account.
+model CreditEntry {
+  id          String        @id @default(cuid())
+  accountId   String
+  account     CreditAccount @relation(fields: [accountId], references: [id])
+  /// top_up | answer | top_up_reversal
+  kind        String
+  amountCents Int
+  topUpId     String?
+  answerId    String?
+  createdAt   DateTime      @default(now())
+
+  @@index([accountId, createdAt])
+}
+
+enum TopUpStatus {
+  pending_payment
+  captured
+  payment_failed
+  refunded
+}
+
+/// Money added to a credit account through a PayPal checkout. The id is also the
+/// order's custom_id ("topup_…"), so PayPal webhooks find it.
+model CreditTopUp {
+  id          String        @id
+  accountId   String
+  account     CreditAccount @relation(fields: [accountId], references: [id])
+  amountCents Int
+  currency    String        @default("USD")
+  status      TopUpStatus   @default(pending_payment)
+  orderId     String?       @unique
+  captureId   String?       @unique
+  createdAt   DateTime      @default(now())
+  capturedAt  DateTime?
+}
+
+enum AnswerStatus {
+  answering
+  answered
+  not_covered
+  failed
+}
+
+/// One question answered from a publisher's licensed library, with its signed receipt.
+model Answer {
+  id            String        @id @default(cuid())
+  accountId     String
+  account       CreditAccount @relation(fields: [accountId], references: [id])
+  libraryId     String
+  library       User          @relation("library", fields: [libraryId], references: [id])
+  question      String
+  /// The asker's mandate: the most this answer may cost. Enforced before the model runs.
+  maxPriceCents Int
+  /// Worst-case price held from the balance while answering.
+  reservedCents Int           @default(0)
+  status        AnswerStatus  @default(answering)
+  /// { text, citations, unsupported, rejected } — see answers.service.
+  content       Json?
+  model         String?
+  fromFixture   Boolean       @default(false)
+  feeCents      Int           @default(0)
+  chargedCents  Int           @default(0)
+  /// Sources left out, and why (license, budget).
+  excluded      Json          @default("[]")
+  receipt       Json?
+  signature     String?
+  failureReason String?
+  createdAt     DateTime      @default(now())
+  finishedAt    DateTime?
+
+  credits CitationCredit[]
+
+  @@index([accountId, createdAt])
+  @@index([libraryId, createdAt])
+  @@index([status, createdAt])
+}
+
+enum CreditStatus {
+  accrued
+  in_payout
+  paid
+}
+
+/// What one contributor earned from one answer: verified citations × their rate.
+model CitationCredit {
+  id               String             @id @default(cuid())
+  answerId         String
+  answer           Answer             @relation(fields: [answerId], references: [id])
+  libraryId        String
+  contributorId    String
+  contributor      User               @relation("creditContributor", fields: [contributorId], references: [id])
+  assetVersionId   String
+  assetTitle       String
+  licenseId        String
+  termsHash        String?
+  centsPerCitation Int
+  citations        Int
+  amountCents      Int
+  status           CreditStatus       @default(accrued)
+  payoutItemId     String?
+  payoutItem       RoyaltyPayoutItem? @relation(fields: [payoutItemId], references: [id])
+  createdAt        DateTime           @default(now())
+
+  @@index([libraryId, status])
+  @@index([contributorId, createdAt])
+}
+
+/// A PayPal Payouts batch paying accrued answer royalties. senderBatchId is the
+/// idempotency key: a resend after a lost response can never pay twice.
+model RoyaltyPayout {
+  id            String    @id @default(cuid())
+  libraryId     String
+  library       User      @relation(fields: [libraryId], references: [id])
+  senderBatchId String    @unique
+  paypalBatchId String?   @unique
+  /// SUBMITTING | SUBMIT_FAILED | PENDING | PROCESSING | SUCCESS | DENIED | CANCELED
+  status        String
+  totalCents    Int
+  createdAt     DateTime  @default(now())
+  lastCheckedAt DateTime?
+
+  items RoyaltyPayoutItem[]
+}
+
+model RoyaltyPayoutItem {
+  id            String        @id @default(cuid())
+  payoutId      String
+  payout        RoyaltyPayout @relation(fields: [payoutId], references: [id])
+  senderItemId  String        @unique
+  contributorId String
+  receiver      String
+  amountCents   Int
+  status        String        @default("SUBMITTING")
+  paypalItemId  String?
+  transactionId String?
+  errorName     String?
+
+  credits CitationCredit[]
 }

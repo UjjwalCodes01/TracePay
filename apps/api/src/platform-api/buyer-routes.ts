@@ -6,6 +6,8 @@ import { matchScore } from '../modules/agent/buyer-tools';
 import type { CitationReport } from '../modules/generation/citations';
 import type { ArtifactContent } from '../modules/generation/generation.service';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
+import { askLibrary, getAnswer, listAnswers, listLibraries } from '../modules/answers/answers.service';
+import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, startTopUp } from '../modules/answers/credits.service';
 import { checkSaleRights } from '../modules/sales/rights.service';
 import { defineRoute, listOf, named, type AnyRoute } from './framework';
 
@@ -127,7 +129,93 @@ function checkoutOut(s: SaleRow): z.infer<typeof Checkout> {
 
 const saleSelect = { id: true, artifactId: true, status: true, amountCents: true, currency: true, createdAt: true, payment: { select: { orderId: true, captureId: true } } } as const;
 
-export function buyerRoutes({ db, paypal, config }: AppDeps): AnyRoute[] {
+// ---- pay-per-citation answers ---------------------------------------------------------
+
+export const Library = named('Library', z.object({ id, object: z.literal('library'), name: z.string(), sources_licensed_for_ai: z.number().int() }), 'A publisher’s licensed library that answers questions.');
+const LibraryList = listOf('Library', Library);
+
+export const CreditBalance = named(
+  'CreditBalance',
+  z.object({
+    object: z.literal('credit_balance'),
+    balance_cents: z.number().int(),
+    reserved_cents: z.number().int().meta({ description: 'Held for answers in progress (their worst-case price).' }),
+    available_cents: z.number().int(),
+    entries: z.array(z.object({ id, kind: z.string(), amount_cents: z.number().int(), answer_id: z.string().nullable(), top_up_id: z.string().nullable(), created: ts })),
+  }),
+  'Prepaid answer credit, topped up with PayPal. Entries always sum to the balance.',
+);
+
+export const CreditTopUp = named(
+  'CreditTopUp',
+  z.object({
+    id,
+    object: z.literal('credit_top_up'),
+    status: z.string(),
+    amount_cents: z.number().int(),
+    paypal_order_id: z.string().nullable(),
+    approve_url: z.string().nullable().meta({ description: 'Where the buyer approves the payment at PayPal — software can’t.' }),
+    capture_id: z.string().nullable(),
+  }),
+  'Buying answer credit with PayPal.',
+);
+
+export const AnswerResource = named(
+  'Answer',
+  z.object({
+    id,
+    object: z.literal('answer'),
+    status: z.enum(['answering', 'answered', 'not_covered', 'failed']),
+    question: z.string(),
+    library: z.object({ id, name: z.string() }),
+    text: z.string().nullable().meta({ description: 'The answer, with [C1]… markers for its citations.' }),
+    model: z.string().nullable(),
+    from_fixture: z.boolean(),
+    citations: z.array(z.object({ handle: z.string(), source_title: z.string().nullable(), paid: z.boolean() })),
+    paid: z
+      .array(z.object({ source_title: z.string(), contributor: z.string(), citations: z.number().int(), cents_per_citation: z.number().int(), amount_cents: z.number().int() }))
+      .meta({ description: 'Who was paid for this answer: only passages it verifiably relied on.' }),
+    not_paid: z.object({ unsupported: z.number().int(), repeated: z.number().int(), over_cap: z.number().int() }).meta({ description: 'Citations that earned nothing, and why.' }),
+    excluded: z.array(z.object({ source_title: z.string(), contributor: z.string(), code: z.string(), reason: z.string() })).meta({ description: 'Sources left out (license, price limit).' }),
+    fee_cents: z.number().int(),
+    charged_cents: z.number().int(),
+    max_price_cents: z.number().int(),
+    failure_reason: z.string().nullable(),
+    receipt: z.object({ document: z.record(z.string(), z.unknown()), signature: z.string(), algorithm: z.literal('Ed25519'), public_key_pem: z.string() }).nullable(),
+    created: ts,
+  }),
+  'A question answered from licensed sources, paid per verified citation, with a signed receipt.',
+);
+const AnswerSummaryList = listOf(
+  'AnswerSummary',
+  named('AnswerSummary', z.object({ id, object: z.literal('answer'), question: z.string(), status: z.string(), library_name: z.string(), charged_cents: z.number().int(), created: ts })),
+);
+
+type AnswerView = Awaited<ReturnType<typeof getAnswer>>;
+function answerOutV1(a: AnswerView): z.infer<typeof AnswerResource> {
+  return {
+    id: a.id,
+    object: 'answer',
+    status: a.status,
+    question: a.question,
+    library: a.library,
+    text: a.text,
+    model: a.model,
+    from_fixture: a.fromFixture,
+    citations: a.citations.map((c) => ({ handle: c.handle, source_title: c.title, paid: c.paid })),
+    paid: a.paid.map((p) => ({ source_title: p.title, contributor: p.contributor, citations: p.citations, cents_per_citation: p.centsPerCitation, amount_cents: p.amountCents })),
+    not_paid: { unsupported: a.notPaid.unsupported, repeated: a.notPaid.repeated, over_cap: a.notPaid.overCap },
+    excluded: a.excluded.map((e) => ({ source_title: e.title, contributor: e.contributor, code: e.code, reason: e.reason })),
+    fee_cents: a.feeCents,
+    charged_cents: a.chargedCents,
+    max_price_cents: a.maxPriceCents,
+    failure_reason: a.failureReason,
+    receipt: a.receipt ? { document: a.receipt.document as Record<string, unknown>, signature: a.receipt.signature, algorithm: 'Ed25519', public_key_pem: a.receipt.publicKeyPem } : null,
+    created: a.createdAt.toISOString(),
+  };
+}
+
+export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: AppDeps): AnyRoute[] {
   const ownedIds = async (buyerId: string) =>
     new Set((await db.sale.findMany({ where: { buyerId, status: 'captured' }, select: { artifactId: true } })).map((s) => s.artifactId));
   const mySale = async (buyerId: string, saleId: string) => {
@@ -136,7 +224,83 @@ export function buyerRoutes({ db, paypal, config }: AppDeps): AnyRoute[] {
     return sale;
   };
 
+  const ANSWERS = 'Answers (pay-per-citation)';
+  const topUpOut = async (topUpId: string): Promise<z.infer<typeof CreditTopUp>> => {
+    const t = await db.creditTopUp.findUniqueOrThrow({ where: { id: topUpId } });
+    return {
+      id: t.id,
+      object: 'credit_top_up',
+      status: t.status,
+      amount_cents: t.amountCents,
+      paypal_order_id: t.orderId,
+      approve_url: t.status === 'pending_payment' && t.orderId ? sandboxApproveUrl(t.orderId) : null,
+      capture_id: t.captureId,
+    };
+  };
+
   return [
+    defineRoute({
+      method: 'get', path: '/libraries', operationId: 'listLibraries', roles: ['buyer'], tag: ANSWERS, summary: 'Libraries that answer questions',
+      response: LibraryList,
+      handler: async () => {
+        const libs = await listLibraries(db);
+        return { object: 'list' as const, data: libs.map((l) => ({ id: l.id, object: 'library' as const, name: l.name, sources_licensed_for_ai: l.sources })), has_more: false, next_cursor: null };
+      },
+    }),
+    defineRoute({
+      method: 'get', path: '/credits', operationId: 'getCredits', roles: ['buyer'], tag: ANSWERS, summary: 'Your answer credit',
+      response: CreditBalance,
+      handler: async ({ user }) => {
+        const c = await creditSummary(db, user.id);
+        return {
+          object: 'credit_balance' as const,
+          balance_cents: c.balanceCents,
+          reserved_cents: c.reservedCents,
+          available_cents: c.availableCents,
+          entries: c.entries.map((e) => ({ id: e.id, kind: e.kind, amount_cents: e.amountCents, answer_id: e.answerId, top_up_id: e.topUpId, created: e.createdAt.toISOString() })),
+        };
+      },
+    }),
+    defineRoute({
+      method: 'post', path: '/credit_top_ups', operationId: 'startCreditTopUp', roles: ['buyer'], middleware: [quotas.checkout()], tag: ANSWERS, summary: 'Buy answer credit with PayPal',
+      description: 'Returns an `approve_url` for the buyer. After they approve at PayPal, call `POST /credit_top_ups/{id}/capture`.',
+      body: z.object({ amount_cents: z.number().int().min(100).max(MAX_TOP_UP_CENTS) }),
+      response: CreditTopUp, status: 201,
+      handler: async ({ user, body }) => topUpOut((await startTopUp(db, paypal(), { ownerId: user.id, amountCents: body.amount_cents, appBaseUrl: config.appBaseUrl })).topUpId),
+    }),
+    defineRoute({
+      method: 'post', path: '/credit_top_ups/:id/capture', operationId: 'captureCreditTopUp', roles: ['buyer'], tag: ANSWERS, summary: 'Complete a top-up the buyer approved',
+      params: Id, body: z.object({}).strict(), response: CreditTopUp, errors: [409],
+      handler: async ({ user, params }) => topUpOut((await captureTopUp(db, paypal(), params.id, user.id)).topUpId),
+    }),
+    defineRoute({
+      method: 'post', path: '/answers', operationId: 'ask', roles: ['buyer'], middleware: [quotas.answer()], tag: ANSWERS, summary: 'Ask a question, paid per verified citation',
+      description:
+        'Answers only from sources licensed for AI answers. You pay a small fee plus each source’s rate for every passage the answer verifiably relies on — never more than `max_price_cents`, which is enforced before the model runs. `402 insufficient_credit` means top up first.',
+      body: z.object({
+        library_id: z.string().min(1).max(64),
+        question: z.string().trim().min(8).max(500),
+        max_price_cents: z.number().int().min(1).max(500).meta({ description: 'The most this answer may cost.' }),
+      }),
+      response: AnswerResource, status: 201, errors: [402],
+      handler: async ({ user, body }) =>
+        answerOutV1(await askLibrary(db, answerWriter(), signingKeys(), { askerId: user.id, libraryId: body.library_id, question: body.question, maxPriceCents: body.max_price_cents })),
+    }),
+    defineRoute({
+      method: 'get', path: '/answers', operationId: 'listAnswers', roles: ['buyer'], tag: ANSWERS, summary: 'Your recent answers',
+      response: AnswerSummaryList,
+      handler: async ({ user }) => ({
+        object: 'list' as const,
+        data: (await listAnswers(db, user.id)).map((a) => ({ id: a.id, object: 'answer' as const, question: a.question, status: a.status, library_name: a.libraryName, charged_cents: a.chargedCents, created: a.createdAt.toISOString() })),
+        has_more: false,
+        next_cursor: null,
+      }),
+    }),
+    defineRoute({
+      method: 'get', path: '/answers/:id', operationId: 'getAnswer', roles: ['buyer'], tag: ANSWERS, summary: 'Retrieve an answer and its signed receipt',
+      params: Id, response: AnswerResource,
+      handler: async ({ user, params }) => answerOutV1(await getAnswer(db, params.id, user.id, signingKeys())),
+    }),
     defineRoute({
       method: 'get', path: '/store/reports', operationId: 'searchStore', roles: ['buyer'], tag: TAG, summary: 'Search reports for sale',
       description: 'Reports currently for sale, best match first when you pass `query`.',

@@ -47,6 +47,8 @@ export const quotas = {
   offer: once('offer', 'offer', () => perUser('offer', 60, HOUR, 'You can send up to 60 license offers per hour.')),
   request: once('request', 'request', () => perUser('request', 60, HOUR, 'You can send up to 60 license requests per hour.')),
   checkout: once('checkout', 'checkout', () => perUser('checkout', 30, 10 * 60_000, 'Too many checkout attempts. Try again in a few minutes.')),
+  /** Each runs a model call (and moves credit). */
+  answer: once('answer', 'answer', () => perUser('answer', 120, HOUR, 'You can ask up to 120 questions per hour.')),
   agentRun: once('agentRun', 'agent', () => perUser('agent', 30, HOUR, 'You can start up to 30 assistant runs per hour.')),
   preflight: once('preflight', 'preflight', () => perUser('preflight', 120, HOUR, 'Too many preflight checks this hour.')),
   /** Each makes an outbound HTTP request to a customer URL: keep TracePay from being used as a request cannon. */

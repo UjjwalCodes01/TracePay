@@ -5,6 +5,7 @@ import type { Capture, WebhookEvent, WebhookVerificationHeaders } from '../../in
 import { decimalToCents } from '@tracepay/shared';
 import { applyCapture, markSaleReversed, declineCapture } from './payments.service';
 import { refreshBatch } from '../settlements/settlement.service';
+import { applyTopUpCapture, isTopUpId, reverseTopUp } from '../answers/credits.service';
 
 export type WebhookResult =
   | { status: 'rejected'; reason: string }
@@ -78,6 +79,8 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
     case 'PAYMENT.CAPTURE.COMPLETED':
     case 'PAYMENT.CAPTURE.PENDING': {
       const capture = event.resource as Capture;
+      // Answer credits bought with PayPal (custom_id "topup_…").
+      if (isTopUpId(capture.custom_id)) return applyTopUpCapture(db, capture.custom_id, capture, 'webhook');
       const saleId = await saleIdForCapture(db, capture);
       if (!saleId) return 'ignored: capture not linked to a TracePay sale';
       const result = await applyCapture(db, saleId, null, capture, 'webhook');
@@ -87,6 +90,10 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
       // A denied capture of a payment still pending (or already closed) is a decline: the
       // buyer was never charged — not a reversal of money we held.
       const capture = event.resource as Capture;
+      if (isTopUpId(capture.custom_id)) {
+        const reversed = await reverseTopUp(db, capture.id, null, event.event_type);
+        return reversed ?? applyTopUpCapture(db, capture.custom_id, capture, 'webhook');
+      }
       const paid = await db.payPalPayment.findUnique({ where: { captureId: capture.id }, include: { sale: true } });
       const saleId = paid?.saleId ?? (await saleIdForCapture(db, capture));
       if (!saleId) return 'ignored: capture not linked to a TracePay sale';
@@ -105,6 +112,8 @@ async function applyEvent(db: Db, paypal: PayPalGateway, event: WebhookEvent): P
       const isRefund = event.event_type === 'PAYMENT.CAPTURE.REFUNDED';
       // A refund resource's id is the refund id; the capture id is in its "up" link.
       const captureId = isRefund ? resource.links?.find((l) => l.rel === 'up')?.href.split('/').pop() ?? resource.id : resource.id;
+      const topUp = await reverseTopUp(db, captureId, isRefund && resource.amount ? decimalToCents(resource.amount.value) : null, event.event_type);
+      if (topUp) return topUp;
       const saleId = await db.$transaction((tx) =>
         markSaleReversed(tx, {
           captureId,

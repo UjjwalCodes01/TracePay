@@ -7,7 +7,7 @@ import { isIP } from 'node:net';
 import type { Db } from './db';
 import type { PayPalGateway } from './integrations/paypal/gateway';
 import type { SigningKeys } from './modules/audit/signing';
-import type { ReportWriter } from './modules/generation/writers';
+import type { AnswerWriter, ReportWriter } from './modules/generation/writers';
 import type { AgentPlanner } from './modules/agent/planners';
 import { authenticate, bearerToken, isPlatformApiPath, originCheck, WELL_FORMED_KEY } from './http/auth';
 import { errorHandler, HttpError } from './http/errors';
@@ -22,6 +22,7 @@ import { platformApi } from './platform-api';
 import { v1ErrorHandler } from './platform-api/framework';
 import type { WebhookDeps } from './modules/platform/webhooks';
 import { limitStore } from './http/rate-store';
+import { answerRoutes } from './routes/answers';
 
 export interface AppDeps {
   db: Db;
@@ -29,6 +30,8 @@ export interface AppDeps {
   paypal: () => PayPalGateway;
   signingKeys: () => SigningKeys;
   writer: () => ReportWriter;
+  /** Writes pay-per-citation answers. */
+  answerWriter: () => AnswerWriter;
   planner: () => AgentPlanner;
   /** Outbound webhooks (endpoint management and deliveries). */
   webhooks: () => WebhookDeps;
@@ -185,6 +188,7 @@ export function createApp(deps: AppDeps) {
   app.use('/api', commerceRoutes(deps));
   app.use('/api', agentRoutes(deps));
   app.use('/api', licensingRoutes(deps));
+  app.use('/api', answerRoutes(deps));
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found.')));
   // Errors raised before the platform router (bad key, malformed JSON, IP limits) still get its error format.

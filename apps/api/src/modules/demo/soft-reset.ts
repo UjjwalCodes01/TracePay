@@ -13,6 +13,9 @@ const payeeEmails = () =>
     .map((e) => e.trim())
     .filter(Boolean);
 
+/** Starting answer credit for the demo buyer, labeled as such in their ledger. */
+export const DEMO_CREDIT_CENTS = 200;
+
 export const DEMO_EMAILS = new Set(DEMO_USERS.map((u) => u.email.toLowerCase()));
 
 /**
@@ -79,6 +82,14 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
       await tx.agentStep.deleteMany({ where: { run: { publisherId: { in: buyerIds } } } });
       await tx.agentRun.deleteMany({ where: { publisherId: { in: buyerIds } } });
       await tx.apiKey.updateMany({ where: { userId: { in: buyerIds }, revokedAt: null }, data: { revokedAt: new Date() } });
+      // Pay-per-citation: the demo library's answers and royalty payouts, and the demo buyer's credits.
+      await tx.citationCredit.deleteMany({ where: { OR: [{ libraryId: { in: publisherIds } }, { answer: { account: { ownerId: { in: buyerIds } } } }] } });
+      await tx.royaltyPayoutItem.deleteMany({ where: { payout: { libraryId: { in: publisherIds } } } });
+      await tx.royaltyPayout.deleteMany({ where: { libraryId: { in: publisherIds } } });
+      await tx.answer.deleteMany({ where: { OR: [{ libraryId: { in: publisherIds } }, { account: { ownerId: { in: buyerIds } } }] } });
+      await tx.creditEntry.deleteMany({ where: { account: { ownerId: { in: buyerIds } } } });
+      await tx.creditTopUp.deleteMany({ where: { account: { ownerId: { in: buyerIds } } } });
+      await tx.creditAccount.deleteMany({ where: { ownerId: { in: buyerIds } } });
       await tx.idempotencyKey.deleteMany({ where: { userId: { in: buyerIds } } });
       // Licenses held by the demo publisher (nothing references them any more).
       await tx.licenseGrant.deleteMany({ where: { licenseeId: { in: publisherIds } } });
@@ -134,6 +145,12 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
             approvedById: DEMO_IDS.publisher,
           },
         });
+      }
+
+      // Visitors can ask right away; topping up with PayPal works the same as for anyone.
+      for (const buyerId of buyerIds) {
+        const account = await tx.creditAccount.create({ data: { ownerId: buyerId, balanceCents: DEMO_CREDIT_CENTS } });
+        await tx.creditEntry.create({ data: { accountId: account.id, kind: 'demo_credit', amountCents: DEMO_CREDIT_CENTS } });
       }
 
       await appendAudit(tx, {

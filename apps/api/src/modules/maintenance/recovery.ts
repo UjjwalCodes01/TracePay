@@ -2,6 +2,7 @@ import type { Db } from '../../db';
 import { Prisma } from '../../generated/prisma/client';
 import { appendAudit } from '../audit/audit-log';
 import { approvalTtlMs } from '../agent/agent.service';
+import { releaseStaleAnswers } from '../answers/answers.service';
 
 /**
  * Agent runs and report generation execute inside the API process. If the
@@ -11,7 +12,7 @@ import { approvalTtlMs } from '../agent/agent.service';
  */
 export const STALE_WORK_MS = 10 * 60_000;
 
-export async function recoverStaleWork(db: Db, now = new Date()): Promise<{ agentRuns: number; builds: number }> {
+export async function recoverStaleWork(db: Db, now = new Date()): Promise<{ agentRuns: number; builds: number; answers: number }> {
   const cutoff = new Date(now.getTime() - STALE_WORK_MS);
 
   const runs = await db.agentRun.findMany({ where: { status: 'running', updatedAt: { lt: cutoff } }, select: { id: true } });
@@ -38,6 +39,9 @@ export async function recoverStaleWork(db: Db, now = new Date()): Promise<{ agen
     });
   }
 
+  // Answers interrupted mid-way release their credit hold (uncharged).
+  const answers = await releaseStaleAnswers(db, null, cutoff);
+
   const builds = await db.buildJob.updateMany({ where: { status: 'generating', updatedAt: { lt: cutoff } }, data: { status: 'generation_failed' } });
-  return { agentRuns: runs.length + lapsed.length, builds: builds.count };
+  return { agentRuns: runs.length + lapsed.length, builds: builds.count, answers };
 }

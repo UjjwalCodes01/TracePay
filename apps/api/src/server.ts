@@ -6,7 +6,7 @@ import { logger } from './http/logger';
 import { PayPalClient } from './integrations/paypal/client';
 import { pickPlanner } from './modules/agent/planners';
 import { loadSigningKeys, type SigningKeys } from './modules/audit/signing';
-import { pickWriter } from './modules/generation/writers';
+import { pickAnswerWriter, pickWriter } from './modules/generation/writers';
 import { recoverStaleWork, STALE_WORK_MS } from './modules/maintenance/recovery';
 import { ReconciliationWorker } from './modules/reconciliation/sync';
 import { setReconcileListener } from './modules/reconciliation/schedule';
@@ -65,6 +65,7 @@ const app = createApp({
   },
   signingKeys: () => (keys ??= loadSigningKeys(signingEnv().AUDIT_SIGNING_PRIVATE_KEY)),
   writer: () => pickWriter(),
+  answerWriter: () => pickAnswerWriter(),
   planner: () => pickPlanner(),
   webhooks,
   onActivity,
@@ -110,7 +111,7 @@ dispatcher.kick('activity');
 reconciler.kick();
 const sweep = () =>
   Promise.all([
-    recoverStaleWork(db()).then((r) => (r.agentRuns || r.builds) && logger.warn(r, 'recovered interrupted work')),
+    recoverStaleWork(db()).then((r) => (r.agentRuns || r.builds || r.answers) && logger.warn(r, 'recovered interrupted work')),
     pruneWebhookData(db()).then((r) => (r.events || r.idempotencyKeys) && logger.info(r, 'pruned old platform API data')),
   ]).catch((err) => logger.error({ err }, 'maintenance sweep failed'));
 void sweep();

@@ -71,10 +71,11 @@ export const DEMO_ASSETS: DemoAsset[] = [
     description: 'Quarterly developer-tooling spend across 1,200 engineering organisations.',
     file: 'devtools-spend-index.md',
     licenseId: 'lic_northwind_v1',
-    terms: { ...base, economics: { kind: 'percent_of_gross', bps: 2500 }, payableOn: 'included_in_build' },
+    terms: { ...base, economics: { kind: 'percent_of_gross', bps: 2500 }, aiAnswers: { allowed: true, centsPerCitation: 3 }, payableOn: 'included_in_build' },
     licenseText:
       'Licensee may use the Index to create and sell derivative research reports worldwide until 31 Dec 2027. ' +
-      'Raw index data may not be redistributed. Licensor receives 25% of the gross sale price of each report that uses the Index.',
+      'Raw index data may not be redistributed. Licensor receives 25% of the gross sale price of each report that uses the Index. ' +
+      'AI answer services may cite the Index at USD 0.03 per cited passage.',
   },
   {
     id: 'asset_okafor_notes',
@@ -89,11 +90,13 @@ export const DEMO_ASSETS: DemoAsset[] = [
       derivativeReports: 'allowed_with_attribution',
       attributionText: 'Field research by Mara Okafor, independent analyst',
       economics: { kind: 'percent_of_gross', bps: 1500 },
+      aiAnswers: { allowed: true, centsPerCitation: 2 },
       payableOn: 'cited_in_output',
     },
     licenseText:
       'Commercial derivative reports are permitted provided they credit "Field research by Mara Okafor, independent analyst". ' +
-      'Royalty: 15% of gross sale price, payable only for reports that actually cite these notes. This license runs until 31 Dec 2027.',
+      'Royalty: 15% of gross sale price, payable only for reports that actually cite these notes. This license runs until 31 Dec 2027. ' +
+      'AI assistants may use these notes in answers at USD 0.02 per cited passage.',
   },
   {
     id: 'asset_kestrel_panel',
@@ -108,11 +111,13 @@ export const DEMO_ASSETS: DemoAsset[] = [
       commercialUse: false,
       allowedPurposes: ['internal_research'],
       economics: { kind: 'percent_of_gross', bps: 1000 },
+      aiAnswers: { allowed: false, centsPerCitation: 0 },
       payableOn: 'included_in_build',
     },
     licenseText:
       'Panel results are licensed for the licensee\'s internal research only. No commercial use, sale or publication of ' +
-      'derived works is permitted. Fee: 10% of any revenue attributable to the data. The license is valid until 31 Dec 2027.',
+      'derived works is permitted. Fee: 10% of any revenue attributable to the data. The license is valid until 31 Dec 2027. ' +
+      'AI assistants may not use the panel to answer questions.',
   },
   {
     id: 'asset_lumen_digest',
@@ -122,9 +127,10 @@ export const DEMO_ASSETS: DemoAsset[] = [
     description: 'Digest of a 9,400-respondent developer survey on AI assistant usage and trust.',
     file: 'open-developer-survey-digest.md',
     licenseId: 'lic_lumen_v1',
-    terms: { ...base, economics: { kind: 'fixed_per_sale', amountCents: 200 }, payableOn: 'included_in_build' },
+    terms: { ...base, economics: { kind: 'fixed_per_sale', amountCents: 200 }, aiAnswers: { allowed: true, centsPerCitation: 1 }, payableOn: 'included_in_build' },
     licenseText:
-      'The Digest may be used in commercial derivative reports worldwide until 31 Dec 2027. Fee: USD 2.00 per report sold. Raw survey tables may not be republished.',
+      'The Digest may be used in commercial derivative reports worldwide until 31 Dec 2027. Fee: USD 2.00 per report sold. Raw survey tables may not be republished. ' +
+      'AI answer services may cite the Digest at USD 0.01 per cited passage.',
   },
   {
     id: 'asset_ide_pricing',
@@ -138,9 +144,10 @@ export const DEMO_ASSETS: DemoAsset[] = [
       ...base,
       validUntil: '2026-09-30',
       economics: { kind: 'percent_of_gross', bps: 500 },
+      aiAnswers: { allowed: true, centsPerCitation: 2 },
       payableOn: 'included_in_build',
     },
-    licenseText: 'Commercial use permitted until 30 September 2026. Fee: 5% of gross sale price.',
+    licenseText: 'Commercial use permitted until 30 September 2026. Fee: 5% of gross sale price. AI answer services may cite the tracker at USD 0.02 per cited passage.',
   },
 ];
 

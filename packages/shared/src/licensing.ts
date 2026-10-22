@@ -39,6 +39,18 @@ export const LicenseTermsSchema = z
     attributionText: z.string().min(1).nullable(),
     economics: EconomicsSchema,
     /**
+     * Using the work to answer questions (AI agents, chat), paid per VERIFIED citation:
+     * only passages an answer actually relies on are paid. Absent means not allowed,
+     * so licenses written before this clause existed keep their terms (and hashes).
+     */
+    aiAnswers: z
+      .object({
+        allowed: z.boolean(),
+        /** Paid for each passage of this source that an answer verifiably cites. */
+        centsPerCitation: z.number().int().min(0).max(500),
+      })
+      .optional(),
+    /**
      * When the contributor is owed money: whenever their source is part of an
      * approved build, or only when the final output actually cites it.
      */
