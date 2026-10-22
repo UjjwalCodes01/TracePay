@@ -43,7 +43,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.5",
     "@types/pg": "^8.11.0",
     "@types/supertest": "^6.0.0",
     "@vitest/coverage-v8": "5.0.5",
