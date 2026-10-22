@@ -135,7 +135,7 @@ function McpCard() {
         <li>
           Download TracePay from{' '}
           <a href={REPO_URL} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">GitHub</a>{' '}
-          (<code className="rounded bg-slate-100 px-1">git clone {REPO_URL}</code>, needs Node 24) and run <code className="rounded bg-slate-100 px-1">npm install</code> in that folder.
+          (<code className="break-all rounded bg-slate-100 px-1">git clone {REPO_URL}</code>, needs Node 24) and run <code className="rounded bg-slate-100 px-1">npm install</code> in that folder.
         </li>
         <li>Add this to your assistant’s MCP settings (in Claude Desktop: Settings → Developer → Edit config). Put in your key, and the folder you cloned TracePay into:</li>
       </ol>
@@ -152,7 +152,7 @@ function McpCard() {
       </div>
       {list.length > 0 && (
         <p className="mt-3 text-sm text-muted">
-          <code className="rounded bg-slate-100 px-1">TRACEPAY_LIBRARY_ID</code> picks the library that answers questions:{' '}
+          <code className="break-all rounded bg-slate-100 px-1">TRACEPAY_LIBRARY_ID</code> picks the library that answers questions:{' '}
           {list.length === 1 ? (
             <>
               <strong className="text-ink">{list[0]!.name}</strong> (its id is filled in above).
@@ -162,7 +162,7 @@ function McpCard() {
               {list.map((l, i) => (
                 <span key={l.id}>
                   {i > 0 && (i === list.length - 1 ? ' or ' : ', ')}
-                  <strong className="text-ink">{l.name}</strong> (<code className="mono">{l.id}</code>)
+                  <strong className="text-ink">{l.name}</strong> (<code className="mono break-all">{l.id}</code>)
                 </span>
               ))}
               .
