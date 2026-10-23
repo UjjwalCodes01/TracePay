@@ -27,7 +27,11 @@ import { SettlementStateError, STALE_SUBMISSION_MS } from '../settlements/settle
 
 
 /** Smallest total worth one payout (PayPal charges a fee per payout). */
-export const royaltyMinimumCents = () => answersEnv().ROYALTY_PAYOUT_MIN_CENTS ?? (process.env.DEMO_MODE === 'true' ? 1 : 100);
+/**
+ * PayPal's Payouts API charges $0.25 per payout (US), so a contributor is paid once they're owed at least
+ * $10 (2.5% in fees) rather than a few cents at a time. The demo pays from 1¢ so visitors see it happen.
+ */
+export const royaltyMinimumCents = () => answersEnv().ROYALTY_PAYOUT_MIN_CENTS ?? (process.env.DEMO_MODE === 'true' ? 1 : 1000);
 
 /**
  * Credits become payable only after this many days, so a buyer's chargeback or

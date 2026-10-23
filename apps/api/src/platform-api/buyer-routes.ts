@@ -7,7 +7,7 @@ import type { CitationReport } from '../modules/generation/citations';
 import type { ArtifactContent } from '../modules/generation/generation.service';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
 import { askLibrary, getAnswer, listLibraries } from '../modules/answers/answers.service';
-import { captureTopUp, creditSummary, isDemoBuyer, MAX_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
+import { captureTopUp, creditSummary, isDemoBuyer, MAX_TOP_UP_CENTS, MIN_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
 import { checkSaleRights } from '../modules/sales/rights.service';
 import { cursorWhere, defineRoute, ListQuery, listOf, named, pageOrder, toPage, type AnyRoute } from './framework';
 
@@ -265,7 +265,7 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
     defineRoute({
       method: 'post', path: '/credit_top_ups', operationId: 'startCreditTopUp', roles: ['buyer'], middleware: [quotas.checkout()], tag: ANSWERS, summary: 'Buy answer credit with PayPal',
       description: 'Returns an `approve_url` for the buyer. After they approve at PayPal, call `POST /credit_top_ups/{id}/capture`.',
-      body: z.object({ amount_cents: z.number().int().min(100).max(MAX_TOP_UP_CENTS) }),
+      body: z.object({ amount_cents: z.number().int().min(MIN_TOP_UP_CENTS).max(MAX_TOP_UP_CENTS) }),
       response: CreditTopUp, status: 201,
       handler: async ({ user, body }) => topUpOut((await startTopUp(db, paypal(), { ownerId: user.id, amountCents: body.amount_cents, appBaseUrl: config.appBaseUrl })).topUpId),
     }),

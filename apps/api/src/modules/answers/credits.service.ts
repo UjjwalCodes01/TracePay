@@ -15,7 +15,12 @@ import { DEMO_USERS } from '../demo/world';
  * server-verified PayPal capture; the balance is a ledger (entries sum to it).
  */
 
-export const TOP_UP_AMOUNTS_CENTS = [500, 1000, 2000] as const;
+/**
+ * PayPal takes 3.49% + $0.49 per checkout (US): 13% of a $5 top-up, 6% of $20. So top-ups start at
+ * $5, the app suggests $10–$50, and answers then spend that credit cent by cent with no PayPal fee.
+ */
+export const TOP_UP_AMOUNTS_CENTS = [1000, 2000, 5000] as const;
+export const MIN_TOP_UP_CENTS = 500;
 export const MAX_TOP_UP_CENTS = 10_000;
 
 export class CreditError extends Error {

@@ -489,7 +489,7 @@ function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Cred
   const qc = useQueryClient();
   const { config } = useSession();
   const [params, setParams] = useSearchParams();
-  const [amount, setAmount] = useState(500);
+  const [amount, setAmount] = useState(2000);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<ReactNode>(null);
@@ -557,7 +557,7 @@ function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Cred
           <fieldset className="mt-4" disabled={paying}>
             <legend className="mb-1.5 text-xs font-medium text-muted">Choose how much to add, then pay with PayPal</legend>
             <div className="flex gap-2">
-              {[500, 1000, 2000].map((c) => (
+              {[1000, 2000, 5000].map((c) => (
                 <button
                   key={c}
                   type="button"

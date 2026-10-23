@@ -177,7 +177,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
     const fixture = new FixtureAnswerWriter();
     writer = { name: 'slow', answer: async (input) => (await new Promise((r) => setTimeout(r, 300)), fixture.answer(input)) };
     const a = app();
-    await topUp(a, 100);
+    // A small balance (below the smallest top-up), so the concurrent answers compete for it.
+    const account0 = await db().creditAccount.create({ data: { ownerId: 'user_buyer', balanceCents: 100 } });
+    await db().creditEntry.create({ data: { accountId: account0.id, kind: 'top_up', amountCents: 100 } });
     const results = await Promise.all(Array.from({ length: 10 }, () => ask(a, { maxPriceCents: 40 })));
     expect(results.every((r) => r.status === 201 || r.status === 402)).toBe(true);
     expect(results.filter((r) => r.status === 402).length).toBeGreaterThan(0);

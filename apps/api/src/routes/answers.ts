@@ -4,7 +4,7 @@ import type { AppDeps } from '../app';
 import { currentUser, requireRole } from '../http/auth';
 import { quotas } from '../http/limits';
 import { askLibrary, getAnswer, listAnswers, listLibraries } from '../modules/answers/answers.service';
-import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
+import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, MIN_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
 import { runRedTeam } from '../modules/answers/integrity';
 import { latestRedTeam } from '../modules/answers/red-team';
 import { contributorAnswerEarnings, refreshRoyaltyPayout, royaltySummary, sendRoyaltyPayout, submitRoyaltyPayout } from '../modules/answers/royalties.service';
@@ -35,7 +35,7 @@ export function answerRoutes({ db, paypal, signingKeys, answerWriter, config }: 
   });
 
   r.post('/credits/top-ups', requireRole('buyer'), quotas.checkout(), async (req, res) => {
-    const { amountCents } = z.object({ amountCents: z.number().int().min(100).max(MAX_TOP_UP_CENTS) }).parse(req.body);
+    const { amountCents } = z.object({ amountCents: z.number().int().min(MIN_TOP_UP_CENTS).max(MAX_TOP_UP_CENTS) }).parse(req.body);
     res.status(201).json(await startTopUp(db, paypal(), { ownerId: currentUser(req).id, amountCents, appBaseUrl: config.appBaseUrl }));
   });
 

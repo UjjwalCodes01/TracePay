@@ -191,6 +191,20 @@ flowchart LR
 
 ---
 
+## Money: fees, and why PayPal is used this way
+
+PayPal's US rates (Oct 2026): checkout **3.49% + $0.49**; Payouts API **$0.25 per payout**; micropayments pricing 4.99% + $0.09.
+
+| Flow | What it costs | How TracePay keeps it sane |
+|---|---|---|
+| A $20 report sale | $1.19 PayPal fee, paid by the publisher (shown on *Pay contributors*, read from PayPal's capture) | Contributors' shares are worked out from what PayPal actually confirmed |
+| Answer credit | A $5 top-up loses 13% to the fixed fee; $20 loses 6%; $50 loses 4.5% | Top-ups start at $5 and the app suggests $10–$50; each answer then spends credit cent by cent with **no** PayPal fee. A production library with many tiny top-ups would use PayPal's micropayments pricing |
+| Royalties to contributors | $0.25 per payout | Earnings accrue and are paid in one PayPal Payouts batch once a contributor is owed **$10** (2.5% in fees); `ROYALTY_PAYOUT_MIN_CENTS` sets it. The demo pays from 1¢ so visitors can watch it happen |
+
+**Why Payouts, not a split at checkout.** Today the publisher is the merchant: the buyer pays them, and they pay contributors with PayPal Payouts after approving the split. That works with a standard PayPal business account, and it lets a refund or chargeback claw back unpaid shares before anyone is paid. For a marketplace at scale, the production path is **PayPal Multiparty** (PayPal Complete Payments for platforms): contributors onboard as sellers, and each sale is split at capture with platform fees, so TracePay never holds anyone's money. The license check, the frozen terms and the receipts stay exactly as they are; only the last step changes.
+
+**Holding balances.** Prepaid answer credit is money held for future use and paid on to third parties. In production that needs the right structure (PayPal Multiparty with the library as merchant of record, or a licensed partner holding the funds) and, depending on the jurisdiction, money-transmission licensing. The hackathon build runs only on the PayPal sandbox.
+
 ## Real vs. simulated
 
 | Real | Simulated / demo-only |

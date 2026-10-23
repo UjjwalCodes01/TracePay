@@ -380,7 +380,7 @@ server.registerTool(
   {
     title: 'Buy answer credit with PayPal',
     description: 'Creates a PayPal checkout for answer credit and returns a link. YOU CANNOT PAY: show the link to the user, then call complete_top_up once they have approved.',
-    inputSchema: { amount_cents: z.number().int().min(100).max(10_000).describe('e.g. 500 for $5.00') },
+    inputSchema: { amount_cents: z.number().int().min(500).max(10_000).describe('At least 500 ($5.00); e.g. 2000 for $20.00 — larger top-ups lose less to PayPal fees') },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
   },
   async ({ amount_cents }) => {
