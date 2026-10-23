@@ -10,6 +10,8 @@ An AI can assemble a paid report out of a dozen licensed sources in seconds. Not
 
 **Live demo:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — PayPal sandbox, no sign-up needed. You start as the demo publisher; switch to *Buyer* or *Contributor* from the **Demo role** menu at the top. The API runs on free hosting, so the very first visit can take up to a minute to wake it.
 
+**PayPal sandbox buyer** (test money only): `tp-buyer-8fjk@personal.example.com` / `2I2oZGc!` — the app also shows it next to the PayPal buttons. If it ever stops working, choose *Debit or Credit Card* and use a [PayPal sandbox test card](https://developer.paypal.com/tools/sandbox/card-testing/).
+
 ### Judge it in 3 minutes
 
 1. **Publisher → Create a report → Start the assistant.** The license check blocks one source (licensed for internal research only); the AI assistant finds a compatible replacement and asks you to approve it. Approve → the report is written, every claim citing its passage.

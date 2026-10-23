@@ -79,8 +79,10 @@ services:
         sync: false
       - key: PAYPAL_WEBHOOK_ID
         sync: false
+      # Shown next to the PayPal buttons in demo mode, so visitors can finish a test payment.
+      # A PayPal *sandbox* account: test money only, nothing real can be paid or received.
       - key: PAYPAL_SANDBOX_BUYER_HINT
-        sync: false # demo mode only: sandbox buyer login shown on the Store page
+        value: "sign in to PayPal as tp-buyer-8fjk@personal.example.com, password 2I2oZGc! (sandbox: test money only). Or pick “Debit or Credit Card” and use a PayPal sandbox test card."
       - key: GEMINI_API_KEY
         sync: false # from aistudio.google.com/apikey; or use the Vertex AI keys below
       # Gemini on Vertex AI. Counted as configured only once GOOGLE_SERVICE_ACCOUNT_JSON is set
