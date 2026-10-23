@@ -1,0 +1,22 @@
+# Keeps the free Render API awake while the hackathon is being judged, so a judge's first click
+# doesn't wait ~45 s for a cold start. /api/health never touches the database (Neon still sleeps).
+# A backup only: GitHub's schedule can run several minutes late, so an uptime monitor (or Render's
+# Starter plan) is the dependable option. Stops by itself after judging ends.
+name: Keep the demo awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping the API while judging is open
+        run: |
+          if [ "$(date -u +%Y%m%d)" -gt 20261231 ]; then echo "Judging is over; nothing to do."; exit 0; fi
+          curl -fsS --max-time 120 --retry 2 --retry-delay 20 https://tracepay-api.onrender.com/api/health

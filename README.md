@@ -17,7 +17,7 @@ AI is built on people's work, and licenses are mostly ignored: a "non-commercial
 2. **Publisher → Answer royalties → Pay … with PayPal.** Contributors' earnings go out in one PayPal Payouts batch; statuses are read back from PayPal.
 3. **Contributor → My earnings.** What each answer and each sale paid them, under which terms.
 
-Also in the box (the dashboard's guided tour walks through it): the license check blocking a report and the AI research assistant fixing it, a report store with PayPal checkout, a **shopping assistant that pays on its own within a spending mandate** (PayPal Vault), an MCP server for outside AI agents, and a platform API with signed webhooks.
+Also in the box (the dashboard's guided tour walks through it): **Gemini drafting exact license terms from a messy contract** (quoting the sentence behind each term; nothing binds until both sides agree), the license check blocking a report and the AI research assistant fixing it, a report store with PayPal checkout, a **shopping assistant that pays on its own within a spending mandate** (PayPal Vault), an MCP server for outside AI agents, and a platform API with signed webhooks.
 
 > Built for the *Build What's Next with PayPal and AI* hackathon. Everything runs on the **PayPal sandbox**; the demo library is fictional.
 

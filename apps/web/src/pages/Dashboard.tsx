@@ -278,6 +278,18 @@ function GuidedTour({ d }: { d: Dashboard }) {
     { title: 'Check the signed receipt', text: 'One record from sources to license check to PayPal payment to payouts, with a signature anyone can verify.', done: false, go: report ? () => navigate(`/reports/${report.id}/receipt`) : null, hint: 'Create a report first.' },
     { title: 'Ask a question that pays its sources', text: 'An AI answer pays each contributor for the passages it really used — and the live red team shows it can’t be gamed.', done: false, go: buyer ? async () => { await switchUser(buyer.id); navigate('/ask'); } : null },
     { title: 'See a contributor’s earnings', text: 'What each sale and each AI answer paid them, and why.', done: false, go: contributor ? async () => { await switchUser(contributor.id); navigate('/earnings'); } : null },
+    {
+      title: 'Watch AI read a messy contract',
+      text: 'Gemini turns a real-world license agreement into exact terms, quoting the sentence behind each one — nothing binds until both sides agree.',
+      done: false,
+      go:
+        contributor && /user_okafor$/.test(contributor.id)
+          ? async () => {
+              await switchUser(contributor.id);
+              navigate(`/sources/${contributor.id.replace(/user_okafor$/, 'asset_okafor_notes')}/offer?sample=1`);
+            }
+          : null,
+    },
   ];
   return (
     <section aria-labelledby="tour" className="rounded-2xl border border-line bg-white p-5">

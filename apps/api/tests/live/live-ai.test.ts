@@ -159,4 +159,23 @@ describe.runIf(process.env.LIVE_AI === '1' && process.env.TEST_DATABASE_URL)('ev
     for (const [i, v] of got.entries()) process.stderr.write(`${v.instructs ? 'WITHHELD' : 'shown   '} ${items[i]![0].slice(0, 70)} — ${v.reason}\n`);
     expect(got.map((v) => v.instructs)).toEqual(items.map((x) => x[1]));
   }, 120_000);
+
+  it('drafts exact terms from a messy, real-world-style contract (the guided tour’s sample)', async () => {
+    const text = "CONTENT LICENSE AGREEMENT \u2014 Schedule B (Field Notes)\n\n1. Grant. Subject to the terms herein, Licensor hereby grants Licensee a non-exclusive, non-transferable licence to use the Field Notes (the \"Work\") in the preparation of research reports and similar derivative works, which Licensee may sell or otherwise commercially distribute in any territory.\n\n2. Restrictions. Licensee shall not resell, sublicense or redistribute the Work, or any substantial verbatim portion thereof, in raw or unprocessed form.\n\n3. Credit. Every derivative work shall carry the following acknowledgement in a reasonably prominent place: \"Field research by Mara Okafor, independent analyst\".\n\n4. Consideration. In consideration of the rights granted, Licensee shall pay Licensor fifteen per cent (15%) of the gross receipts of each derivative work that cites or quotes the Work; no fee is due on works that merely consulted it.\n\n5. Term. This Agreement commences on 1 January 2026 and, unless terminated earlier in accordance with clause 9, shall remain in force until the thirty-first day of December 2027.\n\nSchedule B, para (iv): Automated question-answering services operated by Licensee may cite passages of the Work, at a rate of two US cents (USD 0.02) per passage cited in an answer delivered to an end user.";
+    const r = await extractTerms(text, { useModel: true, today: '2026-10-24' });
+    expect(r.source).toBe('vertex');
+    expect(r.terms).toMatchObject({
+      commercialUse: true,
+      derivativeReports: 'allowed_with_attribution',
+      attributionText: 'Field research by Mara Okafor, independent analyst',
+      rawRedistribution: false,
+      territories: null,
+      validFrom: '2026-01-01',
+      validUntil: '2027-12-31',
+      economics: { kind: 'percent_of_gross', bps: 1500 },
+      payableOn: 'cited_in_output',
+      aiAnswers: { allowed: true, centsPerCitation: 2 },
+    });
+    process.stderr.write(`drafted with ${r.evidence.length} quoted terms; warnings: ${r.warnings.join(' | ') || 'none'}\n`);
+  }, 120_000);
 });

@@ -379,19 +379,41 @@ export function NewVersionPage() {
   );
 }
 
+/** A contract written the way real ones are: numbered clauses, legal phrasing, terms scattered across a schedule. */
+const SAMPLE_LICENSE = `CONTENT LICENSE AGREEMENT — Schedule B (Field Notes)
+
+1. Grant. Subject to the terms herein, Licensor hereby grants Licensee a non-exclusive, non-transferable licence to use the Field Notes (the "Work") in the preparation of research reports and similar derivative works, which Licensee may sell or otherwise commercially distribute in any territory.
+
+2. Restrictions. Licensee shall not resell, sublicense or redistribute the Work, or any substantial verbatim portion thereof, in raw or unprocessed form.
+
+3. Credit. Every derivative work shall carry the following acknowledgement in a reasonably prominent place: "Field research by Mara Okafor, independent analyst".
+
+4. Consideration. In consideration of the rights granted, Licensee shall pay Licensor fifteen per cent (15%) of the gross receipts of each derivative work that cites or quotes the Work; no fee is due on works that merely consulted it.
+
+5. Term. This Agreement commences on 1 January 2026 and, unless terminated earlier in accordance with clause 9, shall remain in force until the thirty-first day of December 2027.
+
+Schedule B, para (iv): Automated question-answering services operated by Licensee may cite passages of the Work, at a rate of two US cents (USD 0.02) per passage cited in an answer delivered to an end user.`;
+
 export function OfferLicensePage() {
   const { id } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { config } = useSession();
+  const { config, users } = useSession();
   const today = new Date().toISOString().slice(0, 10);
   const assets = useQuery({ queryKey: ['my-assets'], queryFn: () => api<{ assets: MyAsset[] }>('/contributor/assets') });
   const asset = assets.data?.assets.find((a) => a.id === id);
+  // In the demo: this visitor's own publisher (each private demo has its own address).
+  const demoPublisherEmail = config?.demoMode ? users.find((u) => u.role === 'publisher')?.email : undefined;
+  // ?sample=1: start from a realistic, messy contract (the guided tour shows AI drafting terms from it).
+  const sample = params.get('sample') === '1';
 
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(sample ? 2 : 1);
   const [email, setEmail] = useState(params.get('to') ?? '');
-  const [text, setText] = useState('');
+  const [text, setText] = useState(sample ? SAMPLE_LICENSE : '');
+  useEffect(() => {
+    if (sample && !email && demoPublisherEmail) setEmail(demoPublisherEmail);
+  }, [sample, email, demoPublisherEmail]);
   const [terms, setTerms] = useState<LicenseTerms>(DEFAULT_TERMS(today));
   const [draft, setDraft] = useState<Extraction | null>(null);
   const [seededFrom, setSeededFrom] = useState<string | null>(null);
@@ -453,7 +475,7 @@ export function OfferLicensePage() {
           <label className="block space-y-1.5 text-sm">
             <span className="font-medium">Publisher’s account email</span>
             <input className={`${input} h-10`} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="studio@example.com" />
-            {config?.demoMode && <span className="text-xs text-muted">Demo publisher: studio@atlas-research.example</span>}
+            {demoPublisherEmail && <span className="text-xs text-muted">Demo publisher: {demoPublisherEmail}</span>}
           </label>
           <Button className="mt-4" disabled={!/^\S+@\S+\.\S+$/.test(email)} onClick={() => setStep(2)}>
             Continue
