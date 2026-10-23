@@ -58,6 +58,25 @@ export async function withModelRetry<T>(call: () => Promise<T>, delays: readonly
   }
 }
 
+/**
+ * Opens the connections to Google (TLS, service-account token, the model endpoints) right after
+ * the server starts, so the first visitor after a cold start isn't the one who pays ~30 s for it.
+ * Two tiny calls; failures are only logged.
+ */
+export async function warmUpAi(embeddingModel: string): Promise<number> {
+  const started = Date.now();
+  const { ai, model } = vertex();
+  await Promise.all([
+    ai.models.embedContent({ model: embeddingModel, contents: ['warm up'], config: { taskType: 'SEMANTIC_SIMILARITY' } }),
+    ai.models.generateContent({
+      model,
+      contents: 'Reply with OK.',
+      config: { maxOutputTokens: 64, httpOptions: { timeout: AI_TIMEOUT_MS }, ...(/^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } } : {}) },
+    }),
+  ]);
+  return Date.now() - started;
+}
+
 /** Every model call gives up after this long. */
 export const AI_TIMEOUT_MS = 60_000;
 /** Generous (thinking models spend output tokens on reasoning) but bounded. */

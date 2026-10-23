@@ -1,3 +1,5 @@
+import { warmUpAi } from './integrations/ai/vertex';
+import { EMBEDDING_MODEL } from './modules/answers/support';
 import { createApp } from './app';
 import { aiReady, answersEnv, paypalEnv, productionConfigProblems, serverEnv, signingEnv } from './config/env';
 import { db } from './db';
@@ -103,6 +105,13 @@ const server = app.listen(env.PORT, () => {
     { port: env.PORT, generation: pickWriter().name, agent: pickPlanner().name, paypal: paypalConfigured ? 'sandbox' : 'not configured', demoMode: env.DEMO_MODE },
     'TracePay API listening',
   );
+  // The first visitor after a cold start shouldn't wait for Google's connections to open.
+  if (aiReady()) {
+    warmUpAi(EMBEDDING_MODEL).then(
+      (ms) => logger.info({ ms }, 'AI connections warmed up'),
+      (err) => logger.warn({ err: (err as Error).message }, 'AI warm-up failed'),
+    );
+  }
 });
 
 // Recover work interrupted by a previous restart, then keep sweeping periodically.
