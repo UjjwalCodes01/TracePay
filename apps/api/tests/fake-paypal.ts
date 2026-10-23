@@ -1,7 +1,7 @@
 import { centsToDecimal } from '@tracepay/shared';
 import { PayPalApiError } from '../src/integrations/paypal/client';
 import type { PayPalGateway } from '../src/integrations/paypal/gateway';
-import type { Capture, CreateOrderRequest, Order, PayoutBatchStatus, PayoutItemRequest, PayoutItemState } from '../src/integrations/paypal/types';
+import type { Capture, CreateOrderRequest, Order, PaymentToken, PayoutBatchStatus, PayoutItemRequest, PayoutItemState, SetupToken, SetupTokenRequest } from '../src/integrations/paypal/types';
 
 /**
  * In-memory PayPal sandbox stand-in that enforces the behaviours TracePay
@@ -31,7 +31,65 @@ export class FakePayPal implements PayPalGateway {
     const id = `ORDER-${++this.seq}`;
     this.orders.set(id, { req, status: 'PAYER_ACTION_REQUIRED' });
     this.orderByRequestId.set(requestId, id);
+    // A saved wallet is charged at once, without the buyer: the order comes back COMPLETED.
+    const source = req.payment_source?.paypal;
+    if (source && 'vault_id' in source) {
+      if (!this.vaultEnabled) throw new PayPalApiError(403, 'orders.create', { name: 'NOT_AUTHORIZED', message: 'Authorization failed due to insufficient permissions.' }, 'dbg');
+      const token = this.paymentTokens.get(source.vault_id);
+      if (!token || this.declineVaultCharges) {
+        throw new PayPalApiError(422, 'orders.create', { name: 'UNPROCESSABLE_ENTITY', details: [{ issue: token ? 'INSTRUMENT_DECLINED' : 'INVALID_RESOURCE_ID' }] }, 'dbg');
+      }
+      this.approve(id);
+      const charged = await this.captureOrder(id, `capture-${requestId}`);
+      if (this.loseNextVaultReply) {
+        this.loseNextVaultReply = false;
+        throw new TypeError('fetch failed'); // charged at PayPal, reply lost on the way back
+      }
+      return charged;
+    }
     return this.view(id);
+  }
+
+  // ---- vault v3 ------------------------------------------------------------------------
+
+  /** Whether the app has PayPal's Vault feature (off: every vault call is NOT_AUTHORIZED). */
+  vaultEnabled = true;
+  /** Make the next charges of a saved wallet fail (e.g. the buyer's funding source declined). */
+  declineVaultCharges = false;
+  /** Charge the next saved-wallet order, then lose PayPal's reply (a network failure). */
+  loseNextVaultReply = false;
+  private setupTokens = new Map<string, { status: SetupToken['status']; req: SetupTokenRequest }>();
+  paymentTokens = new Map<string, { email: string; customerId: string }>();
+
+  private vaultGuard(op: string) {
+    if (!this.vaultEnabled) throw new PayPalApiError(403, op, { name: 'NOT_AUTHORIZED', message: 'Authorization failed due to insufficient permissions.' }, 'dbg');
+  }
+
+  async createSetupToken(req: SetupTokenRequest, _requestId: string): Promise<SetupToken> {
+    this.vaultGuard('vault.setup-tokens.create');
+    const id = `SETUP-${++this.seq}`;
+    this.setupTokens.set(id, { status: 'PAYER_ACTION_REQUIRED', req });
+    return { id, status: 'PAYER_ACTION_REQUIRED', customer: { id: 'CUST-1' }, links: [{ rel: 'approve', href: `https://www.sandbox.paypal.com/agreements/approve?approval_session_id=${id}`, method: 'GET' }] };
+  }
+
+  /** What the buyer does at PayPal: approves saving their wallet. */
+  approveSetupToken(id: string) {
+    this.setupTokens.get(id)!.status = 'APPROVED';
+  }
+
+  async createPaymentToken(setupTokenId: string, _requestId: string): Promise<PaymentToken> {
+    this.vaultGuard('vault.payment-tokens.create');
+    const t = this.setupTokens.get(setupTokenId);
+    if (!t || t.status !== 'APPROVED') throw new PayPalApiError(422, 'vault.payment-tokens.create', { name: 'UNPROCESSABLE_ENTITY', details: [{ issue: 'SETUP_TOKEN_NOT_APPROVED' }] }, 'dbg');
+    t.status = 'VAULTED';
+    const id = `PT-${setupTokenId}`;
+    this.paymentTokens.set(id, { email: 'buyer@personal.example.com', customerId: 'CUST-1' });
+    return { id, customer: { id: 'CUST-1' }, payment_source: { paypal: { email_address: 'buyer@personal.example.com', payer_id: 'PAYER1' } } };
+  }
+
+  async deletePaymentToken(paymentTokenId: string): Promise<void> {
+    this.vaultGuard('vault.payment-tokens.delete');
+    this.paymentTokens.delete(paymentTokenId);
   }
 
   /** What the buyer does in the PayPal popup. */

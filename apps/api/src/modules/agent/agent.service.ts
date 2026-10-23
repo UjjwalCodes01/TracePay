@@ -1,3 +1,5 @@
+import type { PayPalGateway } from '../../integrations/paypal/gateway';
+import { payWithMandate } from './mandates.service';
 import { formatMoney, type BuildIntent } from '@tracepay/shared';
 import { Prisma } from '../../generated/prisma/client';
 import type { Db, Tx } from '../../db';
@@ -138,14 +140,30 @@ async function insertRun(tx: Tx, planner: AgentPlanner, input: StartRunInput) {
  * calls through guarded executors, record every step, and stop on a final
  * answer, a pause for publisher approval, an error or the turn limit.
  */
-export async function runAgent(db: Db, planner: AgentPlanner, writer: ReportWriter, runId: string, opts: { asOf?: string } = {}) {
+export async function runAgent(
+  db: Db,
+  planner: AgentPlanner,
+  writer: ReportWriter,
+  runId: string,
+  opts: { asOf?: string; /** Lets a buyer's assistant pay within their spending mandate. */ payments?: { paypal: PayPalGateway; appBaseUrl: string; allowRepeat?: boolean } } = {},
+) {
   const run = await db.agentRun.findUniqueOrThrow({ where: { id: runId } });
   if (run.status !== 'running') throw new AgentStateError(`Run is ${run.status}.`);
 
   const history = run.transcript as unknown as AgentMessage[];
   let execute: (name: string, args: Record<string, unknown>) => Promise<{ kind: 'result' | 'pause'; response: Record<string, unknown>; approval?: PendingApproval | PurchaseApproval }>;
   if (run.kind === 'buyer') {
-    const ctx: ShopperContext = { db, runId, buyerId: run.publisherId, policy: run.policy as unknown as ShopperPolicy, purchases: purchasesFrom(history) };
+    const payments = opts.payments;
+    const ctx: ShopperContext = {
+      db,
+      runId,
+      buyerId: run.publisherId,
+      policy: run.policy as unknown as ShopperPolicy,
+      purchases: purchasesFrom(history),
+      ...(payments
+        ? { payWithMandate: (artifactId: string) => payWithMandate(db, payments.paypal, { buyerId: run.publisherId, artifactId, appBaseUrl: payments.appBaseUrl, allowRepeat: payments.allowRepeat }) }
+        : {}),
+    };
     execute = (name, args) => executeShopperTool(ctx, name, args);
   } else {
     const ctx: ToolContext = {

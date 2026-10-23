@@ -45,9 +45,10 @@ model User {
   purchases    Sale[]
 
   creditAccount   CreditAccount?
-  libraryAnswers  Answer[]         @relation("library")
-  citationCredits CitationCredit[] @relation("creditContributor")
+  libraryAnswers  Answer[]          @relation("library")
+  citationCredits CitationCredit[]  @relation("creditContributor")
   royaltyPayouts  RoyaltyPayout[]
+  mandates        SpendingMandate[]
 }
 
 /// Server-side session. The cookie holds a random token; only its SHA-256 is stored.
@@ -420,23 +421,26 @@ enum SaleStatus {
 }
 
 model Sale {
-  id             String     @id @default(cuid())
+  id             String           @id @default(cuid())
   artifactId     String
-  artifact       Artifact   @relation(fields: [artifactId], references: [id])
+  artifact       Artifact         @relation(fields: [artifactId], references: [id])
   buyerId        String?
-  buyer          User?      @relation(fields: [buyerId], references: [id])
+  buyer          User?            @relation(fields: [buyerId], references: [id])
   amountCents    Int
-  currency       String     @default("USD")
-  status         SaleStatus @default(pending_payment)
+  currency       String           @default("USD")
+  status         SaleStatus       @default(pending_payment)
   /// Rights re-checked when the buyer started checkout (licenses can be revoked or expire after a build).
   rightsCheck    Json?
   /// The license terms in force at the moment of sale; the settlement applies exactly these.
   termsSnapshot  Json?
   snapshotHash   String?
   /// The buyer already owned the report and deliberately bought it again (a hosted demo's shared buyer).
-  repeatPurchase Boolean    @default(false)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  repeatPurchase Boolean          @default(false)
+  /// Paid by the buyer's shopping assistant with their saved PayPal, within this mandate.
+  mandateId      String?
+  mandate        SpendingMandate? @relation(fields: [mandateId], references: [id])
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   payment    PayPalPayment?
   settlement SettlementRun?
@@ -921,4 +925,37 @@ model DemoWorld {
   lastSeenAt DateTime @default(now())
 
   @@index([lastSeenAt])
+}
+
+enum MandateStatus {
+  pending
+  active
+  revoked
+}
+
+/// A buyer's standing permission for their shopping assistant to pay on its own, with PayPal saved
+/// in PayPal's vault: at most `maxPerPurchaseCents` a purchase and `maxTotalCents` in all, until
+/// `expiresAt`. Enforced in code before every charge; the buyer can revoke it at any time.
+model SpendingMandate {
+  id                  String        @id @default(cuid())
+  buyerId             String
+  buyer               User          @relation(fields: [buyerId], references: [id])
+  status              MandateStatus @default(pending)
+  /// PayPal's setup token while the buyer approves at PayPal.
+  setupTokenId        String?       @unique
+  /// PayPal's payment token (vault id) once approved: what charges use.
+  vaultId             String?       @unique
+  paypalCustomerId    String?
+  payerEmail          String?
+  maxPerPurchaseCents Int
+  maxTotalCents       Int
+  /// Reserved before each charge, released if it fails: concurrent purchases can't overspend.
+  spentCents          Int           @default(0)
+  expiresAt           DateTime
+  createdAt           DateTime      @default(now())
+  activatedAt         DateTime?
+  revokedAt           DateTime?
+  sales               Sale[]
+
+  @@index([buyerId, status])
 }

@@ -20,16 +20,53 @@ export interface CreateOrderRequest {
     amount: Money;
   }>;
   payment_source?: {
+    paypal:
+      | {
+          experience_context: {
+            brand_name?: string;
+            shipping_preference?: 'NO_SHIPPING' | 'GET_FROM_FILE' | 'SET_PROVIDED_ADDRESS';
+            user_action?: 'PAY_NOW' | 'CONTINUE';
+            return_url?: string;
+            cancel_url?: string;
+          };
+        }
+      /** A PayPal wallet the buyer saved in PayPal's vault: charged without the buyer present. */
+      | { vault_id: string };
+  };
+}
+
+/** Vault v3: saving a buyer's PayPal wallet for later charges (no purchase now). */
+export interface SetupTokenRequest {
+  payment_source: {
     paypal: {
+      description: string;
+      usage_pattern: 'IMMEDIATE' | 'DEFERRED' | 'RECURRING_PREPAID' | 'RECURRING_POSTPAID' | 'THRESHOLD_PREPAID' | 'THRESHOLD_POSTPAID' | 'SUBSCRIPTION_PREPAID' | 'SUBSCRIPTION_POSTPAID' | 'UNSCHEDULED_PREPAID' | 'UNSCHEDULED_POSTPAID' | 'INSTALLMENT_PREPAID' | 'INSTALLMENT_POSTPAID';
+      usage_type: 'MERCHANT';
+      customer_type: 'CONSUMER';
+      permit_multiple_payment_tokens: boolean;
       experience_context: {
         brand_name?: string;
+        locale?: string;
         shipping_preference?: 'NO_SHIPPING' | 'GET_FROM_FILE' | 'SET_PROVIDED_ADDRESS';
-        user_action?: 'PAY_NOW' | 'CONTINUE';
-        return_url?: string;
-        cancel_url?: string;
+        payment_method_preference?: 'IMMEDIATE_PAYMENT_REQUIRED' | 'UNRESTRICTED';
+        return_url: string;
+        cancel_url: string;
       };
     };
   };
+}
+
+export interface SetupToken {
+  id: string;
+  status: 'CREATED' | 'PAYER_ACTION_REQUIRED' | 'APPROVED' | 'VAULTED' | 'TOKENIZED';
+  customer?: { id: string };
+  links: Link[];
+}
+
+export interface PaymentToken {
+  id: string;
+  customer?: { id: string };
+  payment_source?: { paypal?: { email_address?: string; payer_id?: string } };
 }
 
 export type OrderStatus = 'CREATED' | 'SAVED' | 'APPROVED' | 'VOIDED' | 'COMPLETED' | 'PAYER_ACTION_REQUIRED';

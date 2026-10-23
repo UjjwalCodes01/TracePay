@@ -1,3 +1,4 @@
+import type { PayPalGateway } from '../../integrations/paypal/gateway';
 import type { Db } from '../../db';
 import { appendAudit, lockAuditChain } from '../audit/audit-log';
 import { withdrawArtifact } from '../sales/rights.service';
@@ -70,7 +71,7 @@ async function moneyStillOwed(db: Db, userId: string) {
   };
 }
 
-export async function deleteAccount(db: Db, userId: string) {
+export async function deleteAccount(db: Db, userId: string, paypal?: Pick<PayPalGateway, 'deletePaymentToken'>) {
   const owed = await moneyStillOwed(db, userId);
   if (owed.creditCents > 0) throw new AccountError(`You still have answer credit (${(owed.creditCents / 100).toFixed(2)} USD). Use it, or ask for a refund, before deleting your account.`, 'state');
   if (owed.owedToYouCents > 0) throw new AccountError(`You are still owed ${(owed.owedToYouCents / 100).toFixed(2)} USD in royalties. Deleting now would forfeit it; wait until it has been paid.`, 'state');
@@ -93,10 +94,17 @@ export async function deleteAccount(db: Db, userId: string) {
     const account = await tx.creditAccount.findUnique({ where: { ownerId: userId } });
     if (account) await tx.answer.updateMany({ where: { accountId: account.id }, data: { question: '[deleted]' } });
     await tx.payPalPayment.updateMany({ where: { sale: { buyerId: userId } }, data: { payerEmail: null } });
+    // Their assistant can't pay any more; the saved wallet is removed from PayPal below.
+    await tx.spendingMandate.updateMany({ where: { buyerId: userId, status: { in: ['active', 'pending'] } }, data: { status: 'revoked', revokedAt: new Date() } });
+    await tx.spendingMandate.updateMany({ where: { buyerId: userId }, data: { payerEmail: null } });
     await tx.user.update({
       where: { id: userId },
       data: { email: `deleted-${userId}@deleted.tracepay.invalid`, name: 'Deleted account', paypalEmail: null, passwordHash: null },
     });
     await appendAudit(tx, { entityType: 'user', entityId: userId, eventType: 'account.deleted', payload: { role: user.role } });
   });
+  if (paypal) {
+    const saved = await db.spendingMandate.findMany({ where: { buyerId: userId, vaultId: { not: null } }, select: { vaultId: true } });
+    for (const m of saved) await paypal.deletePaymentToken(m.vaultId!).catch(() => undefined);
+  }
 }

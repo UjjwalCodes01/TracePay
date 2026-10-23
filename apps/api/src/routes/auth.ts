@@ -20,7 +20,7 @@ const SignUpBody = z.object({
 
 const LogInBody = z.object({ email: z.string().min(3).max(254), password: z.string().min(1).max(200) });
 
-export function authRoutes({ db, config }: AppDeps) {
+export function authRoutes({ db, config, paypal }: AppDeps) {
   const r = Router();
 
   // Brute-force protection on credential endpoints.
@@ -120,7 +120,15 @@ export function authRoutes({ db, config }: AppDeps) {
       throw new HttpError(401, 'Your current password is incorrect.');
     });
     try {
-      await deleteAccount(db, user.id);
+      // Removing saved wallets at PayPal is best effort: deletion never waits on PayPal being configured.
+      const gateway = (() => {
+        try {
+          return paypal();
+        } catch {
+          return undefined;
+        }
+      })();
+      await deleteAccount(db, user.id, gateway);
     } catch (err) {
       if (err instanceof AccountError) throw new HttpError(err.code === 'not_found' ? 404 : 409, err.message, { code: err.code === 'not_found' ? 'not_found' : 'money_outstanding' });
       throw err;

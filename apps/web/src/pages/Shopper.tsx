@@ -7,7 +7,7 @@ import { Link } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
-import { formatMoney, timeAgo } from '../lib/format';
+import { formatDate, formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
 
 interface Step {
@@ -70,7 +70,7 @@ export function ShopperPage() {
     <>
       <PageHeader
         title="Shopping assistant"
-        subtitle="Tell the assistant what you need and how much you want to spend. It finds a report, checks that every source is licensed, and asks before you pay — you approve the payment in PayPal."
+        subtitle="Tell the assistant what you need and how much you want to spend. It finds a report and checks that every source is licensed. Then it asks you to pay in PayPal — or, if you’ve saved PayPal for it, pays on its own within your limits."
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="space-y-6">
@@ -114,13 +114,15 @@ export function ShopperPage() {
                 <ShieldCheck className="size-3.5 shrink-0 text-pass" /> It only suggests reports whose sources are licensed for sale today.
               </li>
               <li className="flex gap-2">
-                <ShoppingCart className="size-3.5 shrink-0" /> It can’t pay. You see its reason and approve the payment in PayPal yourself.
+                <ShoppingCart className="size-3.5 shrink-0" /> It pays only within the limits you set below; anything else, you approve in PayPal yourself.
               </li>
               <li className="flex gap-2">
                 <Bot className="size-3.5 shrink-0" /> {usesAi ? 'Powered by Gemini.' : 'AI model not configured here: a simple rule-based assistant stands in.'}
               </li>
             </ul>
           </Card>
+
+          <MandateCard />
 
           {runs.data && runs.data.runs.length > 0 && (
             <Card title="Earlier requests">
@@ -149,6 +151,147 @@ export function ShopperPage() {
         <div>{current ? <RunView key={current} runId={current} /> : <EmptyRun />}</div>
       </div>
     </>
+  );
+}
+
+interface Mandate {
+  id: string;
+  status: 'pending' | 'active' | 'revoked';
+  maxPerPurchaseCents: number;
+  maxTotalCents: number;
+  spentCents: number;
+  remainingCents: number;
+  expiresAt: string;
+  payerEmail: string | null;
+  expired: boolean;
+}
+
+/**
+ * Agentic payments: the buyer saves PayPal once (in PayPal's vault) with limits, and the assistant may
+ * then pay on its own within them. The limits are enforced by the server, not the model.
+ */
+function MandateCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['mandate'], queryFn: () => api<{ mandate: Mandate | null }>('/shopper/mandate') });
+  const [perPurchase, setPerPurchase] = useState(2500);
+  const [total, setTotal] = useState(5000);
+  const [days, setDays] = useState(30);
+  const [notice, setNotice] = useState<string | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ['mandate'] });
+
+  const start = useMutation({
+    mutationFn: () => post<{ approveUrl: string }>('/shopper/mandate', { maxPerPurchaseCents: perPurchase, maxTotalCents: Math.max(total, perPurchase), days }),
+    onSuccess: (r) => window.location.assign(r.approveUrl),
+  });
+  const activate = useMutation({
+    mutationFn: (id: string) => post<{ mandate: Mandate }>(`/shopper/mandate/${id}/activate`),
+    onSuccess: () => {
+      setNotice('PayPal is saved for your assistant. It can now pay on its own within your limits.');
+      void refresh();
+    },
+  });
+  const revoke = useMutation({ mutationFn: () => api('/shopper/mandate', { method: 'DELETE' }), onSuccess: () => void refresh() });
+
+  // Back from PayPal: switch the mandate on (or note that the buyer cancelled).
+  const handled = useRef(false);
+  const { mutate: activateMandate } = activate;
+  useEffect(() => {
+    if (handled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('mandate');
+    if (!id) return;
+    handled.current = true;
+    window.history.replaceState(null, '', window.location.pathname);
+    if (params.get('cancelled')) setNotice('You didn’t save PayPal, so the assistant will keep asking before every payment.');
+    else activateMandate(id);
+  }, [activateMandate]);
+
+  const m = q.data?.mandate;
+  const active = m?.status === 'active' && !m.expired;
+  return (
+    <Card title="Let the assistant pay for you">
+      <div aria-live="polite">
+        {notice && <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm">{notice}</p>}
+        {activate.isPending && <Spinner label="Saving PayPal for your assistant…" />}
+      </div>
+      {q.isPending ? (
+        <Spinner />
+      ) : m && active ? (
+        <div className="space-y-3 text-sm">
+          <p>
+            The assistant may pay with your saved PayPal{m.payerEmail ? ` (${m.payerEmail})` : ''}: up to <strong>{formatMoney(m.maxPerPurchaseCents)}</strong> a purchase and{' '}
+            <strong>{formatMoney(m.maxTotalCents)}</strong> in all, until {formatDate(m.expiresAt)}.
+          </p>
+          <div>
+            <div className="flex justify-between text-xs text-muted">
+              <span>Spent {formatMoney(m.spentCents)}</span>
+              <span>{formatMoney(m.remainingCents)} left</span>
+            </div>
+            <div
+              className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"
+              role="progressbar"
+              aria-label="Share of the limit spent"
+              aria-valuemin={0}
+              aria-valuemax={m.maxTotalCents}
+              aria-valuenow={m.spentCents}
+            >
+              <div className="h-full bg-ink" style={{ width: `${Math.min(100, (m.spentCents / m.maxTotalCents) * 100)}%` }} />
+            </div>
+          </div>
+          <Button variant="secondary" size="sm" loading={revoke.isPending} onClick={() => revoke.mutate()}>
+            Stop, and remove saved PayPal
+          </Button>
+          <ErrorNote error={revoke.error} />
+        </div>
+      ) : (
+        <form
+          className="space-y-3 text-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            start.mutate();
+          }}
+        >
+          <p className="text-muted">
+            Save PayPal once and set limits, and the assistant can buy on its own — the server checks every payment against them. You can stop it at any time.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <MoneyField label="Most per purchase" value={perPurchase} onChange={setPerPurchase} />
+            <MoneyField label="Most in total" value={total} onChange={setTotal} />
+            <label className="grid content-start gap-1">
+              <span className="font-medium">For</span>
+              <select className="h-10 w-full min-w-0 rounded-lg border border-line bg-white px-2" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+                {[7, 30, 90].map((d) => (
+                  <option key={d} value={d}>
+                    {d} days
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <Button type="submit" loading={start.isPending}>
+            Save PayPal for my assistant
+          </Button>
+          <ErrorNote error={start.error ?? activate.error} />
+        </form>
+      )}
+    </Card>
+  );
+}
+
+function MoneyField({ label, value, onChange }: { label: string; value: number; onChange: (cents: number) => void }) {
+  return (
+    <label className="grid content-start gap-1">
+      <span className="font-medium">{label}</span>
+      <DraftInput
+        inputMode="decimal"
+        className="h-10 w-full min-w-0 rounded-lg border border-line px-3 tabular-nums"
+        value={formatMoney(value)}
+        onCommit={(text) => {
+          const cents = parseDollars(text);
+          if (cents !== null) onChange(Math.min(50_000, Math.max(100, cents)));
+        }}
+      />
+    </label>
   );
 }
 
@@ -378,6 +521,8 @@ function describe(s: Step): { text: string; tone?: 'good' | 'bad' } | null {
       };
     }
     case 'propose_purchase':
+      if (o.purchased === true && o.by === 'mandate')
+        return { text: `The assistant paid ${str(o.amount)} on its own with your saved PayPal, within your limits (${str(o.mandateLeft)} left). The report is yours.`, tone: 'good' };
       if (o.purchased === true) return { text: `You paid ${str(o.amount)} with PayPal. The report is yours.`, tone: 'good' };
       if (o.approved === false) return { text: 'You decided not to buy it.' };
       return null;

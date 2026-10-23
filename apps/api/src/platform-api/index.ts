@@ -127,7 +127,7 @@ export function platformApi(deps: PlatformDeps, opts: PlatformApiOptions): Route
   // Everything else needs a publisher (or admin) account — except buying, which is for buyers.
   r.use((req: Request, _res: Response, next: NextFunction) => {
     if (!req.user) return next(new HttpError(401, 'Send an API key: Authorization: Bearer tp_…', { code: 'unauthenticated' }));
-    if (req.user.role === 'buyer' && /^\/(store|checkouts|account|libraries|credits|credit_top_ups|answers)(\/|$)/.test(req.path)) return next();
+    if (req.user.role === 'buyer' && /^\/(store|checkouts|mandate|account|libraries|credits|credit_top_ups|answers)(\/|$)/.test(req.path)) return next();
     if (req.user.role !== 'publisher' && req.user.role !== 'admin') {
       return next(new HttpError(403, 'The platform API is available to publisher accounts.', { code: 'publisher_account_required' }));
     }

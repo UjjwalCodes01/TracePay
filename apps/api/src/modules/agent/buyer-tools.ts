@@ -1,3 +1,5 @@
+import { currentMandate, MandateError, mandateRefusal } from './mandates.service';
+import { PaymentError } from '../payments/payments.service';
 import { sameWorld } from '../demo/world';
 import { formatMoney } from '@tracepay/shared';
 import type { Db } from '../../db';
@@ -29,6 +31,11 @@ export interface ShopperContext {
   policy: ShopperPolicy;
   /** Purchases completed in this run so far. */
   purchases: Array<{ artifactId: string; amountCents: number }>;
+  /**
+   * Pays with the buyer's saved PayPal, within their spending mandate (server code; the model only
+   * decides what to propose). Absent: every purchase waits for the buyer.
+   */
+  payWithMandate?: (artifactId: string) => Promise<{ saleId: string; saleStatus: string; captureId: string | null; remainingCents: number }>;
 }
 
 export interface PurchaseApproval {
@@ -79,7 +86,7 @@ export const SHOPPER_SYSTEM_PROMPT = [
   'Hard rules:',
   '- Never propose a report over the remaining budget, one whose license check fails, or one whose citations don’t check out.',
   '- Propose at most the number of purchases the buyer allowed, one at a time.',
-  '- You cannot pay or change prices. The buyer approves every payment in PayPal.',
+  '- You cannot change prices or see payment details. If the buyer gave you a spending mandate, propose_purchase pays at once with their saved PayPal when the price fits it — so propose only the report you are confident best serves their need (compare the candidates’ summaries, sources and price). Otherwise the buyer approves the payment in PayPal.',
   '- If nothing fits, say so plainly and suggest what the buyer could change (budget or wording). Do not propose something that doesn’t fit just to buy something.',
   'Write for a non-technical reader. Never invent reports, ids or prices.',
 ].join('\n');
@@ -189,10 +196,43 @@ export async function executeShopperTool(ctx: ShopperContext, name: string, args
         if (!(a.citationReport as unknown as CitationReport | null)?.ok) return ok({ error: 'GUARDRAIL', message: 'That report’s citations don’t check out.' });
         const rights = await ctx.db.$transaction((tx) => checkSaleRights(tx, id));
         if (!rights.ok) return ok({ error: 'GUARDRAIL', message: `Its licenses don’t permit a sale today: ${rights.reasons[0]}` });
+
+        // Within the buyer's spending mandate: pay now, with their saved PayPal. Otherwise ask them.
+        let mandateNote: string | null = null;
+        if (ctx.payWithMandate) {
+          const refusal = mandateRefusal(await currentMandate(ctx.db, ctx.buyerId), a.priceCents);
+          if (!refusal) {
+            try {
+              const paid = await ctx.payWithMandate(a.id);
+              if (paid.saleStatus === 'captured') {
+                return ok({
+                  approved: true,
+                  purchased: true,
+                  by: 'mandate',
+                  reportId: a.id,
+                  saleId: paid.saleId,
+                  captureId: paid.captureId,
+                  amountCents: a.priceCents,
+                  amount: formatMoney(a.priceCents),
+                  remainingBudget: formatMoney(left - a.priceCents),
+                  mandateLeft: formatMoney(paid.remainingCents),
+                  reason,
+                });
+              }
+              return ok({ error: 'PAYMENT_PENDING', message: `PayPal is still processing the ${formatMoney(a.priceCents)} payment for “${a.title}”. Tell the buyer it completes on its own.` });
+            } catch (err) {
+              if (!(err instanceof MandateError || err instanceof PaymentError)) throw err;
+              if (err instanceof PaymentError && err.code === 'unconfirmed') return ok({ error: 'PAYMENT_UNCONFIRMED', message: err.message });
+              mandateNote = `Couldn’t pay on its own: ${err.message}`;
+            }
+          } else if (!refusal.startsWith('You haven’t')) {
+            mandateNote = refusal;
+          }
+        }
         return {
           kind: 'pause',
-          response: { status: 'awaiting_buyer_approval' },
-          approval: { type: 'purchase', artifactId: a.id, title: a.title, priceCents: a.priceCents, currency: a.currency, reason },
+          response: { status: 'awaiting_buyer_approval', ...(mandateNote ? { note: mandateNote } : {}) },
+          approval: { type: 'purchase', artifactId: a.id, title: a.title, priceCents: a.priceCents, currency: a.currency, reason: mandateNote ? `${reason} (${mandateNote})` : reason },
         };
       }
 

@@ -16,10 +16,7 @@ reports on TracePay **for a buyer** — through the Platform API, with the buyer
 
 **Spending is capped three ways:** per answer (`TRACEPAY_MAX_ANSWER_CENTS`), per session (`TRACEPAY_MAX_SESSION_CENTS`) and per purchase (`TRACEPAY_MAX_PRICE_CENTS`); an invalid value stops the server rather than disabling a cap. The agent only asks a library you name (`TRACEPAY_LIBRARY_ID` or `library_id`) unless exactly one exists. Every paying request carries a fresh `Idempotency-Key`, and text from sources is marked as data, not instructions.
 
-**The agent can never pay.** PayPal asks the buyer to approve every payment; the agent only
-completes a checkout the buyer already approved. `start_checkout` also refuses anything over
-`TRACEPAY_MAX_PRICE_CENTS`, reports the buyer already owns, and reports whose licenses no
-longer permit a sale.
+**The agent pays only what the buyer allowed.** By default PayPal asks the buyer to approve every payment and the agent only hands over the approve link. If the buyer saves PayPal for their agent in the TracePay app (a *spending mandate*: most per purchase, most in total, an end date), `start_checkout` pays at once within it — TracePay checks the mandate on the server before every charge, and the agent's own `TRACEPAY_MAX_PRICE_CENTS` cap still applies. The buyer can revoke it at any time.
 
 ## Set up
 

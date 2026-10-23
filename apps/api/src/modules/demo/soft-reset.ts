@@ -95,6 +95,9 @@ async function resetOnce(db: Db, world: string | null): Promise<{ removedBuilds:
       await tx.creditEntry.deleteMany({ where: { account: { ownerId: { in: buyerIds } } } });
       await tx.creditTopUp.deleteMany({ where: { account: { ownerId: { in: buyerIds } } } });
       await tx.creditAccount.deleteMany({ where: { ownerId: { in: buyerIds } } });
+      // The demo buyer's spending mandates (their saved PayPal is sandbox-only): sales outside the demo keep their record.
+      await tx.sale.updateMany({ where: { mandate: { buyerId: { in: buyerIds } } }, data: { mandateId: null } });
+      await tx.spendingMandate.deleteMany({ where: { buyerId: { in: buyerIds } } });
       await tx.idempotencyKey.deleteMany({ where: { userId: { in: buyerIds } } });
       // Licenses held by the demo publisher (nothing references them any more).
       await tx.licenseGrant.deleteMany({ where: { licenseeId: { in: publisherIds } } });

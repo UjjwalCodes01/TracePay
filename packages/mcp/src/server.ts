@@ -186,7 +186,7 @@ server.registerTool(
   {
     title: 'Start buying a report',
     description:
-      'Creates a PayPal checkout for one report and returns an approve link. YOU CANNOT PAY: show the link to the user and ask them to approve the payment at PayPal, then call complete_checkout. Refused over the price cap, if the licenses no longer permit the sale, or if the user already owns it.',
+      'Buys one report. If the user saved PayPal for their agent (a spending mandate set in the TracePay app) and the price fits it, this pays at once and the report unlocks. Otherwise it returns a PayPal approve link: show it to the user, and call complete_checkout once they have approved. Refused over the price cap, if the licenses no longer permit the sale, or if the user already owns it. Only buy what clearly serves what the user asked for.',
     inputSchema: { report_id: z.string().min(1).max(64), reason: z.string().max(600).describe('Why this report fits what the user asked for — tell the user this too.') },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
@@ -198,6 +198,20 @@ server.registerTool(
         return failure(new ApiError(409, 'over_price_cap', `It costs ${money(r.price_cents, r.currency)}, over this agent’s cap of ${money(MAX_PRICE_CENTS)}. Ask the user to raise TRACEPAY_MAX_PRICE_CENTS if they want it.`));
       }
       if (!r.license_check.valid_today) return failure(new ApiError(409, 'not_for_sale', `Its licenses don’t permit a sale today: ${r.license_check.problems.join(' ')}`));
+      // Within the user's spending mandate (and this agent's own cap): pay now with their saved PayPal.
+      // TracePay checks the mandate again on its side before charging anything.
+      const { mandate } = await api<{ mandate: { status: string; expired: boolean; max_per_purchase_cents: number; remaining_cents: number } | null }>('GET', '/mandate');
+      const fits = mandate?.status === 'active' && !mandate.expired && r.price_cents <= mandate.max_per_purchase_cents && r.price_cents <= mandate.remaining_cents;
+      if (fits) {
+        const paid = await api<Checkout>('POST', '/checkouts', { report_id, pay_with_mandate: true });
+        if (paid.status === 'captured') {
+          return result(
+            [`Paid ${money(paid.amount_cents, paid.currency)} for "${r.title}" with the user's saved PayPal, within their spending mandate (sandbox).`, `Why: ${reason}`, '', 'Use check_report to read it.'].join('\n'),
+            { checkout: paid, paid_by: 'mandate' },
+          );
+        }
+        return result(paid.next_step, { checkout: paid });
+      }
       // TracePay reuses the user's open checkout for the report, so retrying never opens a second one.
       const c = await api<Checkout>('POST', '/checkouts', { report_id });
       if (c.status === 'captured') return result('Already paid. The report is unlocked: use check_report to read it.', { checkout: c });

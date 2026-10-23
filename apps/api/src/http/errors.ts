@@ -22,7 +22,7 @@ export class HttpError extends Error {
 /** Transaction timed out or no pooled connection was free: the database is saturated, not broken. */
 const DB_BUSY_CODES = new Set(['P2024', 'P2028']);
 
-const PAYMENT_STATUS = { not_found: 404, not_for_sale: 409, state: 409, verification: 422, provider: 502 } as const;
+const PAYMENT_STATUS = { not_found: 404, not_for_sale: 409, state: 409, verification: 422, provider: 502, unconfirmed: 502 } as const;
 const SETTLEMENT_STATUS = { not_found: 404, state: 409, payouts_unavailable: 503, provider: 502 } as const;
 const LICENSE_STATUS = { not_found: 404, forbidden: 404, state: 409, invalid: 400 } as const;
 const ASSET_STATUS = { not_found: 404, invalid: 400, unchanged: 409 } as const;

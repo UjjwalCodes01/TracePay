@@ -15,7 +15,8 @@ import { calculateForSale, recordFailedSettlement, SettlementStateError } from '
 import { logger } from '../../http/logger';
 
 export class PaymentError extends Error {
-  constructor(message: string, readonly code: 'not_found' | 'not_for_sale' | 'state' | 'verification' | 'provider') {
+  /** unconfirmed: PayPal may have taken the money, but its reply was lost (a saved-wallet charge). */
+  constructor(message: string, readonly code: 'not_found' | 'not_for_sale' | 'state' | 'verification' | 'provider' | 'unconfirmed') {
     super(message);
     this.name = 'PaymentError';
   }
@@ -28,6 +29,8 @@ export interface CheckoutStarted {
   orderId: string;
   approveUrl: string | null;
   amountCents: number;
+  /** A saved wallet was charged at once: PayPal's completed order (verify it with applyCapture). */
+  order?: Order;
 }
 
 /**
@@ -38,7 +41,15 @@ export interface CheckoutStarted {
 export async function startCheckout(
   db: Db,
   paypal: PayPalGateway,
-  args: { artifactId: string; buyerId: string | null; appBaseUrl: string; /** The shared demo buyer may buy a report again. */ allowRepeat?: boolean },
+  args: {
+    artifactId: string;
+    buyerId: string | null;
+    appBaseUrl: string;
+    /** The shared demo buyer may buy a report again. */
+    allowRepeat?: boolean;
+    /** Charge this saved PayPal wallet now (the buyer's assistant, within its mandate). */
+    vault?: { vaultId: string; mandateId: string };
+  },
 ): Promise<CheckoutStarted> {
   const artifact = await db.artifact.findUnique({ where: { id: args.artifactId } });
   if (!artifact) throw new PaymentError(`Artifact ${args.artifactId} not found.`, 'not_found');
@@ -54,7 +65,7 @@ export async function startCheckout(
   }
   // Re-clicking "Pay" reuses the buyer's open checkout instead of piling up sales and
   // PayPal orders. (PayPal orders stay approvable for ~3 hours; reuse within 2.)
-  if (args.buyerId) {
+  if (args.buyerId && !args.vault) {
     const open = await db.sale.findFirst({
       // A checkout opened before the buyer owned it can't serve a repeat purchase (it would be refused at capture).
       where: { artifactId: artifact.id, buyerId: args.buyerId, status: 'pending_payment', createdAt: { gt: new Date(Date.now() - 2 * 60 * 60_000) }, payment: { is: { captureId: null } }, ...(alreadyOwned ? { repeatPurchase: true } : {}) },
@@ -97,6 +108,7 @@ export async function startCheckout(
         amountCents: artifact.priceCents,
         currency: artifact.currency,
         repeatPurchase: alreadyOwned,
+        mandateId: args.vault?.mandateId ?? null,
         rightsCheck: json({ asOf: todayUtc(), verdict: rights.report.verdict, policyVersion: rights.report.policyVersion }),
         termsSnapshot: json(rights.snapshot),
         snapshotHash: rights.snapshotHash,
@@ -135,23 +147,44 @@ export async function startCheckout(
             amount: { currency_code: sale.currency, value: centsToDecimal(sale.amountCents) },
           },
         ],
-        payment_source: {
-          paypal: {
-            experience_context: {
-              brand_name: 'TracePay',
-              shipping_preference: 'NO_SHIPPING',
-              user_action: 'PAY_NOW',
-              return_url: `${args.appBaseUrl}/checkout/return?sale=${sale.id}`,
-              cancel_url: `${args.appBaseUrl}/checkout/cancel?sale=${sale.id}`,
+        payment_source: args.vault
+          ? { paypal: { vault_id: args.vault.vaultId } }
+          : {
+              paypal: {
+                experience_context: {
+                  brand_name: 'TracePay',
+                  shipping_preference: 'NO_SHIPPING',
+                  user_action: 'PAY_NOW',
+                  return_url: `${args.appBaseUrl}/checkout/return?sale=${sale.id}`,
+                  cancel_url: `${args.appBaseUrl}/checkout/cancel?sale=${sale.id}`,
+                },
+              },
             },
-          },
-        },
       },
       `order-${sale.id}`,
     );
   } catch (err) {
+    // Charging a saved wallet IS creating the order: a lost reply may mean PayPal took the money.
+    // Never call that "failed" — flag it for a person (the request id makes any retry the same order).
+    const definite = err instanceof PayPalApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
+    if (args.vault && !definite) {
+      await db.$transaction(async (tx) => {
+        await tx.sale.update({ where: { id: sale.id }, data: { status: 'exception' } });
+        await appendAudit(tx, { entityType: 'sale', entityId: sale.id, artifactId: artifact.id, eventType: 'sale.capture_exception', payload: { problems: ['saved-PayPal charge sent, PayPal reply lost'], requestId: `order-${sale.id}` } });
+        const owner = await saleOwner(tx, sale.id);
+        if (owner) await openIssue(tx, { ownerId: owner.ownerId, kind: 'saved_payment_unconfirmed', subjectType: 'sale', subjectId: sale.id, artifactId: owner.artifactId, data: { requestId: `order-${sale.id}` } });
+      });
+      logger.error({ err, saleId: sale.id }, 'saved-PayPal charge unconfirmed');
+      throw new PaymentError('PayPal didn’t confirm the payment. It has been flagged for checking, and it can’t be charged twice.', 'unconfirmed');
+    }
     await db.sale.update({ where: { id: sale.id }, data: { status: 'payment_failed' } });
     logger.warn({ err, saleId: sale.id }, 'PayPal order creation failed');
+    if (args.vault && err instanceof PayPalApiError && err.status === 403) {
+      throw new PaymentError('Paying with saved PayPal isn’t enabled for this PayPal app yet (PayPal’s Vault feature). Nothing was charged.', 'provider');
+    }
+    if (args.vault && err instanceof PayPalApiError && err.status === 422) {
+      throw new PaymentError('PayPal declined the saved payment method. Nothing was charged.', 'state');
+    }
     throw new PaymentError('PayPal couldn’t start this checkout right now. Nothing was charged; please try again.', 'provider');
   }
 
@@ -160,7 +193,7 @@ export async function startCheckout(
   await db.payPalPayment.create({ data: { saleId: sale.id, orderId: order.id, orderStatus: order.status, nextCheckAt: firstCheck } });
   notifyScheduled(firstCheck);
   const approveUrl = order.links.find((l) => l.rel === 'payer-action' || l.rel === 'approve')?.href ?? null;
-  return { saleId: sale.id, orderId: order.id, approveUrl, amountCents: sale.amountCents };
+  return { saleId: sale.id, orderId: order.id, approveUrl, amountCents: sale.amountCents, ...(args.vault ? { order } : {}) };
 }
 
 export interface CaptureOutcome {

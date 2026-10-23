@@ -7,7 +7,10 @@ import type {
   Order,
   PayoutBatchResponse,
   PayoutBatchStatus,
+  PaymentToken,
   PayoutItemRequest,
+  SetupToken,
+  SetupTokenRequest,
   WebhookVerificationHeaders,
 } from './types';
 
@@ -111,6 +114,22 @@ export class PayPalClient {
     });
   }
 
+  // ---- vault v3 (saved PayPal for a buyer's shopping assistant) ------------------------
+
+  createSetupToken(req: SetupTokenRequest, requestId: string): Promise<SetupToken> {
+    return this.call('vault.setup-tokens.create', 'POST', '/v3/vault/setup-tokens', req, { 'PayPal-Request-Id': requestId });
+  }
+
+  /** Turns a setup token the buyer approved into a payment token (the vault id charges use). */
+  createPaymentToken(setupTokenId: string, requestId: string): Promise<PaymentToken> {
+    return this.call('vault.payment-tokens.create', 'POST', '/v3/vault/payment-tokens', { payment_source: { token: { id: setupTokenId, type: 'SETUP_TOKEN' } } }, { 'PayPal-Request-Id': requestId });
+  }
+
+  /** Removes a saved wallet from PayPal's vault (the buyer revoked the mandate). */
+  async deletePaymentToken(paymentTokenId: string): Promise<void> {
+    await this.call('vault.payment-tokens.delete', 'DELETE', `/v3/vault/payment-tokens/${encodeURIComponent(paymentTokenId)}`);
+  }
+
   /** The current state of a capture — how reconciliation notices refunds made outside TracePay. */
   getCapture(captureId: string): Promise<Capture> {
     return this.call('captures.get', 'GET', `/v2/payments/captures/${encodeURIComponent(captureId)}`);
@@ -182,7 +201,7 @@ export class PayPalClient {
 
   private async call<T>(
     operation: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: unknown,
     extraHeaders: Record<string, string> = {},

@@ -53,7 +53,7 @@ AI is built on people's work, and those people rarely see a cent. TracePay's ans
 1. **The license check blocks it.** One source — the *Kestrel Enterprise Panel* — is licensed for *internal research only*. TracePay's license check (fixed rules, no AI) refuses a report that will be sold.
 2. **The research assistant recovers.** A Gemini agent finds a compatible replacement (*Open Developer Survey Digest*, $2 per sale), asks the publisher for approval, re-runs the license check — now **passed** — and writes the report. It cannot override a failed rule, change the price, or move money.
 3. **Every claim is traceable.** Each finding cites `[C1]`, `[C4]`… which resolve to the exact retrieved passage. Invented citations are rejected.
-4. **A buyer pays with PayPal — or lets an AI shop for them.** The buyer's **shopping assistant** (Gemini) searches the store for what they asked for, re-runs the license check on each candidate, checks its citations and proposes one purchase **within the buyer's budget** — the budget is enforced in code, and the assistant can't pay: the buyer approves the payment in PayPal. Either way, the server creates the PayPal order, takes the payment, and verifies amount, currency and sale reference against PayPal's response.
+4. **A buyer pays with PayPal — or lets an AI shop for them.** The buyer's **shopping assistant** (Gemini) searches the store for what they asked for, re-runs the license check on each candidate, checks its citations and proposes one purchase **within the buyer's budget** — enforced in code. The buyer approves the payment in PayPal, **or saves PayPal once for their assistant with a spending mandate** (most per purchase, most in total, an end date; PayPal Vault) and lets it pay on its own within those limits, checked on the server before every charge. Either way, the server creates the PayPal order, takes the payment, and verifies amount, currency and sale reference against PayPal's response.
 5. **Contributors are paid automatically — under the license terms in force at the moment of sale.**
 
    | Recipient | Rule (approved license) | Amount |
@@ -98,7 +98,7 @@ curl 'https://tracepay-api.onrender.com/api/v1/sales?status=captured' \
 
 ### AI agents can shop too (MCP)
 
-[`packages/mcp`](packages/mcp) is an **MCP server** that lets any AI agent — Claude Desktop, an IDE agent — shop for a buyer through the Platform API's **Buying** endpoints (`/store/reports`, `/checkouts`): search, re-check licenses, and start a checkout. **It can never pay:** it hands the buyer PayPal's approve link and only completes a checkout the buyer approved, and it refuses anything over the buyer's price cap. Buyers create the key on *Connect an AI agent*.
+[`packages/mcp`](packages/mcp) is an **MCP server** that lets any AI agent — Claude Desktop, an IDE agent — shop for a buyer through the Platform API's **Buying** endpoints (`/store/reports`, `/checkouts`): search, re-check licenses, and buy. **It pays only what the buyer allowed:** within the buyer's spending mandate it pays at once with their saved PayPal (`POST /v1/checkouts` with `pay_with_mandate`); otherwise it hands the buyer PayPal's approve link and only completes a checkout they approved. It refuses anything over its own price cap either way. Buyers create the key on *Connect an AI agent*.
 
 ## Screens
 

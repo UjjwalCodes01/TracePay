@@ -57,6 +57,10 @@ export const ISSUE_KINDS = {
     title: 'TracePay can’t confirm something with PayPal',
     detail: 'Repeated checks with PayPal didn’t reach a final answer. Look it up in your PayPal dashboard.',
   },
+  saved_payment_unconfirmed: {
+    title: 'A payment by a buyer’s assistant wasn’t confirmed',
+    detail: 'A buyer’s shopping assistant paid with their saved PayPal, but PayPal’s reply never arrived. The buyer may have been charged. Find the order in your PayPal dashboard (its reference is the sale) before doing anything else; it will not be charged twice.',
+  },
   payout_stuck: {
     title: 'Some payouts haven’t finished',
     detail: 'After 45 days PayPal still hasn’t finished some of these payouts. Check them in your PayPal dashboard.',

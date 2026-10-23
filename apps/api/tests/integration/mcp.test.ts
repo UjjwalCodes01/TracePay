@@ -24,9 +24,10 @@ describe.runIf(process.env.TEST_DATABASE_URL)('the TracePay MCP server', () => {
   let server: Server;
   let apiUrl: string;
   let key: string;
+  const paypal = new FakePayPal();
 
   beforeAll(async () => {
-    server = testApp(new FakePayPal()).listen(0);
+    server = testApp(paypal).listen(0);
     await new Promise((r) => server.once('listening', r));
     apiUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
   });
@@ -87,6 +88,32 @@ describe.runIf(process.env.TEST_DATABASE_URL)('the TracePay MCP server', () => {
       expect(r.isError).toBe(true);
       expect(r.content[0]!.text).toMatch(/choose_library/);
       expect(r.content[0]!.text).toMatch(/Second Library/);
+    } finally {
+      await client.close();
+    }
+  }, 60_000);
+
+  it('pays at once within the buyer’s spending mandate, and otherwise hands over the PayPal link', async () => {
+    // A listed report, through the same API the app uses.
+    const publisher = { 'X-Demo-User': 'user_atlas' };
+    const intent = { title: 'Developer Tools Market Brief, Q4 2026', brief: 'Developer-tools spend, AI coding assistant adoption, trust and pricing.', purpose: 'commercial_report', distribution: 'sale', includesRawData: false, territory: 'US', priceCents: 2000, currency: 'USD' };
+    const base = apiUrl.replace(/\/v1$/, '');
+    const pre = await fetch(`${base}/builds/preflight`, { method: 'POST', headers: { ...publisher, 'Content-Type': 'application/json', Origin: 'http://localhost:5173' }, body: JSON.stringify({ intent, assetVersionIds: ['asset_northwind_index_v1', 'asset_okafor_notes_v1', 'asset_lumen_digest_v1'] }) }).then((r) => r.json());
+    if (!pre.buildId) throw new Error(JSON.stringify(pre));
+    const gen = await fetch(`${base}/builds/${pre.buildId}/generate`, { method: 'POST', headers: { ...publisher, Origin: 'http://localhost:5173' } }).then((r) => r.json());
+
+    const { client, call } = await connect();
+    try {
+      const linkOnly = await call('start_checkout', { report_id: gen.artifactId, reason: 'It covers AI coding assistants.' });
+      expect(linkOnly.content[0]!.text).toMatch(/approve the payment in PayPal/);
+
+      // The buyer saved PayPal for their agent (set up in the app): now the agent pays by itself.
+      paypal.paymentTokens.set('PT-MCP', { email: 'buyer@personal.example.com', customerId: 'CUST-1' });
+      await db().spendingMandate.create({ data: { buyerId: 'user_buyer', status: 'active', vaultId: 'PT-MCP', maxPerPurchaseCents: 2500, maxTotalCents: 5000, expiresAt: new Date(Date.now() + 86_400_000) } });
+      const paid = await call('start_checkout', { report_id: gen.artifactId, reason: 'It covers AI coding assistants.' });
+      expect(paid.isError).toBeFalsy();
+      expect(paid.content[0]!.text).toMatch(/Paid \$20\.00 .* within their spending mandate/);
+      expect(await db().sale.count({ where: { artifactId: gen.artifactId, status: 'captured' } })).toBe(1);
     } finally {
       await client.close();
     }

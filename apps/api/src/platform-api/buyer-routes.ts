@@ -7,6 +7,7 @@ import { matchScore } from '../modules/agent/buyer-tools';
 import type { CitationReport } from '../modules/generation/citations';
 import type { ArtifactContent } from '../modules/generation/generation.service';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
+import { currentMandate, MandateError, payWithMandate } from '../modules/agent/mandates.service';
 import { askLibrary, getAnswer, listLibraries } from '../modules/answers/answers.service';
 import { captureTopUp, creditSummary, isDemoBuyer, MAX_TOP_UP_CENTS, MIN_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
 import { checkSaleRights } from '../modules/sales/rights.service';
@@ -100,6 +101,20 @@ function storeReportOut(a: Artifact, owned: boolean, match: number | null): z.in
 const sandboxApproveUrl = (orderId: string) => `https://www.sandbox.paypal.com/checkoutnow?token=${encodeURIComponent(orderId)}`;
 
 type SaleRow = { id: string; artifactId: string; status: string; amountCents: number; currency: string; createdAt: Date; payment: { orderId: string; captureId: string | null } | null };
+
+export const Mandate = named(
+  'SpendingMandate',
+  z.object({
+    object: z.literal('spending_mandate'),
+    status: z.enum(['pending', 'active', 'revoked']),
+    max_per_purchase_cents: z.number().int(),
+    max_total_cents: z.number().int(),
+    spent_cents: z.number().int(),
+    remaining_cents: z.number().int(),
+    expires: ts,
+    expired: z.boolean(),
+  }),
+);
 
 function checkoutOut(s: SaleRow): z.infer<typeof Checkout> {
   const status = s.status as z.infer<typeof Checkout>['status'];
@@ -350,11 +365,44 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
       method: 'post', path: '/checkouts', operationId: 'startCheckout', roles: ['buyer'], middleware: [quotas.checkout()], tag: TAG, summary: 'Start a checkout',
       description:
         'Creates (or reuses) a PayPal order for the report. The buyer must approve it at `approve_url` — software can’t. Then call `POST /checkouts/{id}/capture`.',
-      body: z.object({ report_id: z.string().min(1).max(64) }),
+      body: z.object({
+        report_id: z.string().min(1).max(64),
+        pay_with_mandate: z.boolean().default(false).meta({
+          description: 'Pay at once with the buyer’s saved PayPal, within their spending mandate (`GET /mandate`). `409 mandate_refused` if it doesn’t fit; nothing is charged.',
+        }),
+      }),
       response: Checkout, status: 201, errors: [409],
       handler: async ({ user, body }) => {
-        const started = await startCheckout(db, paypal(), { artifactId: body.report_id, buyerId: user.id, appBaseUrl: config.appBaseUrl, allowRepeat: !!config.demoSharedBuyer && isDemoBuyer(user.id) });
+        const allowRepeat = !!config.demoSharedBuyer && isDemoBuyer(user.id);
+        if (body.pay_with_mandate) {
+          const paid = await payWithMandate(db, paypal(), { buyerId: user.id, artifactId: body.report_id, appBaseUrl: config.appBaseUrl, allowRepeat }).catch((err) => {
+            if (err instanceof MandateError) throw new HttpError(err.code === 'not_found' ? 404 : 409, err.message, { code: 'mandate_refused' });
+            throw err;
+          });
+          return checkoutOut(await mySale(user.id, paid.saleId));
+        }
+        const started = await startCheckout(db, paypal(), { artifactId: body.report_id, buyerId: user.id, appBaseUrl: config.appBaseUrl, allowRepeat });
         return checkoutOut(await mySale(user.id, started.saleId));
+      },
+    }),
+    defineRoute({
+      method: 'get', path: '/mandate', operationId: 'getMandate', roles: ['buyer'], tag: TAG, summary: 'What the buyer lets their agent spend',
+      description: 'The buyer’s spending mandate, if any: their saved PayPal may be charged by an agent (`POST /checkouts` with `pay_with_mandate`) only within these limits. Set up and revoked by the buyer in the app, never through the API.',
+      response: z.object({ mandate: Mandate.nullable() }),
+      handler: async ({ user }) => {
+        const m = await currentMandate(db, user.id);
+        return {
+          mandate: m && {
+            object: 'spending_mandate' as const,
+            status: m.status,
+            max_per_purchase_cents: m.maxPerPurchaseCents,
+            max_total_cents: m.maxTotalCents,
+            spent_cents: m.spentCents,
+            remaining_cents: m.remainingCents,
+            expires: m.expiresAt.toISOString(),
+            expired: m.expired,
+          },
+        };
       },
     }),
     defineRoute({
