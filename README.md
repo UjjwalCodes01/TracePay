@@ -232,7 +232,7 @@ npm run dev:web                                # http://localhost:5173
 | `DEMO_PAYEE_EMAILS` | for payouts | Three sandbox **personal** account emails (Northwind, Okafor, Lumen) |
 | `PAYPAL_WEBHOOK_ID` | for webhooks | Register `https://<api>/api/webhooks/paypal` in the dashboard |
 | `GEMINI_API_KEY` | for live AI | A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey); `GEMINI_MODEL` optional (default `gemini-flash-latest`) |
-| `GOOGLE_CLOUD_PROJECT`, `VERTEX_MODEL` | or, for live AI | Vertex AI instead of an API key: plus `gcloud auth application-default login` locally, or `GOOGLE_SERVICE_ACCOUNT_JSON` on a server |
+| `GOOGLE_CLOUD_PROJECT`, `VERTEX_MODEL`, `GOOGLE_CLOUD_LOCATION` | or, for live AI | Vertex AI instead of an API key (the hosted demo uses `gemini-3.5-flash` on the `global` endpoint): `gcloud auth application-default login` locally; on a server, `GOOGLE_SERVICE_ACCOUNT_JSON` (base64 key of a service account with only *Vertex AI User*) — without it, production treats AI as not configured |
 | `AUDIT_SIGNING_PRIVATE_KEY` | yes | Ed25519 key from `npm run keys:generate` |
 | `DEMO_MODE` | no (default `false`) | `true` enables the one-click demo roles and "Reset demo". **Keep `false` for real users** |
 | `DEMO_SHARED_BUYER` | no (default `false`) | With `DEMO_MODE`, for a hosted demo many people visit: the demo buyer may buy a report again and its demo credit refills, so every visitor can try checkout and AI answers. Demo credit still only pays the demo's own contributors |
@@ -312,6 +312,7 @@ npm run test:integration -w @tracepay/api    # 337 tests; creates/migrates a tra
 npm run test:coverage -w @tracepay/api       # the same, with a coverage floor (CI)
 npm run test:e2e -w @tracepay/api            # the web app in a real browser (Chrome, Chromium or Firefox)
 npm run db:check-drift -w @tracepay/api      # the schema matches its migrations (CI)
+npm run test:live-ai -w @tracepay/api        # every AI flow against the real Gemini model (needs Vertex or GEMINI_API_KEY; not in CI)
 ```
 
 **The harness.** Integration tests run against real PostgreSQL and Redis; PayPal is an in-memory fake that enforces PayPal's rules (approval before capture, idempotency keys, sender_batch_id uniqueness, pending/declined/refunded captures, lost responses); Gemini is either the labeled fallback or a scripted stand-in that checks what TracePay sends and how it treats malformed replies. A guard refuses to run integration tests against any non-local database. Every `/api/v1` response is validated against the OpenAPI schema. CI also boots the real server process, drives the MCP server over stdio with a real MCP client, runs the browser tests (every page for every role, no sideways scrolling at 375 px, no serious axe WCAG 2.1 AA violations, and the paid-answer flow end to end), enforces a coverage floor (90 % of lines, 73 % of branches; currently ~92 % and ~76 %), checks for schema drift, audits dependencies and runs CodeQL.

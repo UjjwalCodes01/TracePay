@@ -85,7 +85,10 @@ export type AiConfig =
 
 export function aiConfig(): AiConfig | null {
   const e = process.env;
-  if (e.GOOGLE_CLOUD_PROJECT?.trim() && e.VERTEX_MODEL?.trim()) {
+  // A server has no gcloud login to fall back on: Vertex counts as configured there only with its key
+  // (else every call would fail while the app claimed AI was on).
+  const vertexCredentials = e.NODE_ENV !== 'production' || !!e.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() || !!e.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+  if (e.GOOGLE_CLOUD_PROJECT?.trim() && e.VERTEX_MODEL?.trim() && vertexCredentials) {
     return {
       provider: 'vertex',
       project: e.GOOGLE_CLOUD_PROJECT.trim(),

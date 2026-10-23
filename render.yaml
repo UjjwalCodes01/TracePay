@@ -83,12 +83,14 @@ services:
         sync: false # demo mode only: sandbox buyer login shown on the Store page
       - key: GEMINI_API_KEY
         sync: false # from aistudio.google.com/apikey; or use the Vertex AI keys below
+      # Gemini on Vertex AI. Counted as configured only once GOOGLE_SERVICE_ACCOUNT_JSON is set
+      # (a service account holding only roles/aiplatform.user); until then the labelled fallbacks run.
       - key: GOOGLE_CLOUD_PROJECT
-        sync: false
+        value: tracepay-ai-1023775
       - key: GOOGLE_CLOUD_LOCATION
-        value: us-central1
+        value: global # the newest Gemini models are served from the global endpoint
       - key: VERTEX_MODEL
-        sync: false
+        value: gemini-3.5-flash
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false # base64 of the service-account key file
       - key: TRUSTED_PROXY_SECRET
