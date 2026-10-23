@@ -5,6 +5,7 @@ import { appendAudit } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
 import { validateCitations, type CitationReport, type DraftSection } from './citations';
 import { retrievePassages } from './retrieval';
+import { withheldPassages } from '../sources/screening';
 import { pickWriter, type ReportWriter } from './writers';
 import { todayUtc } from '../builds/preflight.service';
 import { resolveSources } from '../catalog/catalog.service';
@@ -76,9 +77,12 @@ export async function generateArtifact(db: Db, buildId: string, writer: ReportWr
     const preflight: PreflightReport = current;
     const titleOf = new Map(build.sources.map((s) => [s.assetVersionId, s.assetVersion.asset.title]));
 
-    const passages = (await retrievePassages(db, build.sources.map((s) => s.assetVersionId), `${intent.title} ${intent.brief}`)).map(
-      (p) => ({ ...p, sourceTitle: titleOf.get(p.assetVersionId) ?? p.assetVersionId }),
-    );
+    const found = await retrievePassages(db, build.sources.map((s) => s.assetVersionId), `${intent.title} ${intent.brief}`);
+    // Passages that try to instruct the model are never shown to it; handles are renumbered without gaps.
+    const blocked = await withheldPassages(db, found, writer.screen);
+    const passages = found
+      .filter((p) => !blocked.has(p.chunkId))
+      .map((p, i) => ({ ...p, handle: `C${i + 1}`, sourceTitle: titleOf.get(p.assetVersionId) ?? p.assetVersionId }));
     await db.sourceEvent.createMany({
       data: passages.map((p) => ({ buildJobId: buildId, assetVersionId: p.assetVersionId, chunkId: p.chunkId, eventType: 'retrieved' as const, handle: p.handle })),
     });

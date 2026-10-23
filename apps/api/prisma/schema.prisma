@@ -156,6 +156,12 @@ model SourceChunk {
   assetVersion   AssetVersion @relation(fields: [assetVersionId], references: [id])
   ordinal        Int
   text           String
+  /// Whether the passage tries to instruct AI systems (screened once; versions are immutable). Null: not screened yet.
+  instructsAi    Boolean?
+  /// Why, in plain words.
+  screenNote     String?
+  /// What screened it: the model's name, or "rules".
+  screenedBy     String?
 
   events    SourceEvent[]
   citations ArtifactCitation[]

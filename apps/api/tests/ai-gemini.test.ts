@@ -24,6 +24,9 @@ const { explainPreflight } = await import('../src/modules/builds/explain');
 const { z } = await import('zod');
 
 const reply = (data: unknown) => ({ text: JSON.stringify(data), usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } });
+/** The passage screen's request: nothing in the demo library instructs the AI. */
+const isScreen = (req?: { config?: { systemInstruction?: string } }) => !!req?.config?.systemInstruction?.startsWith('You screen passages');
+const screenReply = (req: { contents: string }) => reply({ verdicts: [...req.contents.matchAll(/^PASSAGE (s\d+)$/gm)].map((m) => ({ id: m[1], instructs: false, reason: 'Plain content.' })) });
 
 beforeEach(() => {
   generateContent.mockReset();
@@ -144,8 +147,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('a paid answer through the Gemini 
     const account = await db().creditAccount.create({ data: { ownerId: 'user_buyer', balanceCents: 200 } });
     await db().creditEntry.create({ data: { accountId: account.id, kind: 'top_up', amountCents: 200 } });
     // A well-behaved model: paraphrases the first two excerpts and cites each.
-    generateContent.mockImplementation(async (req?: { contents: string }) => {
+    generateContent.mockImplementation(async (req?: { contents: string; config?: { systemInstruction?: string } }) => {
       if (!req) return reply({ covered: false, answer: '' }); // the test runner probes mocks without arguments
+      if (isScreen(req)) return screenReply(req);
       const excerpts = [...req.contents.matchAll(/^\[(C\d+)\] \([^)]*\) (.*)$/gm)].slice(0, 2);
       const answer = excerpts.map(([, h, text]) => `In short, ${text!.split(/\s+/).slice(0, 12).join(' ')} [${h}].`).join(' ');
       return reply({ covered: true, answer });
@@ -173,6 +177,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('a paid answer through the Gemini 
     let judged: string | null = null;
     generateContent.mockImplementation(async (req?: { contents: string; config?: { systemInstruction?: string } }) => {
       if (!req) return reply({ covered: false, answer: '' });
+      if (isScreen(req)) return screenReply(req);
       if (req.config?.systemInstruction?.startsWith('You check citations')) {
         judged = req.contents;
         const ids = [...req.contents.matchAll(/^ITEM (p\d+)$/gm)].map((m) => m[1]!);
@@ -208,8 +213,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('a paid answer through the Gemini 
     await resetAndSeed(db());
     const account = await db().creditAccount.create({ data: { ownerId: 'user_buyer', balanceCents: 200 } });
     await db().creditEntry.create({ data: { accountId: account.id, kind: 'top_up', amountCents: 200 } });
-    generateContent.mockImplementation(async (req?: { contents: string }) => {
+    generateContent.mockImplementation(async (req?: { contents: string; config?: { systemInstruction?: string } }) => {
       if (!req) return reply({ covered: false, answer: '' });
+      if (isScreen(req)) return screenReply(req);
       const [first] = [...req.contents.matchAll(/^\[(C\d+)\] \([^)]*\) (.*)$/gm)].map((m) => [m[1]!, m[2]!]);
       return reply({ covered: true, answer: `In short, ${first![1]!.split(/\s+/).slice(0, 12).join(' ')} [${first![0]}].` });
     });

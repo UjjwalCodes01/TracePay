@@ -11,8 +11,9 @@ import { listCatalog, resolveSources } from '../catalog/catalog.service';
 import type { AnswerWriter } from '../generation/writers';
 import { retrievePassages } from '../generation/retrieval';
 import { CreditError, lockAccount } from './credits.service';
-import { auditAnswer, citationPairs, containsInstructions, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
+import { auditAnswer, citationPairs, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
 import { RuleSupportJudge } from './support';
+import { withheldPassages } from '../sources/screening';
 import { checkAnswerRights, type ExcludedSource } from './rights';
 
 /**
@@ -97,10 +98,11 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
 
   // 2. Retrieval from licensed sources only, most relevant first; unrelated passages are dropped.
   const relevant = eligible.length ? (await retrievePassages(db, eligible.map((e) => e.source.assetVersionId), input.question, PASSAGES_PER_SOURCE)).filter((p) => p.rank > 0) : [];
-  // Text that tries to steer the model never reaches it.
-  const retrieved = relevant.filter((p) => !containsInstructions(p.text));
+  // Text that tries to steer the model never reaches it (pattern list, then — with AI on — a model screen).
+  const blocked = await withheldPassages(db, relevant, writer.screen);
+  const retrieved = relevant.filter((p) => !blocked.has(p.chunkId));
   const withheld = relevant.length - retrieved.length;
-  for (const id of new Set(relevant.filter((p) => containsInstructions(p.text)).map((p) => p.assetVersionId))) {
+  for (const id of new Set(relevant.filter((p) => blocked.has(p.chunkId)).map((p) => p.assetVersionId))) {
     if (retrieved.some((p) => p.assetVersionId === id)) continue;
     const s = sourceOf.get(id)!;
     excluded.push({ assetVersionId: id, assetTitle: s.assetTitle, contributorName: s.contributorName, code: 'instructions', reason: 'Its text contains instructions aimed at AI, so it wasn’t shown to the model.' });

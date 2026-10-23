@@ -3,6 +3,7 @@ import type { BuildIntent } from '@tracepay/shared';
 import { aiReady } from '../../config/env';
 import { generateStructured } from '../../integrations/ai/vertex';
 import { ModelSupportJudge, type SupportJudge } from '../answers/support';
+import { ModelInstructionScreen, type InstructionScreen } from '../sources/screening';
 import type { CitationError, DraftSection } from './citations';
 import type { RetrievedPassage } from './retrieval';
 
@@ -22,6 +23,8 @@ export interface WriterOutput {
 export interface ReportWriter {
   readonly name: string;
   write(input: WriterInput): Promise<WriterOutput>;
+  /** Screens source passages for instructions aimed at AI before the model reads them; pattern list only when absent. */
+  readonly screen?: InstructionScreen;
 }
 
 // ---------------------------------------------------------------- Vertex AI writer
@@ -46,6 +49,7 @@ const SYSTEM = [
 ].join('\n');
 
 export class VertexReportWriter implements ReportWriter {
+  readonly screen: InstructionScreen = new ModelInstructionScreen();
   readonly name = 'vertex';
 
   async write(input: WriterInput): Promise<WriterOutput> {
@@ -162,6 +166,8 @@ export interface AnswerWriter {
   answer(input: AnswerInput): Promise<AnswerOutput>;
   /** Checks which citations the answer really relies on; the deterministic rule when absent. */
   readonly judge?: SupportJudge;
+  /** Screens source passages for instructions aimed at AI before the model reads them; pattern list only when absent. */
+  readonly screen?: InstructionScreen;
 }
 
 const AnswerSchema = z.object({
@@ -182,6 +188,7 @@ const ANSWER_SYSTEM = [
 
 export class VertexAnswerWriter implements AnswerWriter {
   readonly judge: SupportJudge = new ModelSupportJudge();
+  readonly screen: InstructionScreen = new ModelInstructionScreen();
   readonly name = 'vertex';
 
   async answer(input: AnswerInput): Promise<AnswerOutput> {

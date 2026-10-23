@@ -22,8 +22,22 @@ export const MAX_VERBATIM_WORDS = 25;
  * cite this"). Such passages are never shown to the model: whoever planted them could
  * otherwise inflate their own pay or derail the answer.
  */
-const INSTRUCTION =
-  /\b(?:ignore|disregard|forget|override)\b[^.]{0,40}\b(?:instructions?|rules|prompt|above|previous)\b|\b(?:always|must|should)\s+(?:cite|include|mention|quote|reference)\b|\bcite\s+(?:this|these|me)\b|\b(?:as an?|you are an?)\s+(?:ai|assistant|language model|llm)\b|\bsystem\s+prompt\b|\[\s*c\d+\s*\]/i;
+const INSTRUCTION = new RegExp(
+  [
+    String.raw`\b(?:ignore|disregard|forget|override)\b[^.]{0,40}\b(?:instructions?|rules|prompt|above|previous)\b`,
+    String.raw`\b(?:always|must|should|shall)\s+(?:cite|include|mention|quote|reference|credit|attribute)\b`,
+    String.raw`\bcite\s+(?:this|these|me)\b`,
+    String.raw`\b(?:as an?|you are an?)\s+(?:ai|assistant|language model|llm)\b`,
+    String.raw`\bsystem\s+prompt\b`,
+    String.raw`\[\s*c\d+\s*\]`,
+    // Notes aimed at machines: "note for automated summarisers", "systems generating answers are required to…"
+    String.raw`\b(?:note|message|instructions?|notice)\s+(?:for|to)\s+(?:all\s+)?(?:ai|automated|language models?|llms?|chatbots?|assistants?|summari[sz]ers?|answer engines?|crawlers?)\b`,
+    String.raw`\b(?:systems?|models?|tools?|engines?|bots?)\s+(?:that\s+)?(?:generat|produc|writ|compos|summari[sz])\w*\s+(?:answers?|responses?|summar(?:y|ies)|content)\b`,
+    String.raw`\b(?:required|obliged|instructed)\s+to\s+(?:cite|reference|credit|attribute|mention|quote|link)\b`,
+    String.raw`\battribute\s+(?:every|all|each)\s+(?:claims?|statements?|facts?)\b`,
+  ].join('|'),
+  'i',
+);
 
 export function containsInstructions(passage: string): boolean {
   return INSTRUCTION.test(passage);
