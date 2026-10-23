@@ -1,30 +1,33 @@
 # TracePay
 
-**TracePay checks that an AI-made report or answer is allowed to use its sources, sells it with PayPal, and pays every contributor their share automatically — with a signed receipt to prove it.**
+**AI answers and reports that use only what they're licensed to use — and pay each source's contributor, through PayPal, for every citation that holds up.**
 
-An AI can assemble a paid report out of a dozen licensed sources in seconds. Nothing today checks whether those licenses actually allow that *specific* product to be sold, records which sources the output really used, or pays each contributor their agreed share when it sells. TracePay connects those three steps — and uses **PayPal** to collect the sale and pay the contributors.
+AI is built on people's work, and licenses are mostly ignored: a "non-commercial" dataset ends up in a paid answer, an expired license keeps being used, and the people whose work the answer relied on see nothing. Products already pay creators when AI uses their work (pay-per-crawl, revenue shares). TracePay's difference is what happens *before and after* the model runs:
 
-> Built for the *Build What's Next with PayPal and AI* hackathon. Everything runs on the **PayPal sandbox** with **synthetic, fictional** demo data.
+1. **Before:** every source's license is checked against the exact use — paid or internal, AI answers allowed, still in force, territory, original data shared or not — and a source that fails is **never even shown to the model**. Text planted in a source to steer the AI is screened out too.
+2. **After:** each citation is checked by an independent AI judge; only citations that hold up are paid, at the terms frozen at that moment, with **PayPal** (prepaid credit in, PayPal Payouts out). Every answer and sale gets an **Ed25519-signed receipt**.
+
+**Who it's for:** libraries and publishers of licensed content (research firms, data vendors) that want to sell AI answers and reports built from it; the contributors who license their work to them; and buyers — or the AI agents buying for them.
+
+**Try it:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — no sign-up; you get **your own private copy of the demo**. PayPal **sandbox** buyer (test money only): `tp-buyer-8fjk@personal.example.com` / `2I2oZGc!` (also shown next to the PayPal buttons; or pay with a [sandbox test card](https://developer.paypal.com/tools/sandbox/card-testing/)). Free hosting: the first visit can take up to a minute to wake the API.
+
+### The 3-minute path
+
+1. **Buyer → Ask the library.** Ask a question. See which licensed passages the answer used, *who was paid how many cents and why*, which sources were left out (and why), and the signed receipt. Click a citation to see the judge's reason. *Can the AI be gamed?* shows the latest red-team results, misses included.
+2. **Publisher → Answer royalties → Pay … with PayPal.** Contributors' earnings go out in one PayPal Payouts batch; statuses are read back from PayPal.
+3. **Contributor → My earnings.** What each answer and each sale paid them, under which terms.
+
+Also in the box (the dashboard's guided tour walks through it): the license check blocking a report and the AI research assistant fixing it, a report store with PayPal checkout, a **shopping assistant that pays on its own within a spending mandate** (PayPal Vault), an MCP server for outside AI agents, and a platform API with signed webhooks.
+
+> Built for the *Build What's Next with PayPal and AI* hackathon. Everything runs on the **PayPal sandbox**; the demo library is fictional.
 
 ![CI](https://github.com/UjjwalCodes01/TracePay/actions/workflows/ci.yml/badge.svg)
-
-**Live demo:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — PayPal sandbox, no sign-up needed. You start as the demo publisher, in **your own private copy of the demo** (nobody else sees or resets it); switch to *Buyer* or *Contributor* from the **Demo role** menu at the top. The API runs on free hosting, so the very first visit can take up to a minute to wake it.
-
-**PayPal sandbox buyer** (test money only): `tp-buyer-8fjk@personal.example.com` / `2I2oZGc!` — the app also shows it next to the PayPal buttons. If it ever stops working, choose *Debit or Credit Card* and use a [PayPal sandbox test card](https://developer.paypal.com/tools/sandbox/card-testing/).
-
-### Judge it in 3 minutes
-
-1. **Publisher → Create a report → Start the assistant.** The license check blocks one source (licensed for internal research only); the AI assistant finds a compatible replacement and asks you to approve it. Approve → the report is written, every claim citing its passage.
-2. **Buyer → Report store → Pay with PayPal** (sandbox). PayPal's payment is verified server-side.
-3. **Publisher → Pay contributors → Approve payment split → Send PayPal payouts.** Each contributor is paid their share in one PayPal Payouts batch, under the license terms in force when the report sold.
-4. **Receipt → Check signature.** One signed record from sources to license check to PayPal payment to payouts.
-5. **Buyer → Ask the library.** An AI answer that pays the contributors whose passages it really relied on — and the live red team shows it can't be gamed.
 
 ---
 
 ## Pay-per-citation: AI answers that pay the people they rely on
 
-AI is built on people's work, and those people rarely see a cent. TracePay's answers change that: **every time an AI answer relies on someone's work, that person is paid — through PayPal — for exactly the passages the answer used, proven by records rather than trust.**
+How an answer is checked, priced and paid:
 
 1. A buyer, or their AI agent (Claude Desktop through our MCP server, or any app through the API), holds **prepaid credit bought with PayPal**.
 2. They ask a question and set the most it may cost.
@@ -46,7 +49,7 @@ AI is built on people's work, and those people rarely see a cent. TracePay's ans
 
 ---
 
-## The story in 60 seconds
+## Also included: licensed reports, sold with PayPal
 
 **Atlas Research Studio** wants to sell a *Developer Tools Market Brief* for **$20**, built from three licensed sources.
 
@@ -145,8 +148,11 @@ Checks are claimed with leases (`SKIP LOCKED`), so several servers share the wor
 | Role | What the model does | What it is **not** allowed to do |
 |---|---|---|
 | **Research assistant** (function calling, publisher side) | Plans the build, calls 7 TracePay tools (`run_license_preflight`, `find_compatible_replacement`, `propose_replacement`, `generate_report`, …), recovers from a blocked plan | Override the license check, check unapproved sources, change price/purpose, touch money — enforced in code, not in the prompt |
-| **Shopping assistant** (function calling, buyer side) | Searches the store, inspects candidates (fresh license check, citation check), proposes the best report within the buyer's budget with a plain reason, then reports back after the buyer decides | Pay, exceed the budget, propose a report it hasn't verified, owned or off sale — enforced in code; money moves only when the buyer approves in PayPal |
-| **Answer writer** (structured output, pay-per-citation) | Answers a question from licensed passages only, citing `[Cn]` | Decide who is paid: citations are audited deterministically (retrieved, supported, de-duplicated, capped, within the asker's limit); text inside a source is data, never instructions |
+| **Shopping assistant** (function calling, buyer side) | Searches the store, compares and inspects candidates (fresh license check, citation check) and decides which report best serves the buyer — and, within the buyer's **spending mandate**, buys it with their saved PayPal | Exceed the budget or the mandate, see the saved wallet, or buy a report it hasn't verified, already owned or off sale — enforced in code; outside the mandate the buyer approves in PayPal |
+| **Answer writer** (structured output, pay-per-citation) | Answers a question from licensed passages only, citing `[Cn]` | Decide who is paid: an independent judge does, and the money rules (retrieved, de-duplicated, capped, within the asker's limit) are code; text inside a source is data, never instructions |
+| **Citation judge** (embeddings + structured output) | For each citation, decides whether its sentence really draws on the passage (paraphrases count; topic-only, unrelated and misquoted claims don't), with a plain reason | See the question, prices or names; overrule the semantic floor (`gemini-embedding-001`), below which nothing is paid |
+| **Passage screen** (structured output) | Reads each source passage once, in any language, and flags text addressed to AI systems (planted instructions) so it is never shown to a writer | Be skipped: without a verdict the pattern list decides |
+| **Red team** (`npm run red-team`) | Plays the attacker: writes fresh planted instructions and unpayable citations, plus honest controls, to score the screen and the judge | Grade itself: the real defences run at temperature 0 and every miss is published |
 | **Report writer** (structured output) | Synthesises findings from retrieved passages with `[Cn]` citation markers | Cite anything not retrieved (validated; one repair attempt, then rejected) |
 | **License drafter** (structured output) | Reads a contributor's license document and drafts normalized terms with a verbatim quote per field | Bind anyone — both parties confirm; quotes not found in the document are flagged |
 | **Explainer** | Turns failed rules into plain language for the publisher | Change the verdict — the license check's decision is returned, never the model's |
