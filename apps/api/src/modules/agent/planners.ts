@@ -1,7 +1,7 @@
 import { formatMoney } from '@tracepay/shared';
 import type { Content, Part } from '@google/genai';
 import { aiReady } from '../../config/env';
-import { AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS, vertex } from '../../integrations/ai/vertex';
+import { AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS, vertex, withModelRetry } from '../../integrations/ai/vertex';
 import { SHOPPER_SYSTEM_PROMPT, SHOPPER_TOOL_DECLARATIONS } from './buyer-tools';
 import { TOOL_DECLARATIONS } from './tools';
 
@@ -58,17 +58,19 @@ export class GeminiPlanner implements AgentPlanner {
   async next(history: AgentMessage[], kind: RunKind = 'publisher'): Promise<PlannerTurn> {
     const { ai, model } = vertex();
     const tools = kind === 'buyer' ? SHOPPER_TOOL_DECLARATIONS : TOOL_DECLARATIONS;
-    const response = await ai.models.generateContent({
-      model,
-      contents: toContents(history),
-      config: {
-        systemInstruction: kind === 'buyer' ? SHOPPER_SYSTEM_PROMPT : AGENT_SYSTEM_PROMPT,
-        temperature: 0,
-        httpOptions: { timeout: AI_TIMEOUT_MS },
-        maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
-        tools: [{ functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: t.parameters })) }],
-      },
-    });
+    const response = await withModelRetry(() =>
+      ai.models.generateContent({
+        model,
+        contents: toContents(history),
+        config: {
+          systemInstruction: kind === 'buyer' ? SHOPPER_SYSTEM_PROMPT : AGENT_SYSTEM_PROMPT,
+          temperature: 0,
+          httpOptions: { timeout: AI_TIMEOUT_MS },
+          maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
+          tools: [{ functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: t.parameters })) }],
+        },
+      }),
+    );
     const parts: Part[] = response.candidates?.[0]?.content?.parts ?? [];
     const calls = (response.functionCalls ?? []).map((c, i) => ({
       id: c.id ?? `call_${history.length}_${i}`,

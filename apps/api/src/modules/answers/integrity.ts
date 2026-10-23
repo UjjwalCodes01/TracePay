@@ -26,7 +26,7 @@ const INSTRUCTION = new RegExp(
   [
     String.raw`\b(?:ignore|disregard|forget|override)\b[^.]{0,40}\b(?:instructions?|rules|prompt|above|previous)\b`,
     String.raw`\b(?:always|must|should|shall)\s+(?:cite|include|mention|quote|reference|credit|attribute)\b`,
-    String.raw`\bcite\s+(?:this|these|me)\b`,
+    String.raw`\bcite\s+(?:me|this\s+(?:passage|chunk|excerpt))\b`,
     String.raw`\b(?:as an?|you are an?)\s+(?:ai|assistant|language model|llm)\b`,
     String.raw`\bsystem\s+prompt\b`,
     String.raw`\[\s*c\d+\s*\]`,

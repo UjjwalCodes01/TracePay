@@ -6,6 +6,7 @@ import { quotas } from '../http/limits';
 import { askLibrary, getAnswer, listAnswers, listLibraries } from '../modules/answers/answers.service';
 import { captureTopUp, creditSummary, MAX_TOP_UP_CENTS, refillDemoCredit, startTopUp } from '../modules/answers/credits.service';
 import { runRedTeam } from '../modules/answers/integrity';
+import { latestRedTeam } from '../modules/answers/red-team';
 import { contributorAnswerEarnings, refreshRoyaltyPayout, royaltySummary, sendRoyaltyPayout, submitRoyaltyPayout } from '../modules/answers/royalties.service';
 import { HttpError } from '../http/errors';
 
@@ -53,13 +54,15 @@ export function answerRoutes({ db, paypal, signingKeys, answerWriter, config }: 
   });
 
   r.get('/answers/integrity', async (_req, res) => {
-    // The payment rules attacked live: the same suite the tests run.
+    // Rules enforced in code (budget, padding, invented sources…), checked on every request, and the
+    // latest AI red team: attacks Gemini wrote against the AI defences, scored with every miss shown.
     const attacks = runRedTeam();
     res.json({
       attacks,
       caught: attacks.filter((a) => a.caught).length,
       total: attacks.length,
       overpaidCents: attacks.filter((a) => !a.caught).reduce((n, a) => n + a.paidCents, 0),
+      redTeam: await latestRedTeam(),
     });
   });
 

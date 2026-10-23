@@ -37,10 +37,49 @@ function parseServiceAccount(value: string): Record<string, string> {
   return JSON.parse(text) as Record<string, string>;
 }
 
+/** Rate limits and overload (shared pay-as-you-go capacity can briefly run dry) are worth a short retry. */
+const TRANSIENT = /\b(429|500|502|503|504)\b|RESOURCE_EXHAUSTED|UNAVAILABLE|INTERNAL|overloaded|ECONNRESET|ETIMEDOUT|fetch failed/i;
+export const isTransientModelError = (err: unknown) => {
+  const status = (err as { status?: number }).status;
+  return (typeof status === 'number' && (status === 429 || status >= 500)) || TRANSIENT.test((err as Error)?.message ?? '');
+};
+/** Waits between attempts (plus jitter); four attempts in all, about 8 s of waiting at most. */
+export const MODEL_RETRY_DELAYS_MS = [1_000, 2_500, 4_500];
+
+/** Calls the model, retrying transient failures (never invalid requests or bad replies). */
+export async function withModelRetry<T>(call: () => Promise<T>, delays: readonly number[] = MODEL_RETRY_DELAYS_MS): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (err) {
+      if (attempt >= delays.length || !isTransientModelError(err)) throw err;
+      await new Promise((r) => setTimeout(r, delays[attempt]! + Math.floor(Math.random() * 400)));
+    }
+  }
+}
+
 /** Every model call gives up after this long. */
 export const AI_TIMEOUT_MS = 60_000;
 /** Generous (thinking models spend output tokens on reasoning) but bounded. */
 export const AI_MAX_OUTPUT_TOKENS = 8192;
+
+/**
+ * The JSON schema the model is asked to follow. zod bounds integers by JavaScript's safe range
+ * (±9007199254740991); Vertex AI rejects those as an invalid argument, and they constrain nothing.
+ */
+export function modelSchema(schema: z.ZodType): Record<string, unknown> {
+  const strip = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(strip);
+    if (!node || typeof node !== 'object') return node;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) {
+      if ((k === 'maximum' || k === 'minimum') && typeof v === 'number' && Math.abs(v) >= Number.MAX_SAFE_INTEGER) continue;
+      out[k] = strip(v);
+    }
+    return out;
+  };
+  return strip(toJSONSchema(schema, { target: 'draft-7' })) as Record<string, unknown>;
+}
 
 /**
  * Structured generation: the model must return JSON matching `schema`, and the
@@ -53,19 +92,21 @@ export async function generateStructured<S extends z.ZodType>(args: {
   temperature?: number;
 }): Promise<{ data: z.infer<S>; model: string; usage: { inputTokens?: number; outputTokens?: number } }> {
   const { ai, model } = vertex();
-  const response = await ai.models.generateContent({
-    model,
-    contents: args.prompt,
-    config: {
-      systemInstruction: args.system,
-      temperature: args.temperature ?? 0.2,
-      // Bounded in time and size: a hung or runaway call must not hold credit or a request open.
-      httpOptions: { timeout: AI_TIMEOUT_MS },
-      maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
-      responseMimeType: 'application/json',
-      responseJsonSchema: toJSONSchema(args.schema, { target: 'draft-7' }),
-    },
-  });
+  const response = await withModelRetry(() =>
+    ai.models.generateContent({
+      model,
+      contents: args.prompt,
+      config: {
+        systemInstruction: args.system,
+        temperature: args.temperature ?? 0.2,
+        // Bounded in time and size: a hung or runaway call must not hold credit or a request open.
+        httpOptions: { timeout: AI_TIMEOUT_MS },
+        maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
+        responseMimeType: 'application/json',
+        responseJsonSchema: modelSchema(args.schema),
+      },
+    }),
+  );
   const text = response.text;
   if (!text) throw new Error('The AI model returned an empty response.');
   const data = args.schema.parse(JSON.parse(text));

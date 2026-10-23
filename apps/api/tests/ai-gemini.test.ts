@@ -17,7 +17,7 @@ vi.mock('@google/genai', () => ({
 process.env.GEMINI_API_KEY = 'test-key';
 process.env.GEMINI_MODEL = 'gemini-test';
 
-const { generateStructured, AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS } = await import('../src/integrations/ai/vertex');
+const { generateStructured, AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS, withModelRetry, isTransientModelError, modelSchema } = await import('../src/integrations/ai/vertex');
 const { VertexAnswerWriter, VertexReportWriter } = await import('../src/modules/generation/writers');
 const { GeminiPlanner } = await import('../src/modules/agent/planners');
 const { explainPreflight } = await import('../src/modules/builds/explain');
@@ -33,6 +33,25 @@ beforeEach(() => {
   embedContent.mockReset();
 });
 
+describe('retrying the model', () => {
+  const exhausted = () => new Error('{"error":{"code":429,"message":"TPM quota exhausted.","status":"RESOURCE_EXHAUSTED"}}');
+  it('retries rate limits and overload, then succeeds', async () => {
+    const call = vi.fn().mockRejectedValueOnce(exhausted()).mockRejectedValueOnce(Object.assign(new Error('Service Unavailable'), { status: 503 })).mockResolvedValue('ok');
+    await expect(withModelRetry(() => call(), [0, 0, 0])).resolves.toBe('ok');
+    expect(call).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up after its attempts, and never retries a bad request', async () => {
+    const busy = vi.fn().mockRejectedValue(exhausted());
+    await expect(withModelRetry(() => busy(), [0, 0])).rejects.toThrow(/RESOURCE_EXHAUSTED/);
+    expect(busy).toHaveBeenCalledTimes(3);
+    const bad = vi.fn().mockRejectedValue(Object.assign(new Error('Request contains an invalid argument.'), { status: 400 }));
+    await expect(withModelRetry(() => bad(), [0, 0])).rejects.toThrow(/invalid argument/);
+    expect(bad).toHaveBeenCalledTimes(1);
+    expect(isTransientModelError(new Error('Unexpected token < in JSON'))).toBe(false);
+  });
+});
+
 describe('generateStructured', () => {
   it('bounds every call in time and size and asks for JSON', async () => {
     generateContent.mockResolvedValue(reply({ ok: true }));
@@ -42,6 +61,13 @@ describe('generateStructured', () => {
     expect(req.model).toBe('gemini-test');
     expect(req.config).toMatchObject({ systemInstruction: 'sys', responseMimeType: 'application/json', httpOptions: { timeout: AI_TIMEOUT_MS }, maxOutputTokens: AI_MAX_OUTPUT_TOKENS });
     expect(req.config.responseJsonSchema).toBeTruthy();
+  });
+
+  it('never sends the model the unsafe-integer bounds Vertex AI rejects', () => {
+    const json = JSON.stringify(modelSchema(z.object({ n: z.number().int().min(1), m: z.number().int().min(0).max(500) })));
+    expect(json).not.toMatch(/9007199254740991/);
+    expect(json).toMatch(/"minimum":1/);
+    expect(json).toMatch(/"maximum":500/);
   });
 
   it('rejects an empty reply, invalid JSON and JSON of the wrong shape', async () => {

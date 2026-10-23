@@ -18,6 +18,10 @@ describe('instructions hidden in a source (pattern list)', () => {
     }
   });
 
+  it('leaves citation notices for human readers alone', () => {
+    expect(containsInstructions('Please cite this report as: Northwind Data Co., DevTools Spend Index 2026.')).toBe(false);
+  });
+
   it('leaves ordinary writing about AI alone — every passage of the demo library', () => {
     const dir = new URL('../fixtures/demo-assets/', import.meta.url).pathname;
     const passages = readdirSync(dir).flatMap((f) => chunkContent(readFileSync(dir + f, 'utf8')));

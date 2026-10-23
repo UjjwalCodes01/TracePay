@@ -7,7 +7,7 @@ import { useSearchParams } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner } from '../components/ui';
 import { api, post } from '../lib/api';
-import { formatMoney, timeAgo } from '../lib/format';
+import { formatDate, formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
 
 interface Library {
@@ -47,11 +47,26 @@ interface AnswerView {
   receipt: { document: Record<string, unknown>; signature: string; algorithm: 'Ed25519'; publicKeyPem: string } | null;
 }
 
+interface RedTeamScore {
+  total: number;
+  correct: number;
+  misses: Array<{ text: string; technique: string; passage?: string; why: string }>;
+}
+
 interface Integrity {
   attacks: Array<{ id: string; attack: string; expected: string; caught: boolean }>;
   caught: number;
   total: number;
   overpaidCents: number;
+  redTeam: {
+    generatedAt: string;
+    attackerModel: string;
+    screenAttacks: RedTeamScore;
+    screenControls: RedTeamScore;
+    judgeAttacks: RedTeamScore;
+    judgeControls: RedTeamScore;
+    overpaidCents: number;
+  } | null;
 }
 
 interface HistoryItem {
@@ -639,61 +654,105 @@ function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Cred
   );
 }
 
-/** The payment rules, attacked live — the same suite the tests run. */
+/** How the AI defences held up against attacks Gemini wrote, and the payment rules enforced in code. */
 function IntegrityCard() {
   const q = useQuery({ queryKey: ['answer-integrity'], queryFn: () => api<Integrity>('/answers/integrity'), staleTime: Infinity });
   const title = (icon: ReactNode) => (
     <span className="flex items-center gap-2">
-      {icon} Can the AI overcharge you?
+      {icon} Can the AI be gamed?
     </span>
   );
   if (q.isPending && !q.error) {
     return (
       <Card title={title(<ShieldCheck className="size-4" aria-hidden />)}>
-        <Spinner label="Running the attacks…" />
+        <Spinner label="Loading the checks…" />
       </Card>
     );
   }
   if (q.error || !q.data) {
     return (
       <Card title={title(<ShieldX className="size-4" aria-hidden />)}>
-        <ErrorNote error={q.error ?? new Error('The integrity check didn’t run.')} />
+        <ErrorNote error={q.error ?? new Error('The integrity check didn’t load.')} />
       </Card>
     );
   }
+  const rt = q.data.redTeam;
   // The honest answer is the control case, not an attack: shown apart, not counted.
   const control = q.data.attacks.find((t) => t.id === 'honest');
-  const attacks = q.data.attacks.filter((t) => t.id !== 'honest');
-  const caught = attacks.filter((t) => t.caught).length;
-  const allCaught = caught === attacks.length && (control?.caught ?? true);
+  const rules = q.data.attacks.filter((t) => t.id !== 'honest');
+  const rulesHold = rules.filter((t) => t.caught).length;
+  const rows = rt
+    ? [
+        { label: 'Instructions planted in a source, withheld', s: rt.screenAttacks, attack: true },
+        { label: 'Citations that shouldn’t be paid, refused', s: rt.judgeAttacks, attack: true },
+        { label: 'Ordinary passages about AI, left alone', s: rt.screenControls, attack: false },
+        { label: 'Honest paraphrases, paid', s: rt.judgeControls, attack: false },
+      ]
+    : [];
+  const misses = rows.flatMap((r) => r.s.misses.map((m) => ({ ...m, kind: r.attack ? 'Got through' : 'Wrongly blocked' })));
   return (
-    <Card title={title(allCaught ? <ShieldCheck className="size-4 text-pass" aria-hidden /> : <ShieldX className="size-4 text-block" aria-hidden />)}>
-      <p className="text-sm text-muted">
-        These attacks run against the payment rules right now.{' '}
-        <strong className="text-ink">
-          {caught} of {attacks.length} caught
-        </strong>
-        ; overpaid: {formatMoney(q.data.overpaidCents)}.
-      </p>
-      {control && (
-        <p className="mt-2 flex items-start gap-2 text-xs">
-          {control.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" aria-hidden /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" aria-hidden />}
-          <span>Control: an honest answer is {control.caught ? 'paid correctly' : 'not paid correctly'}.</span>
-        </p>
+    <Card title={title(<ShieldCheck className="size-4 text-pass" aria-hidden />)}>
+      {rt ? (
+        <>
+          <p className="text-sm text-muted">
+            Red team: Gemini wrote {rt.screenAttacks.total + rt.judgeAttacks.total} fresh attacks on the AI checks, plus honest controls ({formatDate(rt.generatedAt)}). Real results, misses included.
+          </p>
+          <ul className="mt-3 space-y-1.5 text-sm">
+            {rows.map((r) => (
+              <li key={r.label} className="flex items-start justify-between gap-3">
+                <span>{r.label}</span>
+                <span className={clsx('shrink-0 font-medium tabular-nums', r.s.correct === r.s.total ? 'text-pass' : 'text-ink')}>
+                  {r.s.correct}/{r.s.total}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-muted">
+            What missed citation attacks would have been paid: {formatMoney(rt.overpaidCents)}. Regenerated with <code className="rounded bg-slate-100 px-1 text-slate-800">npm run red-team</code>.
+          </p>
+          {misses.length > 0 && (
+            <details className="mt-3 text-xs">
+              <summary className="cursor-pointer select-none font-medium text-muted hover:text-ink">See the {misses.length} misses</summary>
+              <ul className="mt-2 space-y-2">
+                {misses.map((m, i) => (
+                  <li key={i} className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-medium">
+                      {m.kind} · {m.technique}
+                    </div>
+                    <div className="mt-0.5 text-slate-700">“{m.text}”</div>
+                    {m.passage && <div className="mt-0.5 text-muted">Passage: “{m.passage}”</div>}
+                    <div className="mt-0.5 text-muted">Checker said: {m.why}</div>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-muted">The AI red team hasn’t been run on this server yet.</p>
       )}
-      <details className="mt-3 text-xs">
-        <summary className="cursor-pointer select-none font-medium text-muted hover:text-ink">See the {attacks.length} attacks</summary>
-        <ul className="mt-2 space-y-1.5">
-          {attacks.map((t) => (
-            <li key={t.id} className="flex items-start gap-2">
-              {t.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" aria-label="Caught" /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" aria-label="Not caught" />}
-              <span>
-                {t.attack} <span className="text-muted">→ {t.expected}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </details>
+      <div className="mt-4 border-t border-line pt-3">
+        <p className="text-sm">
+          Rules enforced in code, checked on every request:{' '}
+          <strong>
+            {rulesHold} of {rules.length} hold
+          </strong>
+          {control && <span className="text-muted">; an honest answer is {control.caught ? 'paid correctly' : 'not paid correctly'}</span>}.
+        </p>
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer select-none font-medium text-muted hover:text-ink">See the {rules.length} rules</summary>
+          <ul className="mt-2 space-y-1.5">
+            {rules.map((t) => (
+              <li key={t.id} className="flex items-start gap-2">
+                {t.caught ? <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-pass" aria-label="Holds" /> : <ShieldX className="mt-0.5 size-3.5 shrink-0 text-block" aria-label="Broken" />}
+                <span>
+                  {t.attack} <span className="text-muted">→ {t.expected}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      </div>
     </Card>
   );
 }

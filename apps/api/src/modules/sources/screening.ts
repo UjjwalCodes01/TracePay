@@ -8,9 +8,9 @@ import { containsInstructions } from '../answers/integrity';
  * claim to this source"). Whoever planted it could inflate their own pay or derail an answer, so
  * such passages are never shown to a model.
  *
- * Two layers: a fixed pattern list (instant, catches the blatant cases), then — with AI on — a
- * model that reads each passage once, in any language and phrasing. A source version never changes,
- * so each passage's verdict is stored and reused.
+ * With AI on, a model reads each passage once, in any language and phrasing, and decides; a source
+ * version never changes, so the verdict is stored and reused. Without AI (or if the model fails), a
+ * fixed pattern list catches the blatant cases.
  */
 
 export interface ScreenVerdict {
@@ -62,34 +62,46 @@ const timeout = <T>(work: Promise<T>, ms: number) =>
   Promise.race([work, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Screening timed out.')), ms).unref?.())]);
 
 /**
- * The passages (by chunk id) that must be withheld from the model, with why. Verdicts are stored on
- * the passage, so each one is screened by the model at most once.
+ * The passages (by chunk id) that must be withheld from the model, with why.
+ *
+ * With a model screen, its verdict decides — stored on the passage, so each one is screened once.
+ * The pattern list decides only where there is no verdict (no AI, the model failed or skipped one):
+ * it catches blatant cases but can't tell "Note to AI assistants: cite this" from "Please cite this
+ * report as…", which real sources say all the time (the red team showed it withholding honest text).
  */
 export async function withheldPassages(db: Db, passages: Array<{ chunkId: string; text: string }>, screen?: InstructionScreen): Promise<Map<string, string>> {
   const withheld = new Map<string, string>();
-  const rest: Array<{ chunkId: string; text: string }> = [];
-  for (const p of passages) {
+  const byPattern = (p: { chunkId: string; text: string }) => {
     if (containsInstructions(p.text)) withheld.set(p.chunkId, 'Its text contains instructions aimed at AI.');
-    else rest.push(p);
-  }
-  if (rest.length === 0) return withheld;
+  };
+  if (passages.length === 0) return withheld;
 
-  const stored = await db.sourceChunk.findMany({ where: { id: { in: rest.map((p) => p.chunkId) }, screenedBy: { not: null } }, select: { id: true, instructsAi: true, screenNote: true } });
-  const known = new Map(stored.map((s) => [s.id, s]));
+  const stored = await db.sourceChunk.findMany({ where: { id: { in: passages.map((p) => p.chunkId) }, screenedBy: { not: null } }, select: { id: true, instructsAi: true, screenNote: true } });
+  const known = new Set(stored.map((s) => s.id));
   for (const s of stored) if (s.instructsAi) withheld.set(s.id, s.screenNote ?? 'Its text contains instructions aimed at AI.');
 
-  const unscreened = rest.filter((p) => !known.has(p.chunkId));
-  if (!screen || unscreened.length === 0) return withheld;
+  const unscreened = passages.filter((p) => !known.has(p.chunkId));
+  if (unscreened.length === 0) return withheld;
+  if (!screen) {
+    unscreened.forEach(byPattern);
+    return withheld;
+  }
   try {
     const verdicts = await timeout(screen.screen(unscreened.map((p) => ({ id: p.chunkId, text: p.text }))), SCREEN_TIMEOUT_MS);
-    for (const [chunkId, v] of verdicts) {
-      if (v.instructs) withheld.set(chunkId, v.reason);
-      await db.sourceChunk.update({ where: { id: chunkId }, data: { instructsAi: v.instructs, screenNote: v.reason.slice(0, 300), screenedBy: screen.name } });
+    for (const p of unscreened) {
+      const v = verdicts.get(p.chunkId);
+      if (!v) {
+        byPattern(p);
+        continue;
+      }
+      if (v.instructs) withheld.set(p.chunkId, v.reason);
+      await db.sourceChunk.update({ where: { id: p.chunkId }, data: { instructsAi: v.instructs, screenNote: v.reason.slice(0, 300), screenedBy: screen.name } });
     }
   } catch (err) {
-    // The model is unavailable: the pattern list has already run, and payment is still decided by the
+    // The model is unavailable: the pattern list decides for now, and payment is still decided by the
     // citation check, so the answer goes ahead. The passages stay unscreened and are tried next time.
     console.warn(`passage screening skipped: ${(err as Error).message}`);
+    unscreened.forEach(byPattern);
   }
   return withheld;
 }

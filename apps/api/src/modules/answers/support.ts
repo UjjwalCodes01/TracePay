@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { generateStructured, vertex } from '../../integrations/ai/vertex';
+import { generateStructured, vertex, withModelRetry } from '../../integrations/ai/vertex';
 import { supports } from './integrity';
 
 /**
@@ -93,7 +93,7 @@ export class ModelSupportJudge implements SupportJudge {
     // 1. Semantic floor.
     const texts = [...new Set(pairs.flatMap((p) => [p.sentence, p.passage]))];
     const { ai } = vertex();
-    const res = await ai.models.embedContent({ model: EMBEDDING_MODEL, contents: texts, config: { taskType: 'SEMANTIC_SIMILARITY' } });
+    const res = await withModelRetry(() => ai.models.embedContent({ model: EMBEDDING_MODEL, contents: texts, config: { taskType: 'SEMANTIC_SIMILARITY' } }));
     const vectors = new Map(texts.map((t, i) => [t, res.embeddings?.[i]?.values ?? []]));
     const above: SupportPair[] = [];
     for (const p of pairs) {
