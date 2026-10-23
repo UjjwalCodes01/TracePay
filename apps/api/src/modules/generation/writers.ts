@@ -199,6 +199,7 @@ export class VertexAnswerWriter implements AnswerWriter {
       prompt: `Question: ${input.question}\n\nExcerpts:\n${excerpts}${repair}`,
       schema: AnswerSchema,
       temperature: 0.2,
+      thinking: 'low',
     });
     return { covered: data.covered, text: data.answer.trim(), model, fromFixture: false };
   }

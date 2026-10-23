@@ -1,3 +1,4 @@
+import { logger } from '../../http/logger';
 import { answersEnv } from '../../config/env';
 import { formatMoney } from '@tracepay/shared';
 import type { Prisma } from '../../generated/prisma/client';
@@ -171,8 +172,9 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
       let checkedBy = judge.name;
       try {
         verdicts = await withTimeout(judge.judge(pairs, context), JUDGE_TIMEOUT_MS);
-      } catch {
+      } catch (err) {
         // The judge is down: the deterministic rule decides (it can underpay, never overpay a decorative citation).
+        logger.warn({ err: (err as Error).message, answerId: answer.id }, 'citation judge unavailable; the rule decided');
         verdicts = await new RuleSupportJudge().judge(pairs, context);
         checkedBy = 'rules';
       }

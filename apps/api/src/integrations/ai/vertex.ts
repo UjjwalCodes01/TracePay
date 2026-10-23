@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import type { z } from 'zod';
 import { toJSONSchema } from 'zod';
 import { aiConfig } from '../../config/env';
@@ -90,8 +90,15 @@ export async function generateStructured<S extends z.ZodType>(args: {
   prompt: string;
   schema: S;
   temperature?: number;
+  /**
+   * How much the model reasons before answering. Simple classifications (is this an instruction? does
+   * this sentence use this passage?) need little, and answer in about a second instead of four.
+   * Applied to Gemini 3 models only; older ones don't take the setting.
+   */
+  thinking?: 'minimal' | 'low';
 }): Promise<{ data: z.infer<S>; model: string; usage: { inputTokens?: number; outputTokens?: number } }> {
   const { ai, model } = vertex();
+  const thinking = args.thinking && /^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: args.thinking === 'minimal' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW } } : {};
   const response = await withModelRetry(() =>
     ai.models.generateContent({
       model,
@@ -104,6 +111,7 @@ export async function generateStructured<S extends z.ZodType>(args: {
         maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
         responseMimeType: 'application/json',
         responseJsonSchema: modelSchema(args.schema),
+        ...thinking,
       },
     }),
   );

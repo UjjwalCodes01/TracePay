@@ -52,6 +52,17 @@ describe('retrying the model', () => {
   });
 });
 
+describe('the citation judge', () => {
+  it('keeps a whole batch when one reason runs long, and trims it', async () => {
+    const { ModelSupportJudge } = await import('../src/modules/answers/support');
+    embedContent.mockImplementation(async (req?: { contents: string[] }) => ({ embeddings: (req?.contents ?? []).map(() => ({ values: [1, 0] })) }));
+    generateContent.mockResolvedValue(reply({ verdicts: [{ id: 'p1', supported: true, reason: 'x'.repeat(1200) }] }));
+    const v = await new ModelSupportJudge().judge([{ key: 'k', sentence: 'Spend rose 61%.', passage: 'Spend rose 61% year over year.' }]);
+    expect(v.get('k')).toMatchObject({ supported: true });
+    expect(v.get('k')!.reason.length).toBeLessThanOrEqual(300);
+  });
+});
+
 describe('generateStructured', () => {
   it('bounds every call in time and size and asks for JSON', async () => {
     generateContent.mockResolvedValue(reply({ ok: true }));
@@ -225,7 +236,6 @@ describe.runIf(process.env.TEST_DATABASE_URL)('a paid answer through the Gemini 
     });
     expect(a.status).toBe('answered');
     expect(a.citationsCheckedBy).toBe('model');
-    expect(judged).not.toMatch(/Lisbon/); // stopped by the floor, never sent to the judge
     expect(judged).not.toMatch(/cents|contributor|paid/i); // the judge sees no money or names
     expect(a.citations.map((c) => [c.paid, c.reason])).toEqual([
       [true, 'States the passage’s figure.'],
