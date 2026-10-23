@@ -41,6 +41,12 @@ describe('production configuration (unit)', () => {
     };
     expect(productionConfigProblems(ok)).toEqual([]);
     expect(productionConfigProblems({ ...ok, APP_BASE_URL: 'http://localhost:5173' })).toHaveLength(1);
+    // A public demo must show its AI: Vertex without its key doesn't count; a key, or an explicit opt-out, does.
+    const vertex = { GOOGLE_CLOUD_PROJECT: 'p', GOOGLE_CLOUD_LOCATION: 'global', VERTEX_MODEL: 'gemini-3.5-flash' };
+    expect(productionConfigProblems({ ...ok, DEMO_MODE: 'true', ...vertex })).toEqual([expect.stringMatching(/DEMO_MODE shows TracePay to visitors/)]);
+    expect(productionConfigProblems({ ...ok, DEMO_MODE: 'true', ...vertex, GOOGLE_SERVICE_ACCOUNT_JSON: 'e30=' })).toEqual([]);
+    expect(productionConfigProblems({ ...ok, DEMO_MODE: 'true', GEMINI_API_KEY: 'k' })).toEqual([]);
+    expect(productionConfigProblems({ ...ok, DEMO_MODE: 'true', ALLOW_DEMO_WITHOUT_AI: 'true' })).toEqual([]);
   });
 });
 

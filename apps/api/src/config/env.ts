@@ -83,8 +83,7 @@ export type AiConfig =
   | { provider: 'vertex'; project: string; location: string; model: string; serviceAccountJson?: string }
   | { provider: 'gemini-api'; apiKey: string; model: string };
 
-export function aiConfig(): AiConfig | null {
-  const e = process.env;
+export function aiConfig(e: NodeJS.ProcessEnv = process.env): AiConfig | null {
   // A server has no gcloud login to fall back on: Vertex counts as configured there only with its key
   // (else every call would fail while the app claimed AI was on).
   const vertexCredentials = e.NODE_ENV !== 'production' || !!e.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() || !!e.GOOGLE_APPLICATION_CREDENTIALS?.trim();
@@ -139,6 +138,12 @@ export function productionConfigProblems(e: NodeJS.ProcessEnv = process.env): st
   if (!e.PAYPAL_CLIENT_ID?.trim() || !e.PAYPAL_CLIENT_SECRET?.trim()) problems.push('PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are required.');
   if (!e.PAYPAL_WEBHOOK_ID?.trim()) problems.push('PAYPAL_WEBHOOK_ID is required: without it every PayPal webhook is rejected.');
   if (!e.AUDIT_SIGNING_PRIVATE_KEY?.trim()) problems.push('AUDIT_SIGNING_PRIVATE_KEY is required (npm run keys:generate -w @tracepay/api).');
+  // A public demo without its AI would show visitors the fallbacks instead of the product.
+  if (e.DEMO_MODE === 'true' && !aiConfig({ ...e, NODE_ENV: 'production' }) && e.ALLOW_DEMO_WITHOUT_AI !== 'true') {
+    problems.push(
+      'DEMO_MODE shows TracePay to visitors, so it needs its AI: set GOOGLE_SERVICE_ACCOUNT_JSON (with GOOGLE_CLOUD_PROJECT and VERTEX_MODEL) or GEMINI_API_KEY — or ALLOW_DEMO_WITHOUT_AI=true to run the labelled fallbacks on purpose.',
+    );
+  }
   return problems;
 }
 
