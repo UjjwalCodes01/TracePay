@@ -33,7 +33,9 @@ interface AnswerView {
   text: string | null;
   model: string | null;
   fromFixture: boolean;
-  citations: Array<{ handle: string; assetVersionId: string | null; title: string | null; paid: boolean }>;
+  citations: Array<{ handle: string; assetVersionId: string | null; title: string | null; paid: boolean; reason?: string | null }>;
+  /** 'model': an independent AI check decided which citations were paid; 'rules': fixed rules did. */
+  citationsCheckedBy?: string;
   paid: Array<{ assetVersionId: string; title: string; contributor: string; citations: number; centsPerCitation: number; amountCents: number }>;
   notPaid: { unsupported: number; repeated: number; overCap: number };
   excluded: Array<{ title: string; contributor: string; code: string; reason: string }>;
@@ -264,7 +266,19 @@ function AnswerCard({ answerId }: { answerId: string }) {
   const handlesOf = (assetVersionId: string) => [...new Set(a.citations.filter((c) => c.assetVersionId === assetVersionId && c.paid).map((c) => c.handle))];
   const unpaid = a.notPaid.unsupported + a.notPaid.repeated + a.notPaid.overCap;
   const parts = (a.text ?? '').split(/(\[C\d+\])/);
-  const open = openChip !== null ? handle.get(/^\[(C\d+)\]$/.exec(parts[openChip] ?? '')?.[1] ?? '') : undefined;
+  // The k-th time a handle appears in the text is its k-th citation (each has its own verdict and reason).
+  const citationAt = new Map<number, AnswerView['citations'][number]>();
+  const seenCount = new Map<string, number>();
+  parts.forEach((part, i) => {
+    const h = /^\[(C\d+)\]$/.exec(part)?.[1];
+    if (!h) return;
+    const all = a.citations.filter((c) => c.handle === h);
+    const k = seenCount.get(h) ?? 0;
+    seenCount.set(h, k + 1);
+    const c = all[k] ?? all.at(-1) ?? handle.get(h);
+    if (c) citationAt.set(i, c);
+  });
+  const open = openChip !== null ? citationAt.get(openChip) : undefined;
   const badge = STATUS_BADGE[a.status];
 
   return (
@@ -288,7 +302,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
             {parts.map((part, i) => {
               const m = /^\[(C\d+)\]$/.exec(part);
               if (!m) return <Fragment key={i}>{part}</Fragment>;
-              const c = handle.get(m[1]!);
+              const c = citationAt.get(i);
               const bg = color(c?.assetVersionId ?? null);
               const title = c?.title ?? 'a licensed source';
               const paid = !!c?.paid;
@@ -298,7 +312,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
                   type="button"
                   aria-label={`Citation ${m[1]}: ${title}, ${paid ? 'paid' : 'not paid'}`}
                   aria-expanded={openChip === i}
-                  title={`${title}${paid ? '' : ' — not paid (didn’t support this sentence, or repeated)'}`}
+                  title={`${title}${c?.reason ? ` — ${c.reason}` : paid ? '' : ' — not paid'}`}
                   onClick={() => setOpenChip(openChip === i ? null : i)}
                   className={clsx(
                     'mx-0.5 inline-flex h-5 items-center rounded px-1.5 align-[1px] text-[11px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink',
@@ -313,8 +327,15 @@ function AnswerCard({ answerId }: { answerId: string }) {
           </p>
           {open && (
             <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700" role="note">
-              <strong>{open.handle}</strong>: {open.title ?? 'a licensed source'} —{' '}
-              {open.paid ? 'paid: the answer relies on this passage.' : 'not paid: it didn’t support its sentence, or repeated a passage already paid.'}
+              <strong>{open.handle}</strong>: {open.title ?? 'a licensed source'} — {open.paid ? 'paid' : 'not paid'}.{' '}
+              {open.reason ?? (open.paid ? 'The answer relies on this passage.' : 'It didn’t support its sentence, or repeated a passage already paid.')}
+            </p>
+          )}
+          {a.status === 'answered' && a.citations.length > 0 && (
+            <p className="mt-2 text-xs text-muted">
+              {a.citationsCheckedBy === 'model'
+                ? 'Each citation was checked by a separate AI judge, which sees only the sentence and the passage: a citation is paid only if the sentence really draws on it. Click a citation to see why.'
+                : 'Each citation was checked by fixed rules: a citation is paid only if its sentence shares the passage’s specific figures or terms. Click a citation to see why.'}
             </p>
           )}
         </>

@@ -11,7 +11,8 @@ import { listCatalog, resolveSources } from '../catalog/catalog.service';
 import type { AnswerWriter } from '../generation/writers';
 import { retrievePassages } from '../generation/retrieval';
 import { CreditError, lockAccount } from './credits.service';
-import { auditAnswer, containsInstructions, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
+import { auditAnswer, citationPairs, containsInstructions, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
+import { RuleSupportJudge } from './support';
 import { checkAnswerRights, type ExcludedSource } from './rights';
 
 /**
@@ -33,6 +34,8 @@ const json = (v: unknown) => v as Prisma.InputJsonValue;
 
 /** The model gets this long; well inside the recovery sweep's window, so a hold is never stranded. */
 export const WRITER_TIMEOUT_MS = 60_000;
+/** The citation judge (embeddings + one model call) gets this long before the deterministic rule decides instead. */
+export const JUDGE_TIMEOUT_MS = 45_000;
 
 const DEMO_IDS = new Set(DEMO_USERS.map((u) => u.id));
 const DEMO_CONTRIBUTORS = new Set(DEMO_USERS.filter((u) => u.role === 'contributor').map((u) => u.id));
@@ -59,7 +62,9 @@ interface StoredContent {
   /** The answer, kept only when it was paid for (or is TracePay's own "not covered" note). */
   text: string | null;
   /** Every citation, with whether it was paid. Passage text is never stored here. */
-  citations: Array<{ handle: string; assetVersionId: string | null; chunkId: string | null; supported: boolean; title?: string | null }>;
+  citations: Array<{ handle: string; assetVersionId: string | null; chunkId: string | null; supported: boolean; reason?: string; title?: string | null }>;
+  /** What decided which citations were paid: an independent AI check ('model') or the deterministic rule. */
+  checkedBy?: string;
   ignored: AnswerAudit['ignored'];
   passages: Array<{ handle: string; chunkId: string; assetVersionId: string; title?: string }>;
   /** Passages withheld from the model because they tried to instruct it. */
@@ -143,16 +148,33 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   const copied = (text: string) => plan.passages.some((p) => longestCopiedRun(text, p.text) > MAX_VERBATIM_WORDS);
   let out;
   let audit: AnswerAudit;
+  const topic = input.question;
   try {
     out = await withTimeout(writer.answer({ question: input.question, passages: writerPassages }), WRITER_TIMEOUT_MS);
-    audit = auditAnswer(out.text, plan.passages, rates);
+    audit = auditAnswer(out.text, plan.passages, rates, { topic });
     const problems = [
       ...audit.unknownHandles.map((h) => `[${h}] is not one of the excerpts.`),
       ...(copied(out.text) ? [`You copied more than ${MAX_VERBATIM_WORDS} words of an excerpt word for word. Paraphrase.`] : []),
     ];
     if (out.covered && problems.length) {
       out = await withTimeout(writer.answer({ question: input.question, passages: writerPassages, previousProblems: problems }), WRITER_TIMEOUT_MS);
-      audit = auditAnswer(out.text, plan.passages, rates);
+      audit = auditAnswer(out.text, plan.passages, rates, { topic });
+    }
+    // Who gets paid is decided by an independent check of each citation, not by the writer.
+    if (out.covered && !audit.unknownHandles.length && !copied(out.text)) {
+      const pairs = citationPairs(out.text, plan.passages);
+      const context = { corpus: plan.passages.map((p) => p.text), topic };
+      const judge = writer.judge ?? new RuleSupportJudge();
+      let verdicts;
+      let checkedBy = judge.name;
+      try {
+        verdicts = await withTimeout(judge.judge(pairs, context), JUDGE_TIMEOUT_MS);
+      } catch {
+        // The judge is down: the deterministic rule decides (it can underpay, never overpay a decorative citation).
+        verdicts = await new RuleSupportJudge().judge(pairs, context);
+        checkedBy = 'rules';
+      }
+      audit = { ...auditAnswer(out.text, plan.passages, rates, { verdicts, topic }), checkedBy };
     }
   } catch (err) {
     await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The AI model couldn’t answer in time. You were not charged.', detail: (err as Error).message, plan: titled, withheld });
@@ -227,7 +249,8 @@ async function settle(db: Db, keys: SigningKeys, answerId: string, args: SettleA
     const content: StoredContent | null = args.out
       ? {
           text: keepText ? args.out.text : null,
-          citations: (args.audit?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, chunkId: c.chunkId, supported: c.supported, title: c.assetVersionId ? (titleOf.get(c.assetVersionId) ?? null) : null })),
+          citations: (args.audit?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, chunkId: c.chunkId, supported: c.supported, reason: c.reason, title: c.assetVersionId ? (titleOf.get(c.assetVersionId) ?? null) : null })),
+          checkedBy: args.audit?.checkedBy ?? 'rules',
           ignored: args.audit?.ignored ?? { unsupported: 0, repeated: 0, overCap: 0 },
           passages: (args.plan ?? []).map((p) => ({ handle: p.handle, chunkId: p.chunkId, assetVersionId: p.assetVersionId, title: p.title })),
           withheld: args.withheld ?? 0,
@@ -326,8 +349,9 @@ export function answerOut(a: AnswerRow, keys: SigningKeys) {
     // Which handle is which source (titles only — the asker never receives raw passages).
     citations:
       a.status === 'answered'
-        ? (content?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, title: c.title ?? (c.assetVersionId ? (titleOf.get(c.assetVersionId) ?? null) : null), paid: c.supported && !!c.assetVersionId }))
+        ? (content?.citations ?? []).map((c) => ({ handle: c.handle, assetVersionId: c.assetVersionId, title: c.title ?? (c.assetVersionId ? (titleOf.get(c.assetVersionId) ?? null) : null), paid: c.supported && !!c.assetVersionId, reason: c.reason ?? null }))
         : [],
+    citationsCheckedBy: content?.checkedBy ?? 'rules',
     withheldPassages: content?.withheld ?? 0,
     paid: a.credits.map((c) => ({ assetVersionId: c.assetVersionId, title: c.assetTitle, contributor: c.contributor.name, citations: c.citations, centsPerCitation: c.centsPerCitation, amountCents: c.amountCents })),
     notPaid: content?.ignored ?? { unsupported: 0, repeated: 0, overCap: 0 },

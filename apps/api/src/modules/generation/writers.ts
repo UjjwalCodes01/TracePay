@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { BuildIntent } from '@tracepay/shared';
 import { aiReady } from '../../config/env';
 import { generateStructured } from '../../integrations/ai/vertex';
+import { ModelSupportJudge, type SupportJudge } from '../answers/support';
 import type { CitationError, DraftSection } from './citations';
 import type { RetrievedPassage } from './retrieval';
 
@@ -159,6 +160,8 @@ export interface AnswerOutput {
 export interface AnswerWriter {
   readonly name: string;
   answer(input: AnswerInput): Promise<AnswerOutput>;
+  /** Checks which citations the answer really relies on; the deterministic rule when absent. */
+  readonly judge?: SupportJudge;
 }
 
 const AnswerSchema = z.object({
@@ -178,6 +181,7 @@ const ANSWER_SYSTEM = [
 ].join('\n');
 
 export class VertexAnswerWriter implements AnswerWriter {
+  readonly judge: SupportJudge = new ModelSupportJudge();
   readonly name = 'vertex';
 
   async answer(input: AnswerInput): Promise<AnswerOutput> {

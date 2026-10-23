@@ -10,6 +10,7 @@ import { resetAndSeed } from '../../src/modules/demo/seed';
 import { DEMO_ASSETS, DEMO_IDS } from '../../src/modules/demo/world';
 import { VertexAnswerWriter, VertexReportWriter } from '../../src/modules/generation/writers';
 import { extractTerms } from '../../src/modules/licenses/extract';
+import { ModelSupportJudge } from '../../src/modules/answers/support';
 import { FakePayPal } from '../fake-paypal';
 import { testDeps } from '../test-app';
 
@@ -122,5 +123,23 @@ describe.runIf(process.env.LIVE_AI === '1' && process.env.TEST_DATABASE_URL)('ev
     const out = await explainPreflight(report, true);
     expect(out).toMatchObject({ verdict: 'block', source: 'vertex' });
     process.stderr.write(`explainer: ${out.headline} ${out.explanation} ${out.suggestedFix}` + '\n');
+  }, 120_000);
+
+  it('judges citations like a careful reader: pays paraphrases, refuses topic-only, unrelated and misquoted claims', async () => {
+    const passage = 'Teams with an AI coding assistant shipped 38% more pull requests per engineer in Q3.';
+    const survey = 'The 2026 survey collected 9,400 responses from professional developers. Seventy-one percent use an AI coding assistant at least weekly, up from 52% in 2025.';
+    const cases: Array<[string, string, boolean]> = [
+      ['Assistant teams love coding at night.', passage, false],
+      ['Coding assistants are popular with engineers.', passage, false],
+      ['The weather in Lisbon was pleasant all autumn.', passage, false],
+      ['Teams using an AI coding assistant shipped 90% fewer pull requests.', passage, false],
+      ['Teams using an AI coding assistant shipped 38% more pull requests.', passage, true],
+      ['Developers using AI pair-programmers merged roughly two-fifths more changes.', passage, true],
+      ['Close to three in four developers now rely on an AI helper every week, up from about half a year earlier.', survey, true],
+    ];
+    const verdicts = await new ModelSupportJudge().judge(cases.map(([sentence, p], i) => ({ key: String(i), sentence, passage: p })));
+    const got = cases.map((_, i) => verdicts.get(String(i))!);
+    for (const [i, v] of got.entries()) process.stderr.write(`${v.supported ? 'PAID  ' : 'unpaid'} ${cases[i]![0]} — ${v.reason}\n`);
+    expect(got.map((v) => v.supported)).toEqual(cases.map((c) => c[2]));
   }, 120_000);
 });

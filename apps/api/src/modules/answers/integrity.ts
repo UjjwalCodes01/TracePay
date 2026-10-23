@@ -6,8 +6,9 @@
  *  1. Budget first: sources are fitted to the asker's price limit BEFORE the model
  *     runs, at their worst-case cost, so an answer can never cost more than allowed.
  *  2. A citation must point at a passage that was actually retrieved for this answer.
- *  3. It must be supported: the sentence carrying it shares real content with the
- *     passage (key words or figures). Decorative citations earn nothing.
+ *  3. It must be supported: the sentence carrying it draws on the passage. With AI on, an
+ *     independent judge decides (see support.ts); without it, the sentence must share the
+ *     passage's specific figures or terms — not just the topic. Decorative citations earn nothing.
  *  4. Each passage is paid once, however often it is cited, and each source at most
  *     MAX_PAID_PASSAGES_PER_SOURCE times per answer.
  */
@@ -120,13 +121,23 @@ function signals(text: string): { words: Set<string>; figures: Set<string> } {
   return { words, figures };
 }
 
-/** Whether a sentence actually draws on a passage: two shared content words, or a shared figure and a word. */
-export function supports(sentence: string, passage: string): boolean {
+/**
+ * The deterministic support rule (used when no AI judge is available): the sentence must share
+ * the passage's *specific* content — a figure plus a term, or two distinctive terms. Words of the
+ * question (the topic) and words most passages share ("assistant", "teams"…) are not evidence:
+ * "Assistant teams love coding at night" shares the topic, not the passage's claim.
+ */
+export function supports(sentence: string, passage: string, context: { corpus?: string[]; topic?: string } = {}): boolean {
   const s = signals(sentence);
   const p = signals(passage);
-  const words = [...s.words].filter((w) => p.words.has(w)).length;
+  const topic = signals(context.topic ?? '').words;
+  const corpus = (context.corpus ?? []).map((t) => signals(t).words);
+  const common = Math.max(2, Math.ceil(corpus.length / 2));
+  const distinctive = (w: string) => !topic.has(w) && corpus.filter((c) => c.has(w)).length < common;
+  const shared = [...s.words].filter((w) => p.words.has(w));
+  const specific = shared.filter(distinctive).length;
   const figures = [...s.figures].filter((f) => p.figures.has(f)).length;
-  return words >= 2 || (figures >= 1 && words >= 1);
+  return specific >= 2 || (figures >= 1 && shared.length >= 1);
 }
 
 export interface CitationCheck {
@@ -136,6 +147,8 @@ export interface CitationCheck {
   chunkId: string | null;
   assetVersionId: string | null;
   supported: boolean;
+  /** Why it was (not) paid, in plain words. */
+  reason?: string;
 }
 
 export interface PaidSource {
@@ -154,6 +167,8 @@ export interface AnswerAudit {
   /** Citations not paid, and why — the answer's integrity report. */
   ignored: { unsupported: number; repeated: number; overCap: number };
   contributorCents: number;
+  /** What decided support: 'model' (independent AI check) or 'rules'. */
+  checkedBy?: string;
 }
 
 /** Splits text into sentences, keeping citation markers with the sentence they end. */
@@ -165,14 +180,41 @@ export function sentences(text: string): string[] {
     .filter(Boolean);
 }
 
-export function auditAnswer(text: string, passages: Passage[], rates: Rate[]): AnswerAudit {
+export const citationKey = (handle: string, sentence: string) => `${handle}\u0000${sentence}`;
+
+/** Every (sentence, cited passage) pair of an answer, for the support judge. Unknown handles are left out. */
+export function citationPairs(text: string, passages: Passage[]): Array<{ key: string; sentence: string; passage: string }> {
+  const byHandle = new Map(passages.map((p) => [p.handle, p]));
+  return sentences(text).flatMap((sentence) =>
+    [...new Set([...sentence.matchAll(/\[(C\d+)\]/g)].map((x) => x[1]!))].flatMap((h) => {
+      const p = byHandle.get(h);
+      return p ? [{ key: citationKey(h, sentence), sentence: sentence.replace(/\s*\[C\d+\]/g, '').trim(), passage: p.text }] : [];
+    }),
+  );
+}
+
+/**
+ * Who is paid for an answer. `verdicts` (from a support judge, keyed by citationKey) decide which
+ * citations are supported; without them the deterministic rule does, with `topic` (the question).
+ */
+export function auditAnswer(text: string, passages: Passage[], rates: Rate[], opts: { verdicts?: Map<string, { supported: boolean; reason: string }>; topic?: string } = {}): AnswerAudit {
   const byHandle = new Map(passages.map((p) => [p.handle, p]));
   const rate = new Map(rates.map((r) => [r.assetVersionId, r.centsPerCitation]));
+  const corpus = passages.map((p) => p.text);
   const citations: CitationCheck[] = [];
   for (const sentence of sentences(text)) {
     for (const m of new Set([...sentence.matchAll(/\[(C\d+)\]/g)].map((x) => x[1]!))) {
       const p = byHandle.get(m);
-      citations.push({ handle: m, sentence, chunkId: p?.chunkId ?? null, assetVersionId: p?.assetVersionId ?? null, supported: p ? supports(sentence, p.text) : false });
+      const verdict = p ? opts.verdicts?.get(citationKey(m, sentence)) : undefined;
+      const supported = p ? (verdict ? verdict.supported : supports(sentence, p.text, { corpus, topic: opts.topic })) : false;
+      citations.push({
+        handle: m,
+        sentence,
+        chunkId: p?.chunkId ?? null,
+        assetVersionId: p?.assetVersionId ?? null,
+        supported,
+        reason: !p ? 'This passage was never given to the model.' : (verdict?.reason ?? (supported ? 'Shares specific terms or figures with the passage.' : 'Shares only the topic, not the passage’s specific content.')),
+      });
     }
   }
 

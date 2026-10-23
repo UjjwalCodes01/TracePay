@@ -7,9 +7,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const generateContent = vi.fn();
+const embedContent = vi.fn();
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
-    models = { generateContent };
+    models = { generateContent, embedContent };
   },
 }));
 
@@ -24,7 +25,10 @@ const { z } = await import('zod');
 
 const reply = (data: unknown) => ({ text: JSON.stringify(data), usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } });
 
-beforeEach(() => generateContent.mockReset());
+beforeEach(() => {
+  generateContent.mockReset();
+  embedContent.mockReset();
+});
 
 describe('generateStructured', () => {
   it('bounds every call in time and size and asks for JSON', async () => {
@@ -160,5 +164,63 @@ describe.runIf(process.env.TEST_DATABASE_URL)('a paid answer through the Gemini 
     expect(verifyDocument(a.receipt!.document, a.receipt!.signature, publicKeyPem(keys))).toBe(true);
     const after = await db().creditAccount.findUniqueOrThrow({ where: { id: account.id } });
     expect(after).toMatchObject({ balanceCents: 200 - a.chargedCents, reservedCents: 0 });
+  });
+
+  it('pays only the citations an independent judge confirms, and explains the rest', async () => {
+    await resetAndSeed(db());
+    const account = await db().creditAccount.create({ data: { ownerId: 'user_buyer', balanceCents: 200 } });
+    await db().creditEntry.create({ data: { accountId: account.id, kind: 'top_up', amountCents: 200 } });
+    let judged: string | null = null;
+    generateContent.mockImplementation(async (req?: { contents: string; config?: { systemInstruction?: string } }) => {
+      if (!req) return reply({ covered: false, answer: '' });
+      if (req.config?.systemInstruction?.startsWith('You check citations')) {
+        judged = req.contents;
+        const ids = [...req.contents.matchAll(/^ITEM (p\d+)$/gm)].map((m) => m[1]!);
+        // The judge rejects the second claim.
+        return reply({ verdicts: ids.map((id, i) => ({ id, supported: i === 0, reason: i === 0 ? 'States the passage’s figure.' : 'Generic: the passage doesn’t say this.' })) });
+      }
+      const [first, second] = [...req.contents.matchAll(/^\[(C\d+)\] /gm)].map((m) => m[1]!);
+      return reply({ covered: true, answer: `Assistant spend grew 61% in a year [${first}]. Developers love their tools [${second}]. Nothing about Lisbon's weather here [${first}].` });
+    });
+    // Same direction for every text except the weather sentence: it falls below the semantic floor.
+    embedContent.mockImplementation(async (req?: { contents: string[] }) => ({
+      embeddings: (req?.contents ?? []).map((t) => ({ values: /Lisbon/.test(t) ? [0, 1] : [1, 0] })),
+    }));
+    const a = await askLibrary(db(), new VertexAnswerWriter(), keys, {
+      askerId: 'user_buyer',
+      libraryId: 'user_atlas',
+      question: 'How fast is spending on AI coding assistants growing, and how many developers use an assistant weekly?',
+      maxPriceCents: 50,
+    });
+    expect(a.status).toBe('answered');
+    expect(a.citationsCheckedBy).toBe('model');
+    expect(judged).not.toMatch(/Lisbon/); // stopped by the floor, never sent to the judge
+    expect(judged).not.toMatch(/cents|contributor|paid/i); // the judge sees no money or names
+    expect(a.citations.map((c) => [c.paid, c.reason])).toEqual([
+      [true, 'States the passage’s figure.'],
+      [false, 'Generic: the passage doesn’t say this.'],
+      [false, 'The sentence isn’t about what the passage says.'],
+    ]);
+    expect(a.paid.reduce((n, p) => n + p.citations, 0)).toBe(1);
+  });
+
+  it('falls back to the deterministic rule when the judge is unavailable', async () => {
+    await resetAndSeed(db());
+    const account = await db().creditAccount.create({ data: { ownerId: 'user_buyer', balanceCents: 200 } });
+    await db().creditEntry.create({ data: { accountId: account.id, kind: 'top_up', amountCents: 200 } });
+    generateContent.mockImplementation(async (req?: { contents: string }) => {
+      if (!req) return reply({ covered: false, answer: '' });
+      const [first] = [...req.contents.matchAll(/^\[(C\d+)\] \([^)]*\) (.*)$/gm)].map((m) => [m[1]!, m[2]!]);
+      return reply({ covered: true, answer: `In short, ${first![1]!.split(/\s+/).slice(0, 12).join(' ')} [${first![0]}].` });
+    });
+    embedContent.mockRejectedValue(new Error('embedding service down'));
+    const a = await askLibrary(db(), new VertexAnswerWriter(), keys, {
+      askerId: 'user_buyer',
+      libraryId: 'user_atlas',
+      question: 'How fast is spending on AI coding assistants growing, and how many developers use an assistant weekly?',
+      maxPriceCents: 50,
+    });
+    expect(a.status).toBe('answered');
+    expect(a.citationsCheckedBy).toBe('rules');
   });
 });
