@@ -54,7 +54,7 @@ How an answer is checked, priced and paid:
 **Atlas Research Studio** wants to sell a *Developer Tools Market Brief* for **$20**, built from three licensed sources.
 
 1. **The license check blocks it.** One source — the *Kestrel Enterprise Panel* — is licensed for *internal research only*. TracePay's license check (fixed rules, no AI) refuses a report that will be sold.
-2. **The research assistant recovers.** A Gemini agent finds a compatible replacement (*Open Developer Survey Digest*, $2 per sale), asks the publisher for approval, re-runs the license check — now **passed** — and writes the report. It cannot override a failed rule, change the price, or move money.
+2. **The research assistant recovers — and chooses.** Several sources would pass; the agent weighs each one's relevance to the brief against its cost and license, and picks a **real paper under CC BY 4.0** (*Sea Change in Software Development*, Dohmke, Iansiti & Richards, 2023: free, with a credit line). It asks the publisher for approval, re-runs the license check — now **passed** — and writes the report. It cannot override a failed rule, change the price, or move money.
 3. **Every claim is traceable.** Each finding cites `[C1]`, `[C4]`… which resolve to the exact retrieved passage. Invented citations are rejected.
 4. **A buyer pays with PayPal — or lets an AI shop for them.** The buyer's **shopping assistant** (Gemini) searches the store for what they asked for, re-runs the license check on each candidate, checks its citations and proposes one purchase **within the buyer's budget** — enforced in code. The buyer approves the payment in PayPal, **or saves PayPal once for their assistant with a spending mandate** (most per purchase, most in total, an end date; PayPal Vault) and lets it pay on its own within those limits, checked on the server before every charge. Either way, the server creates the PayPal order, takes the payment, and verifies amount, currency and sale reference against PayPal's response.
 5. **Contributors are paid automatically — under the license terms in force at the moment of sale.**
@@ -63,13 +63,26 @@ How an answer is checked, priced and paid:
    |---|---|---|
    | Northwind Data Co. | 25% of each sale | $5.00 |
    | Mara Okafor (analyst) | 15% of each sale, *only if cited* | $3.00 |
-   | Lumen Collective | $2.00 for each sale | $2.00 |
-   | Atlas (the publisher, who sold it) | what's left | $10.00 |
+   | Dohmke, Iansiti & Richards (arXiv:2306.15033) | CC BY 4.0: free, credited in the report | $0.00 |
+   | Atlas (the publisher, who sold it) | what's left | $12.00 |
 
-   After the publisher approves, one **PayPal Payouts** batch pays all three; statuses are read back from PayPal until each item reports `SUCCESS`.
+   After the publisher approves, one **PayPal Payouts** batch pays the contributors who are owed; statuses are read back from PayPal until each item reports `SUCCESS`.
 6. **A signed receipt proves it.** One Ed25519-signed document links source versions → license check → report → PayPal payment → payment split → payout status, on top of a hash-chained audit log.
 
 ---
+
+## Real licenses, not just made-up ones
+
+Alongside its fictional commercial sources, the demo library holds **five real open-access papers on AI coding assistants, under their actual licenses** (the stored passages are their arXiv abstracts, which arXiv releases as CC0; each paper's own license governs its use):
+
+| Paper | License | What TracePay does |
+|---|---|---|
+| Ziegler et al., 2022 (arXiv:2205.06537); Dohmke, Iansiti & Richards, 2023 (arXiv:2306.15033) | CC BY 4.0 | Used in paid answers and reports for free, **with the credit line the license requires** |
+| Nam et al., 2023 (arXiv:2307.08177) | CC BY-NC-SA 4.0 | Left out of anything sold: "The license doesn’t allow use in anything that is sold (CC BY-NC-SA 4.0)" |
+| Sarkar et al., 2022 (arXiv:2208.06213) | CC BY-NC-ND 4.0 | No AI answers (an answer is an adaptation) and no reports |
+| Peng et al., 2023 (arXiv:2302.06590) | arXiv's distribution-only license | No license to reuse it: it is never a candidate, never shown to a model |
+
+Their authors haven't joined TracePay, so nothing is paid to them and no account speaks for them; the payment side of the demo uses the fictional contributors.
 
 ## What makes it different
 

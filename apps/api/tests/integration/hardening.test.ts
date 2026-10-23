@@ -53,7 +53,7 @@ async function paidSale(paypal: FakePayPal, buyerId: string | null = DEMO_IDS.bu
 async function setTerms(assetId: string, patch: Partial<LicenseTerms>) {
   const a = DEMO_ASSETS.find((x) => x.id === assetId)!;
   const terms = { ...a.terms, ...patch };
-  await db().licenseGrant.update({ where: { id: a.licenseId }, data: { terms, termsHash: sha256Hex(canonicalJson(terms)) } });
+  await db().licenseGrant.update({ where: { id: a.licenseId! }, data: { terms, termsHash: sha256Hex(canonicalJson(terms)) } });
 }
 
 describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
@@ -171,7 +171,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
 
     it('re-checks licenses at generation time, before any source text is read', async () => {
       const { buildId } = await db().$transaction((tx) => preflightAndRecord(tx, { publisherId: DEMO_IDS.publisher, intent, assetVersionIds: [A, D] }));
-      await db().licenseGrant.update({ where: { id: DEMO_ASSETS[0]!.licenseId }, data: { status: 'revoked' } });
+      await db().licenseGrant.update({ where: { id: DEMO_ASSETS[0]!.licenseId! }, data: { status: 'revoked' } });
       await expect(generateArtifact(db(), buildId, new FixtureReportWriter())).rejects.toBeInstanceOf(BuildStateError);
       expect((await db().buildJob.findUniqueOrThrow({ where: { id: buildId } })).status).toBe('generation_failed');
       expect(await db().sourceEvent.count({ where: { buildJobId: buildId } })).toBe(0);
@@ -181,7 +181,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
       const artifactId = await listedArtifact();
       const { saleId, orderId } = await startCheckout(db(), paypal, { artifactId, buyerId: null, appBaseUrl: APP });
       paypal.approve(orderId);
-      await db().licenseGrant.update({ where: { id: DEMO_ASSETS[0]!.licenseId }, data: { status: 'revoked' } });
+      await db().licenseGrant.update({ where: { id: DEMO_ASSETS[0]!.licenseId! }, data: { status: 'revoked' } });
       await expect(captureSale(db(), paypal, saleId)).rejects.toMatchObject({ code: 'not_for_sale' });
       expect(paypal.calls.captureOrder).toBe(0);
       expect((await db().sale.findUniqueOrThrow({ where: { id: saleId } })).status).toBe('payment_failed');
@@ -189,7 +189,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
 
     it('a stored license with terms that no longer validate blocks cleanly instead of crashing', async () => {
       const a = DEMO_ASSETS[0]!;
-      await db().licenseGrant.update({ where: { id: a.licenseId }, data: { terms: { ...a.terms, allowedPurposes: ['internal_research'] } } });
+      await db().licenseGrant.update({ where: { id: a.licenseId! }, data: { terms: { ...a.terms, allowedPurposes: ['internal_research'] } } });
       const app = testApp(paypal);
       await request(app).get('/api/catalog').set(atlas).expect(200);
       const pre = await request(app).post('/api/builds/preflight').set(atlas).send({ intent, assetVersionIds: [A] }).expect(201);
@@ -267,7 +267,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('hardening (integration)', () => {
       expect(await db().buildJob.count({ where: { id: realBuild.body.buildId } })).toBe(1);
       await real.get('/api/me').expect(200); // the real session survived
       expect(await db().buildJob.count({ where: { publisherId: DEMO_IDS.publisher } })).toBe(0);
-      expect(await db().licenseGrant.count({ where: { licenseeId: DEMO_IDS.publisher, status: 'approved' } })).toBe(5);
+      expect(await db().licenseGrant.count({ where: { licenseeId: DEMO_IDS.publisher, status: 'approved' } })).toBe(DEMO_ASSETS.filter((a) => a.licenseId).length);
     });
 
     it('the demo header can only assume seeded personas, never a real account', async () => {

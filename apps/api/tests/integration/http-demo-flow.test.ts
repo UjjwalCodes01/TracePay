@@ -4,6 +4,7 @@ import { db } from '../../src/db';
 import { resetAndSeed } from '../../src/modules/demo/seed';
 import { FakePayPal } from '../fake-paypal';
 import { testApp } from '../test-app';
+import { DEMO_ASSETS } from '../../src/modules/demo/world';
 
 
 describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', () => {
@@ -33,7 +34,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', ()
     await request(app).get('/api/catalog').expect(401);
     await request(app).get('/api/catalog').set(buyer).expect(403);
     const catalog = await request(app).get('/api/catalog').set(publisher).expect(200);
-    expect(catalog.body.assets).toHaveLength(5);
+    expect(catalog.body.assets).toHaveLength(DEMO_ASSETS.length);
 
     // 1. The compiler blocks the internal-research-only source
     const blocked = await request(app)
@@ -125,7 +126,8 @@ describe.runIf(process.env.TEST_DATABASE_URL)('HTTP demo flow (integration)', ()
       throw new Error(`run never reached ${status}`);
     };
     const paused = await waitFor('awaiting_approval');
-    expect(paused.pending.replacementAssetVersionId).toBe('asset_lumen_digest_v1');
+    // The most relevant compatible source for the brief: a real CC BY paper, free with a credit line.
+    expect(paused.pending.replacementAssetVersionId).toBe('asset_arxiv_dohmke_2023_v1');
 
     const blockedBuild = paused.builds[0].id;
     const explain = await request(app).get(`/api/builds/${blockedBuild}/explain`).set(publisher).expect(200);

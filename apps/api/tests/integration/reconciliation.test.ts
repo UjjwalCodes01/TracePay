@@ -95,7 +95,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('reconciliation with PayPal (integ
     it('re-checks the license first: if it was revoked meanwhile, the buyer is not charged', async () => {
       const c = await checkout(paypal);
       paypal.approve(c.orderId);
-      await db().licenseGrant.update({ where: { id: DEMO_ASSETS[0]!.licenseId }, data: { status: 'revoked' } });
+      await db().licenseGrant.update({ where: { id: DEMO_ASSETS[0]!.licenseId! }, data: { status: 'revoked' } });
       await reconcileDue(db(), paypal, { now: later(16 * MIN) });
       expect((await sale(c.saleId)).status).toBe('payment_failed');
       expect(paypal.calls.captureOrder).toBe(0);

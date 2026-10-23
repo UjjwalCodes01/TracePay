@@ -66,7 +66,8 @@ export async function resetAndSeed(db: Db): Promise<{ users: number; assets: num
       });
       chunks += paragraphs.length;
 
-      await tx.licenseGrant.create({
+      // A work without a reuse license gets no grant: it is registered, never used.
+      if (a.licenseId) await tx.licenseGrant.create({
         data: {
           id: a.licenseId,
           assetId: a.id,

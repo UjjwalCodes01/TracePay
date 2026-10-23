@@ -88,6 +88,7 @@ export function runPreflight({ intent, sources, asOf }: PreflightInput): Preflig
     add('LICENSE_PRESENT', 'pass', `${name} is licensed to you.`, id);
 
     const t = s.license.terms;
+    const named = t.licenseName ? ` (${t.licenseName})` : '';
 
     if (s.license.status !== 'approved') {
       add('LICENSE_APPROVED', 'fail', `${name}’s license is ${STATUS_PHRASES[s.license.status] ?? s.license.status}. Only a license both sides have agreed to can be used.`, id);
@@ -104,20 +105,20 @@ export function runPreflight({ intent, sources, asOf }: PreflightInput): Preflig
     }
 
     if (!t.allowedPurposes.includes(intent.purpose)) {
-      add('PURPOSE_ALLOWED', 'fail', `${name} may be used only for ${joinWords(t.allowedPurposes.map((p) => PURPOSE_LABELS[p]))}, not ${PURPOSE_LABELS[intent.purpose]}.`, id);
+      add('PURPOSE_ALLOWED', 'fail', `${name} may be used only for ${joinWords(t.allowedPurposes.map((p) => PURPOSE_LABELS[p]))}, not ${PURPOSE_LABELS[intent.purpose]}${named}.`, id);
     } else {
       add('PURPOSE_ALLOWED', 'pass', `${name} may be used for ${PURPOSE_LABELS[intent.purpose]}.`, id);
     }
 
     if (intent.distribution === 'sale') {
-      if (!t.commercialUse) add('COMMERCIAL_USE', 'fail', `${name} may not be used in anything that is sold.`, id);
+      if (!t.commercialUse) add('COMMERCIAL_USE', 'fail', `${name} may not be used in anything that is sold${named}.`, id);
       else add('COMMERCIAL_USE', 'pass', `${name} may be used commercially.`, id);
     } else {
       add('COMMERCIAL_USE', 'skip', 'The report isn’t for sale.', id);
     }
 
     if (t.derivativeReports === 'prohibited') {
-      add('DERIVATIVE_ALLOWED', 'fail', `${name} may not be used to write reports.`, id);
+      add('DERIVATIVE_ALLOWED', 'fail', `${name} may not be used to write reports${named}.`, id);
     } else {
       add('DERIVATIVE_ALLOWED', 'pass', `${name} may be used to write reports.`, id);
     }

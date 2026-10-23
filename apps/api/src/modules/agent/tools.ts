@@ -1,3 +1,4 @@
+import { retrievePassages } from '../generation/retrieval';
 import type { BuildIntent } from '@tracepay/shared';
 import { formatBps, formatMoney } from '@tracepay/shared';
 import type { Db } from '../../db';
@@ -61,7 +62,8 @@ export const TOOL_DECLARATIONS: ToolDeclaration[] = [
   },
   {
     name: 'find_compatible_replacement',
-    description: 'For a source that failed preflight, find catalog sources that would make the build pass, ranked by cost to the publisher.',
+    description:
+      'For a source that failed the license check, find catalog sources that would make the report pass. Each candidate comes with how relevant its content is to the report’s brief (0–1), what it would cost per sale, and its license. Choose the one that best serves the brief at a sensible cost — a cheap but off-topic source makes a worse report.',
     parameters: obj({ blockedAssetVersionId: str('The asset version that failed preflight.') }, ['blockedAssetVersionId']),
   },
   {
@@ -99,6 +101,7 @@ const summarizeLicense = (e: CatalogEntry) => {
   if (!e.license || !t) return { license: 'none' };
   return {
     licenseStatus: e.license.status,
+    ...(t.licenseName ? { licenseName: t.licenseName } : {}),
     commercialUse: t.commercialUse,
     purposes: t.allowedPurposes,
     derivativeReports: t.derivativeReports,
@@ -166,6 +169,11 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
         const candidates = catalog.filter((e) => !allowedSources(ctx).has(e.assetVersionId) && e.assetVersionId !== blocked);
         const asOf = ctx.asOf ?? todayUtc();
         const evaluated = [];
+        // How well each candidate's content fits the brief: its best passage's text-search rank.
+        const brief = `${ctx.intent.title} ${ctx.intent.brief}`;
+        const ranked = candidates.length ? await retrievePassages(ctx.db, candidates.map((c) => c.assetVersionId), brief, 1) : [];
+        const rankOf = new Map(ranked.map((p) => [p.assetVersionId, p.rank]));
+        const top = Math.max(0, ...ranked.map((p) => p.rank));
         for (const c of candidates) {
           const sources = await resolveSources(ctx.db, ctx.publisherId, [...current, c.assetVersionId]);
           const report = runPreflight({ intent: ctx.intent, sources, asOf });
@@ -176,10 +184,14 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
             compatible: own.length === 0,
             reasons: own.map((r) => r.message),
             ...summarizeLicense(c),
+            relevance: top > 0 ? Math.round(((rankOf.get(c.assetVersionId) ?? 0) / top) * 100) / 100 : 0,
             maxContributorCents: report.economics.maxContributorCents,
           });
         }
-        evaluated.sort((a, b) => Number(b.compatible) - Number(a.compatible) || a.maxContributorCents - b.maxContributorCents);
+        // Compatible first; then the best fit for the brief (in steps of 0.1, so near-ties go to the cheaper); then cost.
+        evaluated.sort(
+          (a, b) => Number(b.compatible) - Number(a.compatible) || Math.round(b.relevance * 10) - Math.round(a.relevance * 10) || a.maxContributorCents - b.maxContributorCents,
+        );
         return ok({ blockedAssetVersionId: blocked, blockedTitle: catalog.find((e) => e.assetVersionId === blocked)?.assetTitle ?? null, candidates: evaluated });
       }
 

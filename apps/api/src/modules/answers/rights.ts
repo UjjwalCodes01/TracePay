@@ -43,17 +43,18 @@ export function checkAnswerRights(sources: ResolvedSource[], asOf: string): { el
       continue;
     }
     const t = l.terms;
+    const named = t.licenseName ? ` (${t.licenseName})` : '';
     if (asOf < t.validFrom || (t.validUntil !== null && asOf > t.validUntil)) {
       exclude(s, 'out_of_term', t.validUntil !== null && asOf > t.validUntil ? `The license ended on ${formatDay(t.validUntil)}.` : `The license starts on ${formatDay(t.validFrom)}.`);
       continue;
     }
     if (!t.aiAnswers?.allowed) {
-      exclude(s, 'ai_not_allowed', 'The license doesn’t allow answering questions with AI.');
+      exclude(s, 'ai_not_allowed', `The license doesn’t allow answering questions with AI${named}.`);
       continue;
     }
     // Answers are a paid service, available anywhere.
     if (!t.commercialUse) {
-      exclude(s, 'not_commercial', 'The license doesn’t allow use in anything that is sold.');
+      exclude(s, 'not_commercial', `The license doesn’t allow use in anything that is sold${named}.`);
       continue;
     }
     if (t.territories !== null) {

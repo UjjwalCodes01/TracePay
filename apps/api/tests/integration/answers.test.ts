@@ -172,6 +172,21 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
     expect(answer.paid.map((p: { title: string }) => p.title)).not.toContain('Northwind DevTools Spend Index 2026');
   });
 
+  it('applies the real papers’ own licenses: CC BY used for free, non-commercial and no-derivatives left out, unlicensed never read', async () => {
+    const a = app();
+    await topUp(a, 500);
+    const { answer } = (await ask(a, { question: 'How do AI code completion and assistants affect developer productivity and code understanding?' }).expect(201)).body;
+    const reason = (title: RegExp) => answer.excluded.find((e: { title: string }) => title.test(e.title))?.reason;
+    expect(reason(/Nam et al/)).toBe('The license doesn’t allow use in anything that is sold (CC BY-NC-SA 4.0).');
+    expect(reason(/Sarkar et al/)).toBe('The license doesn’t allow answering questions with AI (CC BY-NC-ND 4.0).');
+    // No license at all: not even a candidate (and certainly never read).
+    expect(reason(/Peng et al/)).toBeUndefined();
+    expect(JSON.stringify(answer)).not.toMatch(/Peng et al/);
+    // CC BY papers may be used, and cost nothing per citation.
+    expect(answer.excluded.some((e: { title: string }) => /Ziegler et al|Dohmke/.test(e.title))).toBe(false);
+    for (const p of answer.paid.filter((x: { title: string }) => /Ziegler et al|Dohmke/.test(x.title))) expect(p.amountCents).toBe(0);
+  });
+
   it('never lets concurrent answers spend more than the balance', async () => {
     // A slow model, so every answer holds its worst case at the same time.
     const fixture = new FixtureAnswerWriter();

@@ -146,7 +146,8 @@ async function resetOnce(db: Db, world: string | null): Promise<{ removedBuilds:
             }),
           });
         }
-        await tx.licenseGrant.create({
+        // A work without a reuse license gets no grant: it is registered, never used.
+        if (a.licenseId) await tx.licenseGrant.create({
           data: {
             id: X(a.licenseId),
             assetId,

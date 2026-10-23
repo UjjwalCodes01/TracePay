@@ -7,7 +7,7 @@ import { preflightAndRecord } from '../../src/modules/builds/preflight.service';
 import { BuildStateError, generateArtifact, type ArtifactContent } from '../../src/modules/generation/generation.service';
 import { FixtureReportWriter, type ReportWriter } from '../../src/modules/generation/writers';
 import { resetAndSeed } from '../../src/modules/demo/seed';
-import { DEMO_IDS } from '../../src/modules/demo/world';
+import { DEMO_ASSETS, DEMO_IDS } from '../../src/modules/demo/world';
 
 const AS_OF = '2026-10-18';
 const A = 'asset_northwind_index_v1';
@@ -37,7 +37,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('build pipeline (integration)', ()
 
   it('lists the catalog with each asset’s governing license', async () => {
     const catalog = await listCatalog(db(), DEMO_IDS.publisher);
-    expect(catalog).toHaveLength(5);
+    expect(catalog).toHaveLength(DEMO_ASSETS.length);
     expect(catalog.find((c) => c.assetVersionId === C)?.license?.terms.allowedPurposes).toEqual(['internal_research']);
   });
 

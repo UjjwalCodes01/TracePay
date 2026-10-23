@@ -41,6 +41,7 @@ export const paymentLabel = (e: LicenseTerms['economics']): string => economicsL
 /** A license in plain sentences, for people who will never read JSON. */
 export function TermsSummary({ terms, compact }: { terms: LicenseTerms; compact?: boolean }) {
   const rows: Array<{ ok: boolean | null; text: ReactNode }> = [
+    ...(terms.licenseName ? [{ ok: null, text: <>Public license: <strong>{terms.licenseName}</strong></> }] : []),
     { ok: terms.commercialUse, text: terms.commercialUse ? 'Can be used in reports that are sold' : 'Internal research only — not for reports that are sold' },
     {
       ok: terms.derivativeReports !== 'prohibited',

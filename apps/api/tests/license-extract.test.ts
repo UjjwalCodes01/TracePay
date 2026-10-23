@@ -7,7 +7,8 @@ const TODAY = '2026-10-19';
 
 describe('rule-based license extraction', () => {
   // The demo licenses are plain-English documents; their approved terms are the ground truth.
-  for (const asset of DEMO_ASSETS) {
+  // Bespoke contracts (standard open licenses such as CC BY are recorded as they are, not drafted from prose).
+  for (const asset of DEMO_ASSETS.filter((a) => !a.terms.licenseName)) {
     it(`drafts the approved terms for "${asset.title}"`, () => {
       const { terms } = extractWithRules(asset.licenseText, TODAY);
       const { validFrom: _a, ...expected } = asset.terms;

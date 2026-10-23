@@ -11,6 +11,8 @@ const A = 'asset_northwind_index_v1';
 const B = 'asset_okafor_notes_v1';
 const C = 'asset_kestrel_panel_v1';
 const D = 'asset_lumen_digest_v1';
+/** The most relevant compatible replacement for the brief: a real CC BY paper (free, with a credit line). */
+const R = 'asset_arxiv_dohmke_2023_v1';
 const E = 'asset_ide_pricing_v1';
 const AS_OF = '2026-10-18';
 
@@ -68,7 +70,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('publisher agent (integration)', (
       'prepare_sale',
     ]);
     expect(run.builds.map((b) => b.status)).toEqual(['preflight_blocked', 'generated']);
-    expect(run.builds[1]!.sources.map((s) => s.assetVersionId)).toEqual([A, B, D]); // C → D, expired E never chosen
+    expect(run.builds[1]!.sources.map((s) => s.assetVersionId)).toEqual([A, B, R]); // C → R, the expired and non-commercial ones never chosen
     expect(run.summary).toMatch(/listed at \$20\.00/);
   });
 
@@ -77,7 +79,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('publisher agent (integration)', (
     const runId = await start(planner, false);
     let run = await db().agentRun.findUniqueOrThrow({ where: { id: runId } });
     expect(run.status).toBe('awaiting_approval');
-    expect(run.pending).toMatchObject({ blockedAssetVersionId: C, replacementAssetVersionId: D });
+    expect(run.pending).toMatchObject({ blockedAssetVersionId: C, replacementAssetVersionId: R });
     expect(await db().artifact.count()).toBe(0);
 
     await decideReplacement(db(), runId, DEMO_IDS.publisher, true);

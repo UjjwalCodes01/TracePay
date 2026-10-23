@@ -30,6 +30,8 @@ export const LicenseTermsSchema = z
     validFrom: z.iso.date(),
     validUntil: z.iso.date().nullable(),
     attributionText: z.string().min(1).nullable(),
+    /** The license's public name, when it is a standard one ("CC BY 4.0"). */
+    licenseName: z.string().min(1).max(80).optional(),
     economics: EconomicsSchema,
     /**
      * Using the work to answer questions (AI agents, chat), paid per VERIFIED citation:

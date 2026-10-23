@@ -72,6 +72,9 @@ export const DEMO_USERS: DemoUser[] = [
   { id: 'user_kestrel', email: 'rights@kestrel-panel.example', name: 'Kestrel Research Panel', role: 'contributor' },
   { id: 'user_lumen', email: 'hello@lumen-collective.example', name: 'Lumen Collective', role: 'contributor', payeeSlot: 2 },
   { id: 'user_pricing', email: 'data@ide-pricing.example', name: 'IDE Pricing Tracker', role: 'contributor' },
+  // Real open-access papers, held for the library under their own public licenses. Their authors
+  // haven't joined TracePay, so nothing is owed to them; the credit lines name them.
+  { id: 'user_arxiv', email: 'papers@open-access.example', name: 'Open-access papers (via arXiv)', role: 'contributor' },
 ];
 
 const base: Omit<LicenseTerms, 'economics' | 'payableOn'> = {
@@ -93,10 +96,30 @@ export interface DemoAsset {
   kind: 'dataset' | 'research_notes' | 'expert_brief' | 'api_feed';
   description: string;
   file: string;
-  licenseId: string;
+  /** Null: the work carries no license to reuse it, so no grant exists (it is never used). */
+  licenseId: string | null;
   terms: LicenseTerms;
   /** Plain-language license text, used later for the AI term-extraction demo. */
   licenseText: string;
+}
+
+/** The terms a standard open license gives anyone: free, perpetual, worldwide, with credit. */
+function openLicense(licenseName: string, validFrom: string, attributionText: string): LicenseTerms {
+  return {
+    commercialUse: true,
+    derivativeReports: 'allowed_with_attribution',
+    rawRedistribution: true,
+    allowedPurposes: ['internal_research', 'commercial_report'],
+    territories: null,
+    validFrom,
+    validUntil: null,
+    attributionText,
+    licenseName,
+    currency: 'USD',
+    economics: { kind: 'none' },
+    aiAnswers: { allowed: true, centsPerCitation: 0 },
+    payableOn: 'included_in_build',
+  };
 }
 
 export const DEMO_ASSETS: DemoAsset[] = [
@@ -185,6 +208,75 @@ export const DEMO_ASSETS: DemoAsset[] = [
       payableOn: 'included_in_build',
     },
     licenseText: 'Commercial use permitted until 30 September 2026. Fee: 5% of gross sale price. AI answer services may cite the tracker at USD 0.02 per cited passage.',
+  },
+
+  // ---- real papers, under their real licenses ------------------------------------------
+  {
+    id: 'asset_arxiv_ziegler_2022',
+    ownerId: 'user_arxiv',
+    title: 'Productivity Assessment of Neural Code Completion (Ziegler et al., 2022)',
+    kind: 'research_notes',
+    description: 'GitHub study of how developers perceive the productivity of an AI code-completion tool. arXiv:2205.06537.',
+    file: 'arxiv-ziegler-2022.md',
+    licenseId: 'lic_arxiv_ziegler_2022',
+    terms: { ...openLicense('CC BY 4.0', '2022-05-13', 'Ziegler et al., “Productivity Assessment of Neural Code Completion”, arXiv:2205.06537 (2022), CC BY 4.0') },
+    licenseText: 'Creative Commons Attribution 4.0 International (CC BY 4.0): anyone may share and adapt the work for any purpose, including commercially, provided they give appropriate credit.',
+  },
+  {
+    id: 'asset_arxiv_dohmke_2023',
+    ownerId: 'user_arxiv',
+    title: 'Sea Change in Software Development (Dohmke, Iansiti & Richards, 2023)',
+    kind: 'research_notes',
+    description: 'Economic and productivity analysis of AI-powered developer tools. arXiv:2306.15033.',
+    file: 'arxiv-dohmke-2023.md',
+    licenseId: 'lic_arxiv_dohmke_2023',
+    terms: { ...openLicense('CC BY 4.0', '2023-06-26', 'Dohmke, Iansiti & Richards, “Sea Change in Software Development”, arXiv:2306.15033 (2023), CC BY 4.0') },
+    licenseText: 'Creative Commons Attribution 4.0 International (CC BY 4.0): anyone may share and adapt the work for any purpose, including commercially, provided they give appropriate credit.',
+  },
+  {
+    id: 'asset_arxiv_nam_2023',
+    ownerId: 'user_arxiv',
+    title: 'Using an LLM to Help With Code Understanding (Nam et al., 2023)',
+    kind: 'research_notes',
+    description: 'A user study of an in-IDE LLM assistant for understanding code. arXiv:2307.08177.',
+    file: 'arxiv-nam-2023.md',
+    licenseId: 'lic_arxiv_nam_2023',
+    terms: {
+      ...openLicense('CC BY-NC-SA 4.0', '2023-07-17', 'Nam et al., “Using an LLM to Help With Code Understanding”, arXiv:2307.08177 (2023), CC BY-NC-SA 4.0'),
+      commercialUse: false,
+      allowedPurposes: ['internal_research'],
+    },
+    licenseText: 'Creative Commons Attribution-NonCommercial-ShareAlike 4.0 (CC BY-NC-SA 4.0): share and adapt for non-commercial purposes only, with credit, under the same license.',
+  },
+  {
+    id: 'asset_arxiv_sarkar_2022',
+    ownerId: 'user_arxiv',
+    title: 'What is it like to program with artificial intelligence? (Sarkar et al., 2022)',
+    kind: 'research_notes',
+    description: 'A review of how programming with large language models differs from earlier assistance. arXiv:2208.06213.',
+    file: 'arxiv-sarkar-2022.md',
+    licenseId: 'lic_arxiv_sarkar_2022',
+    terms: {
+      ...openLicense('CC BY-NC-ND 4.0', '2022-08-12', 'Sarkar et al., “What is it like to program with artificial intelligence?”, arXiv:2208.06213 (2022), CC BY-NC-ND 4.0'),
+      commercialUse: false,
+      allowedPurposes: ['internal_research'],
+      derivativeReports: 'prohibited',
+      // No derivatives: an AI answer built from it is an adaptation.
+      aiAnswers: { allowed: false, centsPerCitation: 0 },
+    },
+    licenseText: 'Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 (CC BY-NC-ND 4.0): share unchanged copies for non-commercial purposes only, with credit; no adaptations.',
+  },
+  {
+    id: 'asset_arxiv_peng_2023',
+    ownerId: 'user_arxiv',
+    title: 'The Impact of AI on Developer Productivity: Evidence from GitHub Copilot (Peng et al., 2023)',
+    kind: 'research_notes',
+    description: 'A controlled experiment on developer speed with an AI pair programmer. arXiv:2302.06590.',
+    file: 'arxiv-peng-2023.md',
+    // arXiv's non-exclusive distribution license lets arXiv distribute the paper; it grants nobody else a license to reuse it.
+    licenseId: null,
+    terms: { ...openLicense('arXiv non-exclusive distribution license', '2023-02-13', 'Peng et al., arXiv:2302.06590 (2023)') },
+    licenseText: 'arXiv.org perpetual, non-exclusive license to distribute: arXiv may distribute the paper; no license to reuse it is granted to anyone else.',
   },
 ];
 

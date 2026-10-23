@@ -176,7 +176,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('money path (integration)', () => 
     const artifactId = await listedArtifact();
     const northwind = DEMO_ASSETS.find((a) => a.id === 'asset_northwind_index')!;
     const expired: LicenseTerms = { ...northwind.terms, validUntil: '2026-01-31' };
-    await db().licenseGrant.update({ where: { id: northwind.licenseId }, data: { terms: expired, termsHash: sha256Hex(canonicalJson(expired)) } });
+    await db().licenseGrant.update({ where: { id: northwind.licenseId! }, data: { terms: expired, termsHash: sha256Hex(canonicalJson(expired)) } });
     await expect(startCheckout(db(), paypal, { artifactId, buyerId: null, appBaseUrl: APP })).rejects.toMatchObject({ code: 'not_for_sale' });
     expect((await db().artifact.findUniqueOrThrow({ where: { id: artifactId } })).status).toBe('withdrawn');
     expect(paypal.calls.createOrder).toBe(0); // no PayPal order was ever created

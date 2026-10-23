@@ -1,3 +1,4 @@
+import { DEMO_ASSETS, DEMO_USERS } from '../../src/modules/demo/world';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../../src/db';
@@ -28,11 +29,11 @@ describe.runIf(process.env.TEST_DATABASE_URL)('private demo worlds', () => {
 
   it('gives a visitor their own publisher, buyer, contributors and licensed sources', async () => {
     const w = await newWorld();
-    expect(w.users.map((u) => u.role).sort()).toEqual(['buyer', 'contributor', 'contributor', 'contributor', 'contributor', 'contributor', 'publisher']);
+    expect(w.users.map((u) => u.role).sort()).toEqual(DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => u.role).sort());
     const me = await request(app).get('/api/me').set(w.as('user_atlas')).expect(200);
     expect(me.body.user).toMatchObject({ id: w.publisherId, name: 'Atlas Research Studio', role: 'publisher' });
     const catalog = (await request(app).get('/api/catalog').set(w.as('user_atlas')).expect(200)).body.assets;
-    expect(catalog.length).toBe(5);
+    expect(catalog.length).toBe(DEMO_ASSETS.length);
     expect(catalog.every((a: { assetVersionId: string }) => a.assetVersionId.startsWith(w.publisherId.slice(0, 16)))).toBe(true);
     const users = (await request(app).get('/api/demo/users').set({ 'X-Demo-World': w.token }).expect(200)).body.users;
     expect(users.map((u: { id: string }) => u.id)).toEqual(w.users.map((u) => u.id).sort((a, b) => w.users.findIndex((u) => u.id === a) - w.users.findIndex((u) => u.id === b)));
