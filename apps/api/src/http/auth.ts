@@ -3,7 +3,8 @@ import { ipKeyGenerator } from 'express-rate-limit';
 import type { Db } from '../db';
 import { userForApiKey, userForSession, type ApiKeyInfo, type AuthUser, type Role } from '../modules/auth/auth.service';
 import { sha256 } from '../modules/auth/crypto';
-import { DEMO_USERS } from '../modules/demo/world';
+import { DEMO_USERS, demoRoleOf, worldOf } from '../modules/demo/world';
+import { DEMO_WORLD_HEADER, verifyDemoWorld } from '../modules/demo/worlds';
 import { HttpError } from './errors';
 
 export type { Role };
@@ -146,8 +147,11 @@ export function authenticate(db: Db, opts: { demoMode: boolean }) {
 
     if (opts.demoMode) {
       const id = req.header(DEMO_USER_HEADER);
-      // Only the seeded, non-admin demo personas can be assumed — never a real account or an admin.
-      if (id && DEMO_PERSONAS.has(id)) {
+      // Only the seeded, non-admin demo personas can be assumed — never a real account or an admin —
+      // and a private world's personas only with that world's secret.
+      const world = id ? worldOf(id) : null;
+      const allowed = !!id && (world ? demoRoleOf(id) !== null && demoRoleOf(id) !== 'admin' && (await verifyDemoWorld(db, req.header(DEMO_WORLD_HEADER))) === world : DEMO_PERSONAS.has(id));
+      if (id && allowed) {
         const user = await db.user.findUnique({ where: { id }, select: { id: true, name: true, email: true, role: true } });
         if (user) {
           req.user = user as AuthUser;

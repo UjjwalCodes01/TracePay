@@ -7,7 +7,8 @@ import { HttpError } from '../http/errors';
 import { verifyAuditChain, verifyAuditChainCached } from '../modules/audit/audit-log';
 import { publicKeyPem } from '../modules/audit/signing';
 import { softResetDemo } from '../modules/demo/soft-reset';
-import { DEMO_USERS } from '../modules/demo/world';
+import { DEMO_IDS, DEMO_USERS, inWorld, worldOf } from '../modules/demo/world';
+import { createDemoWorld, DEMO_WORLD_HEADER, verifyDemoWorld } from '../modules/demo/worlds';
 import { limitStore, limitStoreStatus } from '../http/rate-store';
 
 export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDeps) {
@@ -44,15 +45,29 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
     });
   });
 
-  r.get('/demo/users', async (_req, res) => {
+  r.get('/demo/users', async (req, res) => {
     if (!config.demoMode) return res.json({ users: [] });
-    // Only the seeded, non-admin personas — never real accounts.
-    const users = await db.user.findMany({
-      where: { id: { in: DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => u.id) } },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, name: true, role: true, email: true },
-    });
-    res.json({ users });
+    // Only the seeded, non-admin personas — never real accounts — of the visitor's own world.
+    const world = await verifyDemoWorld(db, req.header(DEMO_WORLD_HEADER));
+    const ids = DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => inWorld(world, u.id));
+    const users = await db.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, role: true, email: true } });
+    res.json({ users: ids.flatMap((id) => users.filter((u) => u.id === id)) });
+  });
+
+  /** A private copy of the demo for this visitor: nobody else sees or resets it. */
+  const worldLimiter = rateLimit({
+    ...limitStore('demo-world'),
+    windowMs: 60 * 60_000,
+    limit: 10,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler: (_req, _res, next) => next(new HttpError(429, 'Several demos were started from here in the last hour. Try again later.', { code: 'rate_limited' }, 3600)),
+  });
+  r.post('/demo/worlds', worldLimiter, async (_req, res) => {
+    if (!config.demoMode) throw new HttpError(404, 'Not found.');
+    const { world, token } = await createDemoWorld(db);
+    const users = await db.user.findMany({ where: { id: { in: DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => inWorld(world, u.id)) } }, select: { id: true, name: true, role: true } });
+    res.status(201).json({ token, publisherId: inWorld(world, DEMO_IDS.publisher), users });
   });
 
   /**
@@ -71,7 +86,8 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
   r.post('/demo/reset', requireRole('publisher', 'admin'), resetLimiter, async (req, res) => {
     if (!config.demoMode) throw new HttpError(404, 'Not found.');
     if (req.authMethod !== 'demo' && req.user?.role !== 'admin') throw new HttpError(403, 'Only demo users can reset the demo.');
-    const result = await softResetDemo(db);
+    // A private world resets only itself.
+    const result = await softResetDemo(db, worldOf(currentUser(req).id));
     res.json({ ok: true, ...result, note: 'Demo data restored. Real accounts were not affected; PayPal sandbox history is not reversed.' });
   });
 

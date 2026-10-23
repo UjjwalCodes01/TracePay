@@ -25,8 +25,8 @@ export function answerRoutes({ db, paypal, signingKeys, answerWriter, config }: 
 
   // ---- asking (buyers) --------------------------------------------------------------
 
-  r.get('/libraries', requireRole('buyer', 'publisher', 'admin'), async (_req, res) => {
-    res.json({ libraries: await listLibraries(db) });
+  r.get('/libraries', requireRole('buyer', 'publisher', 'admin'), async (req, res) => {
+    res.json({ libraries: await listLibraries(db, req.user?.id) });
   });
 
   r.get('/credits', requireRole('buyer'), async (req, res) => {

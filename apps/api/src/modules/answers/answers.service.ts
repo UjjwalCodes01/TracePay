@@ -3,7 +3,7 @@ import { formatMoney } from '@tracepay/shared';
 import type { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
 import { appendAudit, lockAuditChain } from '../audit/audit-log';
-import { DEMO_USERS } from '../demo/world';
+import { demoRoleOf, isDemoPersona, sameWorld, worldOf } from '../demo/world';
 import { sha256Hex } from '../audit/hash-chain';
 import { publicKeyPem, signDocument, type SigningKeys } from '../audit/signing';
 import { todayUtc } from '../builds/preflight.service';
@@ -38,8 +38,7 @@ export const WRITER_TIMEOUT_MS = 60_000;
 /** The citation judge (embeddings + one model call) gets this long before the deterministic rule decides instead. */
 export const JUDGE_TIMEOUT_MS = 45_000;
 
-const DEMO_IDS = new Set(DEMO_USERS.map((u) => u.id));
-const DEMO_CONTRIBUTORS = new Set(DEMO_USERS.filter((u) => u.role === 'contributor').map((u) => u.id));
+// Demo personas of any world (or the shared one): their free credit only pays demo contributors.
 
 function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -78,7 +77,8 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   if (input.maxPriceCents < fee) throw new CreditError(`The price limit must cover the ${formatMoney(fee)} answer fee.`, 'invalid');
 
   const library = await db.user.findUnique({ where: { id: input.libraryId }, select: { id: true, name: true, role: true } });
-  if (!library || library.role !== 'publisher') throw new CreditError('Library not found.', 'not_found');
+  // Another demo world's library doesn't exist, as far as this asker is concerned.
+  if (!library || library.role !== 'publisher' || worldOf(library.id) !== worldOf(input.askerId)) throw new CreditError('Library not found.', 'not_found');
 
   // 1. Rights: only sources whose license allows AI answers, today.
   const entries = (await listCatalog(db, input.libraryId)).filter((e) => e.license);
@@ -86,9 +86,9 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   const rights = checkAnswerRights(sources, asOf);
   const excluded = [...rights.excluded];
   // The demo's free credit only ever pays the demo's own (fictional) authors.
-  const eligible = DEMO_IDS.has(input.askerId)
+  const eligible = isDemoPersona(input.askerId)
     ? rights.eligible.filter((e) => {
-        if (DEMO_CONTRIBUTORS.has(e.source.contributorId)) return true;
+        if (demoRoleOf(e.source.contributorId) === 'contributor') return true;
         excluded.push({ assetVersionId: e.source.assetVersionId, assetTitle: e.source.assetTitle, contributorName: e.source.contributorName, code: 'demo_only', reason: 'Demo credit can only pay the demo’s own contributors.' });
         return false;
       })
@@ -368,9 +368,10 @@ export function answerOut(a: AnswerRow, keys: SigningKeys) {
 }
 
 /** Publishers whose libraries can answer questions: at least one source licensed for AI answers. */
-export async function listLibraries(db: Db) {
+/** Libraries the viewer can ask: their own demo world's, or (for everyone else) any outside the demo worlds. */
+export async function listLibraries(db: Db, viewerId?: string | null) {
   const grants = await db.licenseGrant.findMany({
-    where: { status: 'approved', terms: { path: ['aiAnswers', 'allowed'], equals: true }, asset: { archivedAt: null } },
+    where: { status: 'approved', terms: { path: ['aiAnswers', 'allowed'], equals: true }, asset: { archivedAt: null }, licenseeId: sameWorld(viewerId) },
     select: { licenseeId: true, assetId: true, licensee: { select: { name: true, role: true } } },
   });
   // Distinct live sources per library (several versions of one grant count once).

@@ -1,3 +1,4 @@
+import { sameWorld } from '../demo/world';
 import { formatMoney } from '@tracepay/shared';
 import type { Db } from '../../db';
 import type { CitationReport } from '../generation/citations';
@@ -121,7 +122,7 @@ export async function executeShopperTool(ctx: ShopperContext, name: string, args
             ? ctx.purchases.map((p) => p.artifactId)
             : (await ctx.db.sale.findMany({ where: { buyerId: ctx.buyerId, status: 'captured' }, select: { artifactId: true } })).map((s) => s.artifactId),
         );
-        const listed = await ctx.db.artifact.findMany({ where: { status: 'listed' }, orderBy: { createdAt: 'desc' }, take: 100 });
+        const listed = await ctx.db.artifact.findMany({ where: { status: 'listed', buildJob: { publisherId: sameWorld(ctx.buyerId) } }, orderBy: { createdAt: 'desc' }, take: 100 });
         const left = remainingBudget(ctx);
         const reports = listed
           .filter((a) => !ownedIds.has(a.id))

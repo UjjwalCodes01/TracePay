@@ -14,7 +14,7 @@ import { setReconcileListener } from './modules/reconciliation/schedule';
 import { setOutboxListener } from './modules/platform/events';
 import { pruneWebhookData, WebhookDispatcher, type WebhookDeps } from './modules/platform/webhooks';
 import { SecretBox } from './modules/platform/webhook-crypto';
-import { DEMO_USERS } from './modules/demo/world';
+import { DEMO_USERS, WORLD_PREFIX } from './modules/demo/world';
 import { closeLimitStore } from './http/rate-store';
 
 const env = serverEnv();
@@ -130,7 +130,7 @@ void sweep();
 // Keys minted by anonymous demo visitors must not outlive demo mode.
 if (!env.DEMO_MODE) {
   void db()
-    .apiKey.updateMany({ where: { userId: { in: DEMO_USERS.map((u) => u.id) }, revokedAt: null }, data: { revokedAt: new Date() } })
+    .apiKey.updateMany({ where: { OR: [{ userId: { in: DEMO_USERS.map((u) => u.id) } }, { userId: { startsWith: WORLD_PREFIX } }], revokedAt: null }, data: { revokedAt: new Date() } })
     .then((r) => r.count && logger.warn({ revoked: r.count }, 'revoked API keys of demo personas (DEMO_MODE is off)'))
     .catch((err) => logger.error({ err }, 'could not revoke demo API keys'));
 }

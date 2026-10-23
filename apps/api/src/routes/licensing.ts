@@ -1,3 +1,4 @@
+import { sameWorld } from '../modules/demo/world';
 import { LicenseTermsSchema } from '@tracepay/shared';
 import { Router, type Request } from 'express';
 import { rateLimit } from 'express-rate-limit';
@@ -174,7 +175,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
   r.get('/marketplace', requireRole('publisher'), async (req, res) => {
     const me = currentUser(req).id;
     const assets = await db.asset.findMany({
-      where: { ownerId: { not: me }, archivedAt: null },
+      where: { AND: [{ ownerId: { not: me } }, { ownerId: sameWorld(me) }], archivedAt: null },
       orderBy: { createdAt: 'desc' },
       take: 200,
       select: {

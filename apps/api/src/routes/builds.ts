@@ -10,7 +10,7 @@ import { buildReceipt } from '../modules/audit/receipt.service';
 import { publicKeyPem, verifyDocument } from '../modules/audit/signing';
 import { appendAudit } from '../modules/audit/audit-log';
 import { checkSaleRights, withdrawArtifact } from '../modules/sales/rights.service';
-import { DEMO_IDS } from '../modules/demo/world';
+import { DEMO_IDS, inWorld, sameWorld, worldOf } from '../modules/demo/world';
 import { preflightAndRecord } from '../modules/builds/preflight.service';
 import { listCatalog } from '../modules/catalog/catalog.service';
 import { generateArtifact, type ArtifactContent } from '../modules/generation/generation.service';
@@ -39,7 +39,7 @@ export function buildRoutes({ db, signingKeys, writer }: AppDeps) {
   r.get('/catalog', requireRole('publisher', 'admin'), async (req, res) => {
     const user = currentUser(req);
     // Admins inspect the demo publisher's catalog.
-    res.json({ assets: await listCatalog(db, user.role === 'publisher' ? user.id : DEMO_IDS.publisher) });
+    res.json({ assets: await listCatalog(db, user.role === 'publisher' ? user.id : inWorld(worldOf(user.id), DEMO_IDS.publisher)) });
   });
 
   r.post('/builds/preflight', requireRole('publisher'), quotas.preflight(), async (req, res) => {
@@ -89,8 +89,9 @@ export function buildRoutes({ db, signingKeys, writer }: AppDeps) {
   });
 
   /** Storefront: listed artifacts with a preview only. */
-  r.get('/artifacts', async (_req, res) => {
-    const artifacts = await db.artifact.findMany({ where: { status: 'listed' }, orderBy: { createdAt: 'desc' }, take: 100 });
+  r.get('/artifacts', async (req, res) => {
+    // A private demo world sees only its own store; everyone else never sees any world's.
+    const artifacts = await db.artifact.findMany({ where: { status: 'listed', buildJob: { publisherId: sameWorld(req.user?.id) } }, orderBy: { createdAt: 'desc' }, take: 100 });
     res.json({ artifacts: artifacts.map((a) => preview(a)) });
   });
 

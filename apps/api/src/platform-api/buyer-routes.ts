@@ -1,3 +1,4 @@
+import { sameWorld } from '../modules/demo/world';
 import { z } from 'zod';
 import type { AppDeps } from '../app';
 import { HttpError } from '../http/errors';
@@ -242,8 +243,8 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
     defineRoute({
       method: 'get', path: '/libraries', operationId: 'listLibraries', roles: ['buyer'], tag: ANSWERS, summary: 'Libraries that answer questions',
       response: LibraryList,
-      handler: async () => {
-        const libs = await listLibraries(db);
+      handler: async ({ user }) => {
+        const libs = await listLibraries(db, user.id);
         return { object: 'list' as const, data: libs.map((l) => ({ id: l.id, object: 'library' as const, name: l.name, sources_licensed_for_ai: l.sources })), has_more: false, next_cursor: null };
       },
     }),
@@ -317,7 +318,7 @@ export function buyerRoutes({ db, paypal, config, answerWriter, signingKeys }: A
       response: StoreReportList,
       handler: async ({ user, query }) => {
         const owned = await ownedIds(user.id);
-        const listed = await db.artifact.findMany({ where: { status: 'listed' }, orderBy: { createdAt: 'desc' }, take: 200 });
+        const listed = await db.artifact.findMany({ where: { status: 'listed', buildJob: { publisherId: sameWorld(user.id) } }, orderBy: { createdAt: 'desc' }, take: 200 });
         const rows = listed.map((a) => {
           const c = a.content as unknown as ArtifactContent;
           const summary = c.sections.find((s) => s.key === 'summary')?.body ?? '';

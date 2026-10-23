@@ -2,6 +2,44 @@
 const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
 const USER_KEY = 'tracepay.demoUser';
+const WORLD_KEY = 'tracepay.demoWorld';
+
+/** This browser's private demo world ("<world>.<secret>"), if it has one. */
+export function getDemoWorld(): string | null {
+  try {
+    return localStorage.getItem(WORLD_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setDemoWorld(token: string | null) {
+  try {
+    if (token) localStorage.setItem(WORLD_KEY, token);
+    else localStorage.removeItem(WORLD_KEY);
+  } catch {
+    // Storage unavailable: this tab uses the shared demo.
+  }
+}
+
+/** Forgets this browser's demo world and role: the next load starts like a first visit. */
+export function forgetDemo() {
+  try {
+    localStorage.removeItem(WORLD_KEY);
+    localStorage.removeItem(USER_KEY);
+  } catch {
+    // Storage unavailable: nothing was kept.
+  }
+}
+
+/** A first visit: no demo role chosen yet (and not signed out on purpose). */
+export function isFirstVisit(): boolean {
+  try {
+    return localStorage.getItem(USER_KEY) === null;
+  } catch {
+    return false;
+  }
+}
 
 /** The demo role chosen in the switcher. The server ignores it unless DEMO_MODE is on. */
 export function getDemoUserId(): string | null {
@@ -46,6 +84,7 @@ function readable(issue: { message: string; path?: unknown[] }): string {
 
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const demoUser = getDemoUserId();
+  const demoWorld = getDemoWorld();
   let res: Response;
   try {
     res = await fetch(`${BASE}/api${path}`, {
@@ -53,6 +92,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
       credentials: 'include',
       headers: {
         ...(demoUser ? { 'X-Demo-User': demoUser } : {}),
+        ...(demoWorld ? { 'X-Demo-World': demoWorld } : {}),
         ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),

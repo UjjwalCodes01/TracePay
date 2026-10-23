@@ -22,7 +22,7 @@ const TABLES = [
   'PayPalPayment', 'Sale', 'ArtifactCitation', 'Artifact', 'SourceEvent', 'BuildSource', 'BuildJob',
   'AgentStep', 'AgentRun', 'LicenseGrant', 'SourceChunk', 'AssetVersion', 'Asset', 'ApiKey', 'Session', 'User',
   'WebhookDelivery', 'OutboundEvent', 'WebhookEndpoint', 'IdempotencyKey', 'ReconciliationIssue',
-  'CitationCredit', 'RoyaltyPayoutItem', 'RoyaltyPayout', 'Answer', 'CreditEntry', 'CreditTopUp', 'CreditAccount',
+  'CitationCredit', 'RoyaltyPayoutItem', 'RoyaltyPayout', 'Answer', 'CreditEntry', 'CreditTopUp', 'CreditAccount', 'DemoWorld',
 ];
 
 /**

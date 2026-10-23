@@ -1,3 +1,4 @@
+import { sameWorld } from '../demo/world';
 import { GOVERNING_STATUSES, LicenseTermsSchema, PENDING_STATUSES, type LicenseStatus, type LicenseTerms } from '@tracepay/shared';
 import type { Tx } from '../../db';
 import type { CompilerSource } from '../license-compiler/compiler';
@@ -67,7 +68,8 @@ const assetInclude = {
 };
 
 /** Sources a publisher can see: everything it holds (or held) a license for, plus every live public listing. */
-const visibleTo = (publisherId: string) => ({ OR: [{ licenses: { some: { licenseeId: publisherId } } }, { archivedAt: null }] });
+/** Sources a publisher may see: those it holds a license for, and any live source of its own world (see sameWorld). */
+const visibleTo = (publisherId: string) => ({ OR: [{ licenses: { some: { licenseeId: publisherId } } }, { archivedAt: null, ownerId: sameWorld(publisherId) }] });
 
 async function toEntries(
   tx: Tx,
@@ -108,7 +110,7 @@ async function toEntries(
 export async function listCatalog(tx: Tx, publisherId: string): Promise<CatalogEntry[]> {
   const [licensed, newest] = await Promise.all([
     tx.asset.findMany({ where: { licenses: { some: { licenseeId: publisherId } } }, orderBy: { createdAt: 'asc' }, take: 2_000, include: assetInclude }),
-    tx.asset.findMany({ where: { archivedAt: null }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 500, include: assetInclude }),
+    tx.asset.findMany({ where: { archivedAt: null, ownerId: sameWorld(publisherId) }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 500, include: assetInclude }),
   ]);
   const byId = new Map([...licensed, ...newest].map((a) => [a.id, a]));
   const assets = [...byId.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));

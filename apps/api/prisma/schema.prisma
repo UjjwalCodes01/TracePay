@@ -911,3 +911,14 @@ model RoyaltyPayoutItem {
 
   credits CitationCredit[]
 }
+
+/// A visitor's private copy of the demo world (hosted demo only). Its users and sources carry the
+/// prefix "dw_<id>_". Only the hash of the visitor's secret is kept.
+model DemoWorld {
+  id         String   @id
+  secretHash String
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  @@index([lastSeenAt])
+}

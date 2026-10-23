@@ -4,7 +4,7 @@ import { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
 import { appendAudit, lockAuditChain } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
-import { chunkContent, DEMO_ASSETS, DEMO_IDS, DEMO_USERS } from './world';
+import { chunkContent, DEMO_ASSETS, DEMO_IDS, DEMO_USERS, inWorld, worldEmail } from './world';
 
 const FIXTURE_DIR = process.env.DEMO_FIXTURE_DIR ?? path.resolve(process.cwd(), 'fixtures/demo-assets');
 const payeeEmails = () =>
@@ -24,13 +24,13 @@ export const DEMO_EMAILS = new Set(DEMO_USERS.map((u) => u.email.toLowerCase()))
  * fixtures. Real accounts — and everything they built, bought or licensed —
  * are never deleted. The audit chain is never rewritten either.
  */
-export async function softResetDemo(db: Db): Promise<{ removedBuilds: number; removedSales: number }> {
+export async function softResetDemo(db: Db, world: string | null = null): Promise<{ removedBuilds: number; removedSales: number }> {
   // Background work (PayPal webhooks, reconciliation, the agent, other demo visitors)
   // can touch the demo's rows mid-reset. Locks below keep that orderly; a collision
   // that still slips through (a deadlock, a row added under us) just runs it again.
   for (let attempt = 1; ; attempt++) {
     try {
-      return await resetOnce(db);
+      return await resetOnce(db, world);
     } catch (err) {
       if (attempt >= 3 || !collided(err)) throw err;
     }
@@ -42,8 +42,10 @@ const collided = (err: unknown) => {
   return code === 'P2003' || code === 'P2034' || /40P01|deadlock/i.test((err as Error).message ?? '');
 };
 
-async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales: number }> {
-  const publisherIds = DEMO_USERS.filter((u) => u.role === 'publisher').map((u) => u.id);
+async function resetOnce(db: Db, world: string | null): Promise<{ removedBuilds: number; removedSales: number }> {
+  // Every id as it exists in this world (the shared demo world when null).
+  const X = (id: string) => inWorld(world, id);
+  const publisherIds = DEMO_USERS.filter((u) => u.role === 'publisher').map((u) => X(u.id));
   const payees = payeeEmails();
   const contents = await Promise.all(DEMO_ASSETS.map((a) => readFile(path.join(FIXTURE_DIR, a.file), 'utf8')));
 
@@ -80,7 +82,7 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
       await tx.agentStep.deleteMany({ where: { run: { publisherId: { in: publisherIds } } } });
       await tx.agentRun.deleteMany({ where: { publisherId: { in: publisherIds } } });
       // The demo buyer's Shopping Assistant runs.
-      const buyerIds = DEMO_USERS.filter((u) => u.role === 'buyer').map((u) => u.id);
+      const buyerIds = DEMO_USERS.filter((u) => u.role === 'buyer').map((u) => X(u.id));
       await tx.agentStep.deleteMany({ where: { run: { publisherId: { in: buyerIds } } } });
       await tx.agentRun.deleteMany({ where: { publisherId: { in: buyerIds } } });
       await tx.apiKey.updateMany({ where: { userId: { in: buyerIds }, revokedAt: null }, data: { revokedAt: new Date() } });
@@ -106,37 +108,46 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
       await tx.apiKey.updateMany({ where: { userId: { in: publisherIds }, revokedAt: null }, data: { revokedAt: new Date() } });
 
       // 2. Restore the demo personas and fixtures idempotently.
-      for (const u of DEMO_USERS) {
+      for (const u of DEMO_USERS.filter((d) => !world || d.role !== 'admin')) {
         const paypalEmail =
           u.role === 'contributor' ? (u.payeeSlot !== undefined ? payees[u.payeeSlot] : undefined) ?? `${u.id.replace('user_', '')}@tracepay-demo.example` : null;
         await tx.user.upsert({
-          where: { id: u.id },
+          where: { id: X(u.id) },
           update: { name: u.name, role: u.role, paypalEmail, passwordHash: null },
-          create: { id: u.id, email: u.email, name: u.name, role: u.role, paypalEmail },
+          create: { id: X(u.id), email: worldEmail(world, u.email), name: u.name, role: u.role, paypalEmail },
         });
       }
       for (const [i, a] of DEMO_ASSETS.entries()) {
         const content = contents[i]!;
-        const versionId = `${a.id}_v1`;
+        const assetId = X(a.id);
+        const versionId = `${assetId}_v1`;
         await tx.asset.upsert({
-          where: { id: a.id },
+          where: { id: assetId },
           update: { title: a.title, kind: a.kind, description: a.description, archivedAt: null },
-          create: { id: a.id, ownerId: a.ownerId, title: a.title, kind: a.kind, description: a.description },
+          create: { id: assetId, ownerId: X(a.ownerId), title: a.title, kind: a.kind, description: a.description },
         });
         // Versions are immutable: create only if missing.
         const exists = await tx.assetVersion.findUnique({ where: { id: versionId }, select: { id: true } });
         if (!exists) {
-          await tx.assetVersion.create({ data: { id: versionId, assetId: a.id, version: 1, sha256: sha256Hex(content), content } });
+          await tx.assetVersion.create({ data: { id: versionId, assetId, version: 1, sha256: sha256Hex(content), content } });
           const paragraphs = chunkContent(content).slice(1);
+          // The same text was screened for planted instructions in the shared world: reuse its verdicts.
+          const screened = world
+            ? new Map((await tx.sourceChunk.findMany({ where: { assetVersionId: `${a.id}_v1`, screenedBy: { not: null } }, select: { ordinal: true, text: true, instructsAi: true, screenNote: true, screenedBy: true } })).map((c) => [c.ordinal, c]))
+            : new Map();
           await tx.sourceChunk.createMany({
-            data: paragraphs.map((text, n) => ({ id: `${versionId}_c${n + 1}`, assetVersionId: versionId, ordinal: n + 1, text })),
+            data: paragraphs.map((text, n) => {
+              const prior = screened.get(n + 1);
+              const reuse = prior && prior.text === text ? { instructsAi: prior.instructsAi, screenNote: prior.screenNote, screenedBy: prior.screenedBy } : {};
+              return { id: `${versionId}_c${n + 1}`, assetVersionId: versionId, ordinal: n + 1, text, ...reuse };
+            }),
           });
         }
         await tx.licenseGrant.create({
           data: {
-            id: a.licenseId,
-            assetId: a.id,
-            licenseeId: DEMO_IDS.publisher,
+            id: X(a.licenseId),
+            assetId,
+            licenseeId: X(DEMO_IDS.publisher),
             version: 1,
             status: 'approved',
             terms: a.terms as unknown as Prisma.InputJsonValue,
@@ -145,7 +156,7 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
             sourceText: a.licenseText,
             offeredAt: new Date('2026-09-28T00:00:00Z'),
             approvedAt: new Date('2026-10-01T00:00:00Z'),
-            approvedById: DEMO_IDS.publisher,
+            approvedById: X(DEMO_IDS.publisher),
           },
         });
       }
@@ -158,9 +169,9 @@ async function resetOnce(db: Db): Promise<{ removedBuilds: number; removedSales:
 
       await appendAudit(tx, {
         entityType: 'system',
-        entityId: 'demo',
+        entityId: world ? X('demo') : 'demo',
         eventType: 'demo.reset',
-        payload: { removedBuilds: buildIds.length, removedSales: saleIds.length },
+        payload: { removedBuilds: buildIds.length, removedSales: saleIds.length, ...(world ? { world } : {}) },
         tenantId: null,
       });
       return { removedBuilds: buildIds.length, removedSales: saleIds.length };

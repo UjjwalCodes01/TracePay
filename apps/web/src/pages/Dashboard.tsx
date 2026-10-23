@@ -263,7 +263,7 @@ function GuidedTour({ d }: { d: Dashboard }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<number | null>(null);
   const buyer = users.find((u) => u.role === 'buyer');
-  const contributor = users.find((u) => u.id === 'user_okafor') ?? users.find((u) => u.role === 'contributor');
+  const contributor = users.find((u) => u.id === 'user_okafor' || u.id.endsWith('_user_okafor')) ?? users.find((u) => u.role === 'contributor');
   const report = d.latestArtifact;
   const steps: Array<{ title: string; text: string; done: boolean; go: (() => Promise<void> | void) | null; hint?: string }> = [
     { title: 'Create a report', text: 'The license check stops a source that isn’t licensed for sale; the AI assistant finds a replacement and asks you.', done: d.artifacts > 0, go: () => navigate('/studio') },

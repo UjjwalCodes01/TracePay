@@ -1,12 +1,13 @@
 import { db } from '../db';
 import { resetAndSeed } from '../modules/demo/seed';
-import { DEMO_USERS } from '../modules/demo/world';
+import { DEMO_USERS, WORLD_PREFIX } from '../modules/demo/world';
 
 // resetAndSeed empties every table. Refuse, unless explicitly forced, on a database
 // that has real accounts (anyone who isn't a seeded demo persona) or captured PayPal
 // payments: that history can't be recreated.
 const force = process.argv.includes('--force');
-const realUsers = await db().user.count({ where: { id: { notIn: DEMO_USERS.map((u) => u.id) } } });
+// Demo personas, of the shared demo and of visitors' private worlds, are not real accounts.
+const realUsers = await db().user.count({ where: { id: { notIn: DEMO_USERS.map((u) => u.id) }, NOT: { id: { startsWith: WORLD_PREFIX } } } });
 const captures = await db().payPalPayment.count({ where: { captureId: { not: null } } });
 if ((realUsers > 0 || captures > 0) && !force) {
   console.error(

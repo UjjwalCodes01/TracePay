@@ -168,6 +168,19 @@ describe.runIf(process.env.TEST_DATABASE_URL)('the web app in a browser', () => 
     expect(found).toEqual([]);
   }, 180_000);
 
+  it('gives a first-time visitor a private demo world of their own', async () => {
+    const context = await browser.createBrowserContext();
+    const page = await context.newPage();
+    page.on('pageerror', (e) => problems.push(`first visit: page error: ${(e as Error).message}`));
+    await page.goto(`${base}/`);
+    await page.waitForFunction(() => /Guided demo/.test(document.body.innerText), { timeout: 30_000 });
+    const stored = await page.evaluate(() => ({ user: localStorage.getItem('tracepay.demoUser'), world: localStorage.getItem('tracepay.demoWorld') }));
+    expect(stored.user).toMatch(/^dw_[a-z0-9]{12}_user_atlas$/);
+    expect(stored.world).toMatch(/^[a-z0-9]{12}\./);
+    await context.close();
+    expect(problems).toEqual([]);
+  }, 60_000);
+
   it('lets a buyer ask and pay authors, and the publisher pay them out with PayPal', async () => {
     const ask = await open('buyer', '/ask');
     // The Ask button enables once the library list has loaded.

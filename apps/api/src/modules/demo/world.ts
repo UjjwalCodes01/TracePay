@@ -17,6 +17,43 @@ export const DEMO_IDS = {
   admin: 'user_admin',
 } as const;
 
+// ---- private demo worlds ------------------------------------------------------------
+//
+// Each visitor of a hosted demo gets a private copy of this world: its own publisher, buyer and
+// contributors, with the same sources and licenses. Every id in it is the base id with a prefix
+// ("dw_<world>_user_atlas"), so whose data is whose is readable from the id alone. The base ids
+// (no prefix) are the shared demo world that tests and scripted examples use.
+
+export const WORLD_PREFIX = 'dw_';
+const WORLD_ID = /^dw_([a-z0-9]{12})_(.+)$/;
+
+/** A new world id: 12 random lowercase letters and digits. */
+export function newWorldId(random: (n: number) => Buffer): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  return [...random(12)].map((b) => alphabet[b % alphabet.length]).join('');
+}
+
+/** A base demo id as it exists in `world` (unchanged for the shared world, `null`). */
+export const inWorld = (world: string | null, baseId: string) => (world ? `${WORLD_PREFIX}${world}_${baseId}` : baseId);
+
+/** The world an id belongs to, or null for the shared demo world and real accounts. */
+export const worldOf = (id: string): string | null => WORLD_ID.exec(id)?.[1] ?? null;
+
+/** The id without its world prefix. */
+export const baseIdOf = (id: string): string => WORLD_ID.exec(id)?.[2] ?? id;
+
+/** A world's version of a demo email (emails are unique): "studio+<world>@atlas-research.example". */
+export const worldEmail = (world: string | null, email: string) => (world ? email.replace('@', `+${world}@`) : email);
+
+/**
+ * Ids (of users, sources…) that belong to the same world as `viewerId`, as a Prisma string filter:
+ * a world sees only itself; everyone else (real accounts, the shared demo) never sees any world.
+ */
+export function sameWorld(viewerId: string | null | undefined): { startsWith: string } | { not: { startsWith: string } } {
+  const world = viewerId ? worldOf(viewerId) : null;
+  return world ? { startsWith: `${WORLD_PREFIX}${world}_` } : { not: { startsWith: WORLD_PREFIX } };
+}
+
 export interface DemoUser {
   id: string;
   email: string;
@@ -152,3 +189,13 @@ export const DEMO_ASSETS: DemoAsset[] = [
 ];
 
 export { chunkContent } from '../assets/chunk';
+
+const DEMO_BASE_IDS = new Set(DEMO_USERS.map((u) => u.id));
+const ROLE_OF = new Map(DEMO_USERS.map((u) => [u.id, u.role]));
+
+/** A demo persona of any world (or the shared one) with the given role; never an admin unless asked. */
+export function demoRoleOf(id: string): DemoUser['role'] | null {
+  const base = baseIdOf(id);
+  return DEMO_BASE_IDS.has(base) ? (ROLE_OF.get(base) ?? null) : null;
+}
+export const isDemoPersona = (id: string) => demoRoleOf(id) !== null;
