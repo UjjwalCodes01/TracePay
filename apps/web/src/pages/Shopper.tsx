@@ -375,7 +375,7 @@ function RunView({ runId }: { runId: string }) {
       {run.status === 'awaiting_approval' && run.pending && <Approve runId={runId} pending={run.pending} onDone={refresh} />}
       <ErrorNote error={stop.error} />
       {run.status === 'completed' && run.summary && (
-        <div className="mt-5 rounded-lg bg-slate-50 p-4 text-sm">
+        <div className="mt-5 whitespace-pre-line rounded-lg bg-slate-50 p-4 text-sm">
           <div className="mb-1 flex items-center gap-1.5 font-medium">
             <CheckCircle2 className="size-4 text-pass" /> Summary
           </div>

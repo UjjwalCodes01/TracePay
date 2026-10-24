@@ -6,6 +6,7 @@ import type { Db, Tx } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import type { ReportWriter } from '../generation/writers';
 import type { AgentMessage, AgentPlanner } from './planners';
+import { plainText, titlesFrom } from './plain-text';
 import { executeShopperTool, purchasesFrom, type PurchaseApproval, type ShopperContext, type ShopperPolicy } from './buyer-tools';
 import { executeTool, type AgentPolicy, type PendingApproval, type ToolContext } from './tools';
 
@@ -195,11 +196,14 @@ export async function runAgent(
     for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
       const next = await planner.next(history, run.kind);
       history.push({ role: 'model', text: next.text, calls: next.calls, raw: next.raw });
-      if (next.text) await step(next.calls.length ? 'plan' : 'message', { output: { text: next.text } });
+      // The transcript keeps the model's words verbatim (it's replayed to the model); people read
+      // them as plain text, sources and reports named by title.
+      const said = next.text ? plainText(next.text, titlesFrom(history)) : null;
+      if (said) await step(next.calls.length ? 'plan' : 'message', { output: { text: said } });
 
       if (next.calls.length === 0) {
-        await save({ status: 'completed', finishedAt: new Date(), summary: next.text });
-        await audit(db, runId, 'agent.completed', { summary: next.text });
+        await save({ status: 'completed', finishedAt: new Date(), summary: said });
+        await audit(db, runId, 'agent.completed', { summary: said });
         return;
       }
 
@@ -208,15 +212,16 @@ export async function runAgent(
         await step('tool_call', { tool: call.name, input: call.args });
         const result = await execute(call.name, call.args);
         if (result.kind === 'pause' && result.approval) {
+          const approval = { ...result.approval, reason: plainText(result.approval.reason, titlesFrom([...history, { role: 'tool', results }])) };
           const pending: Pending = {
-            ...result.approval,
+            ...approval,
             callId: call.id,
             partialResults: results,
             remainingCallIds: next.calls.slice(i + 1).map((c) => c.id),
           };
-          await step('approval_request', { tool: call.name, input: call.args, output: result.approval });
+          await step('approval_request', { tool: call.name, input: call.args, output: approval });
           await save({ status: 'awaiting_approval', pending: json(pending) });
-          await audit(db, runId, 'agent.awaiting_approval', { ...result.approval });
+          await audit(db, runId, 'agent.awaiting_approval', { ...approval });
           return;
         }
         await step('tool_result', { tool: call.name, output: result.response });

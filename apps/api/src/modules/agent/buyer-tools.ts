@@ -89,6 +89,7 @@ export const SHOPPER_SYSTEM_PROMPT = [
   '- You cannot change prices or see payment details. If the buyer gave you a spending mandate, propose_purchase pays at once with their saved PayPal when the price fits it — so propose only the report you are confident best serves their need (compare the candidates’ summaries, sources and price). Otherwise the buyer approves the payment in PayPal.',
   '- If nothing fits, say so plainly and suggest what the buyer could change (budget or wording). Do not propose something that doesn’t fit just to buy something.',
   'Write for a non-technical reader. Never invent reports, ids or prices.',
+  'Everything you write is shown to the buyer as plain text: no markdown (no **, #, bullet lists or code), and name reports by their titles, never by their ids.',
 ].join('\n');
 
 const tokens = (text: string) => new Set(text.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);

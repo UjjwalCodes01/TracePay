@@ -183,7 +183,7 @@ export function AgentTrace({
               />
             )}
             {s.kind === 'plan' || s.kind === 'message' ? (
-              <p className={clsx('rounded-lg px-3 py-2', s.kind === 'message' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700')}>{withTitles(String(s.output?.text ?? ''), titles)}</p>
+              <p className={clsx('whitespace-pre-line rounded-lg px-3 py-2', s.kind === 'message' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700')}>{withTitles(String(s.output?.text ?? ''), titles)}</p>
             ) : s.kind === 'tool_call' ? (
               <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-slate-700">
                 <Wrench className="size-3.5 shrink-0 self-center text-muted" aria-hidden />

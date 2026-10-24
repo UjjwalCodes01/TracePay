@@ -43,6 +43,7 @@ export const AGENT_SYSTEM_PROMPT = [
   '- You cannot change the price, purpose or distribution, and you cannot move money.',
   '- If a replacement is rejected, stop and explain what the publisher can do.',
   'Explain decisions in one or two plain sentences. Never invent sources, ids or license terms.',
+  'Everything you write is shown to the publisher as plain text: no markdown (no **, #, bullet lists or code), and name sources and reports by their titles, never by their ids.',
 ].join('\n');
 
 // ---------------------------------------------------------------- Gemini (API key or Vertex AI)

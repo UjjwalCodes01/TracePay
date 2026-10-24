@@ -116,6 +116,21 @@ describe.runIf(process.env.TEST_DATABASE_URL)('publisher agent (integration)', (
     expect(responses.map((r) => r.error)).toEqual(['GUARDRAIL', 'GUARDRAIL', 'UNKNOWN_TOOL', 'GUARDRAIL']);
   });
 
+  it('shows people plain text with titles, while the model’s transcript stays verbatim', async () => {
+    const dohmke = '“Sea Change in Software Development (Dohmke, Iansiti & Richards, 2023)”';
+    const kestrel = '“Kestrel Enterprise Engineering Panel 2026”';
+    const lookUp = { text: null, calls: [{ id: '1', name: 'find_compatible_replacement', args: { blockedAssetVersionId: C } }] };
+    const proposing = await start(new ScriptedPlanner([lookUp, { text: null, calls: [{ id: '2', name: 'propose_replacement', args: { blockedAssetVersionId: C, replacementAssetVersionId: R, reason: `**Swap** ${C} for "${R}".` } }] }]), false);
+    const paused = await db().agentRun.findUniqueOrThrow({ where: { id: proposing } });
+    expect(paused.status).toBe('awaiting_approval');
+    expect((paused.pending as { reason: string }).reason).toBe(`Swap ${kestrel} for ${dohmke}.`);
+
+    const finishing = await start(new ScriptedPlanner([lookUp, { text: `### Done\n**Stopped** before using ${R}.`, calls: [] }]), true);
+    const done = await db().agentRun.findUniqueOrThrow({ where: { id: finishing } });
+    expect(done.summary).toBe(`Done\nStopped before using ${dohmke}.`);
+    expect(JSON.stringify(done.transcript)).toContain(`**Stopped** before using ${R}.`);
+  });
+
   it('stops at the turn limit', async () => {
     const loop: AgentPlanner = { name: 'loop', model: 'test', next: async () => ({ text: null, calls: [{ id: 'x', name: 'find_approved_sources', args: {} }] }) };
     const runId = await start(loop, true);
