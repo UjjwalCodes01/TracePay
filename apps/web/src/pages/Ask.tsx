@@ -1,7 +1,7 @@
 import { PayPalButtons, PayPalScriptProvider } from '@paypal/react-paypal-js';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { BadgeCheck, CircleSlash, FileSignature, MessageSquareQuote, RotateCw, ShieldCheck, ShieldX, Sparkles, Wallet } from 'lucide-react';
+import { BadgeCheck, Check, Circle, CircleSlash, FileSignature, Loader2, MessageSquareQuote, RotateCw, ShieldCheck, ShieldX, Sparkles, Wallet } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
@@ -121,7 +121,7 @@ export function AskPage() {
   const library = libraryId ?? libraries.data?.libraries[0]?.id ?? null;
   const ask = useMutation({
     // Values are passed in, so a limit committed by pressing Enter is never read stale.
-    mutationFn: (vars: { libraryId: string; question: string; maxPriceCents: number }) => post<{ answer: AnswerView }>('/answers', vars),
+    mutationFn: (vars: { libraryId: string; question: string; maxPriceCents: number; progressId: string }) => post<{ answer: AnswerView }>('/answers', vars),
     onSuccess: (r) => {
       setOpenId(r.answer.id);
       qc.setQueryData(['answer', r.answer.id], { answer: r.answer });
@@ -150,7 +150,7 @@ export function AskPage() {
                 const typed = field ? parseDollars(field) : null;
                 const limit = typed !== null ? clampPrice(typed) : maxPriceCents;
                 setMaxPriceCents(limit);
-                ask.mutate({ libraryId: library, question, maxPriceCents: limit });
+                ask.mutate({ libraryId: library, question, maxPriceCents: limit, progressId: randomId() });
               }}
             >
               {(libraries.data?.libraries.length ?? 0) > 1 && (
@@ -212,9 +212,9 @@ export function AskPage() {
           </Card>
 
           <div aria-live="polite">
-            {ask.isPending ? (
+            {ask.isPending && ask.variables ? (
               <Card>
-                <Spinner label="Checking licenses, reading licensed sources and writing a cited answer…" />
+                <AnswerProgress progressId={ask.variables.progressId} />
               </Card>
             ) : shown ? (
               <AnswerCard key={shown} answerId={shown} />
@@ -442,6 +442,68 @@ function AnswerCard({ answerId }: { answerId: string }) {
 
       {a.receipt && <ReceiptRow receipt={a.receipt} answerId={a.id} />}
     </Card>
+  );
+}
+
+const STAGES = [
+  ['rights', 'Checking which sources are licensed for AI answers'],
+  ['retrieval', 'Finding the passages that answer your question'],
+  ['screen', 'Screening those passages for hidden instructions to AI'],
+  ['budget', 'Fitting the sources to your price limit and holding the credit'],
+  ['writing', 'The AI is writing an answer that cites each passage it uses'],
+  ['judging', 'A separate AI judge is checking every citation'],
+  ['settling', 'Charging only for verified citations and signing the receipt'],
+] as const;
+
+const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+
+/** The answer's real progress, step by step, as the server reports it (polled while it's written). */
+function AnswerProgress({ progressId }: { progressId: string }) {
+  const [startedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(startedAt);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, []);
+  const progress = useQuery({
+    queryKey: ['answer-progress', progressId],
+    queryFn: () => api<{ stages: Array<{ stage: string; at: number }>; elapsedMs: number }>(`/answers/progress/${progressId}`),
+    refetchInterval: 1000,
+    retry: false,
+  });
+  const reached = progress.data?.stages ?? [];
+  const current = reached.length - 1;
+  const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
+  return (
+    <div role="status" aria-live="polite" className="py-2 text-sm">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <span className="font-medium">Working on your answer</span>
+        <span className="tabular-nums text-muted">{seconds(now - startedAt)} · usually under 20 s</span>
+      </div>
+      <ol className="space-y-2">
+        {STAGES.map(([key, label]) => {
+          const i = reached.findIndex((r) => r.stage === key);
+          const done = i >= 0 && i < current;
+          const active = i >= 0 && i === current;
+          const took = done ? reached[i + 1]!.at - reached[i]!.at : 0;
+          return (
+            <li key={key} className={clsx('flex items-start gap-2.5', !done && !active && 'text-muted')}>
+              {done ? (
+                <Check className="mt-0.5 size-4 shrink-0 text-pass" aria-hidden />
+              ) : active ? (
+                <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
+              ) : (
+                <Circle className="mt-0.5 size-4 shrink-0 text-slate-300" aria-hidden />
+              )}
+              <span className="min-w-0 flex-1">{label}</span>
+              {done && took >= 100 && <span className="shrink-0 tabular-nums text-xs text-muted">{seconds(took)}</span>}
+            </li>
+          );
+        })}
+      </ol>
+      {/* The first polls can beat the question to the server: only say so if nothing ever arrives. */}
+      {!progress.data && progress.isError && now - startedAt > 4000 && <p className="mt-3 text-xs text-muted">Live progress isn’t available right now; the answer is still on its way.</p>}
+    </div>
   );
 }
 

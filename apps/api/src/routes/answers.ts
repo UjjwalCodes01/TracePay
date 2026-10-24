@@ -9,6 +9,7 @@ import { runRedTeam } from '../modules/answers/integrity';
 import { latestRedTeam } from '../modules/answers/red-team';
 import { contributorAnswerEarnings, refreshRoyaltyPayout, royaltySummary, sendRoyaltyPayout, submitRoyaltyPayout } from '../modules/answers/royalties.service';
 import { HttpError } from '../http/errors';
+import { progressReporter, PROGRESS_ID, readProgress } from '../modules/answers/progress';
 
 const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 
@@ -17,6 +18,8 @@ export const AskBody = z.object({
   question: z.string().trim().min(8).max(500),
   /** The most this answer may cost, in cents ($0.01 – $5.00). */
   maxPriceCents: z.number().int().min(1).max(500),
+  /** Optional: a random id the asker picks, to follow the answer's progress while it's written. */
+  progressId: z.string().regex(PROGRESS_ID).optional(),
 });
 
 /** Pay-per-citation answers: buyers ask and pay, contributors earn, publishers pay out. */
@@ -44,9 +47,17 @@ export function answerRoutes({ db, paypal, signingKeys, answerWriter, config }: 
   });
 
   r.post('/answers', requireRole('buyer'), quotas.answer(), async (req, res) => {
-    const body = AskBody.parse(req.body);
-    if (config.demoSharedBuyer) await refillDemoCredit(db, currentUser(req).id);
-    res.status(201).json({ answer: await askLibrary(db, answerWriter(), signingKeys(), { askerId: currentUser(req).id, ...body }) });
+    const { progressId, ...body } = AskBody.parse(req.body);
+    const askerId = currentUser(req).id;
+    if (config.demoSharedBuyer) await refillDemoCredit(db, askerId);
+    res.status(201).json({ answer: await askLibrary(db, answerWriter(), signingKeys(), { askerId, ...body, onStage: progressReporter(askerId, progressId) }) });
+  });
+
+  r.get('/answers/progress/:progressId', requireRole('buyer'), async (req, res) => {
+    const id = z.string().regex(PROGRESS_ID).parse(req.params.progressId);
+    const progress = readProgress(currentUser(req).id, id);
+    if (!progress) throw new HttpError(404, 'No answer in progress with that id.');
+    res.json(progress);
   });
 
   r.get('/answers', requireRole('buyer'), async (req, res) => {

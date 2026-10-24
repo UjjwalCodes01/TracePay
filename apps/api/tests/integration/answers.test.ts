@@ -176,6 +176,31 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
     await expectLedgerConsistent();
   });
 
+  it('reports real progress to the asker while the answer is written, and to no one else', async () => {
+    const fixture = new FixtureAnswerWriter();
+    let release!: () => void;
+    const writing = new Promise<void>((r) => (release = r));
+    let started!: () => void;
+    const reachedWriter = new Promise<void>((r) => (started = r));
+    writer = { name: 'held', answer: async (input) => (started(), await writing, fixture.answer(input)) };
+    const a = app();
+    await topUp(a);
+    const progressId = 'test_progress_0123456789';
+    // supertest sends on .then: start the request now.
+    const pending = ask(a, { progressId }).then((r) => r);
+    await reachedWriter;
+    const mid = (await request(a).get(`/api/answers/progress/${progressId}`).set(buyer).expect(200)).body;
+    expect(mid.stages.map((s: { stage: string }) => s.stage)).toEqual(['rights', 'retrieval', 'screen', 'budget', 'writing']);
+    await request(a).get(`/api/answers/progress/${progressId}`).set({ 'X-Demo-User': 'user_atlas' }).expect(403);
+    release();
+    const done = await pending;
+    expect(done.status).toBe(201);
+    expect(done.body.answer.status).toBe('answered');
+    const after = (await request(a).get(`/api/answers/progress/${progressId}`).set(buyer).expect(200)).body;
+    expect(after.stages.map((s: { stage: string }) => s.stage).slice(-2)).toEqual(['judging', 'settling']);
+    await request(a).get('/api/answers/progress/not-a-valid-id').set(buyer).expect(400);
+  });
+
   it('charges nothing when the model is unreachable', async () => {
     writer = { name: 'down', answer: async () => { throw new Error('model unavailable'); } };
     const a = app();

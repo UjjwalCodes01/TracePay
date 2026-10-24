@@ -15,6 +15,7 @@ import { CreditError, lockAccount } from './credits.service';
 import { auditAnswer, citationPairs, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
 import { RULE_JUDGE, RuleSupportJudge } from './support';
 import { withheldPassages } from '../sources/screening';
+import type { AnswerStage } from './progress';
 import { checkAnswerRights, type ExcludedSource } from './rights';
 
 /**
@@ -58,6 +59,8 @@ export interface AskInput {
   question: string;
   maxPriceCents: number;
   asOf?: string;
+  /** Told each step as it starts, for the asker's progress view. */
+  onStage?: (stage: AnswerStage) => void;
 }
 
 interface StoredContent {
@@ -76,6 +79,7 @@ interface StoredContent {
 export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys, input: AskInput) {
   const asOf = input.asOf ?? todayUtc();
   const fee = answerFeeCents();
+  const stage = input.onStage ?? (() => {});
   if (input.maxPriceCents < fee) throw new CreditError(`The price limit must cover the ${formatMoney(fee)} answer fee.`, 'invalid');
 
   const library = await db.user.findUnique({ where: { id: input.libraryId }, select: { id: true, name: true, role: true } });
@@ -83,6 +87,7 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   if (!library || library.role !== 'publisher' || worldOf(library.id) !== worldOf(input.askerId)) throw new CreditError('Library not found.', 'not_found');
 
   // 1. Rights: only sources whose license allows AI answers, today.
+  stage('rights');
   const entries = (await listCatalog(db, input.libraryId)).filter((e) => e.license);
   const sources = entries.length ? await resolveSources(db, input.libraryId, entries.map((e) => e.assetVersionId)) : [];
   const rights = checkAnswerRights(sources, asOf);
@@ -99,8 +104,10 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   const sourceOf = new Map(sources.map((s) => [s.assetVersionId, s]));
 
   // 2. Retrieval from licensed sources only, most relevant first; unrelated passages are dropped.
+  stage('retrieval');
   const relevant = eligible.length ? (await retrievePassages(db, eligible.map((e) => e.source.assetVersionId), input.question, PASSAGES_PER_SOURCE)).filter((p) => p.rank > 0) : [];
   // Text that tries to steer the model never reaches it (pattern list, then — with AI on — a model screen).
+  stage('screen');
   const blocked = await withheldPassages(db, relevant, writer.screen);
   const retrieved = relevant.filter((p) => !blocked.has(p.chunkId));
   const withheld = relevant.length - retrieved.length;
@@ -118,6 +125,7 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   }));
 
   // 3. The asker's mandate, enforced before the model runs.
+  stage('budget');
   const plan = planWithinBudget(candidates, fee, input.maxPriceCents);
   const budgetExcluded: ExcludedSource[] = plan.trimmed
     .filter((t) => t.kept === 0)
@@ -154,6 +162,7 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   let audit: AnswerAudit;
   const topic = input.question;
   try {
+    stage('writing');
     out = await withTimeout(writer.answer({ question: input.question, passages: writerPassages }), WRITER_TIMEOUT_MS);
     audit = auditAnswer(out.text, plan.passages, rates, { topic });
     const problems = [
@@ -169,6 +178,7 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
       const pairs = citationPairs(out.text, plan.passages);
       const context = { corpus: plan.passages.map((p) => p.text), topic };
       const judge = writer.judge ?? new RuleSupportJudge();
+      stage('judging');
       let verdicts;
       let checkedBy = judge.name;
       let judgedBy = judge.identity?.() ?? { version: judge.name };
@@ -189,6 +199,7 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
   }
 
   // 6. Charge only for a grounded, original answer; credit only verified citations.
+  stage('settling');
   if (audit.unknownHandles.length) {
     await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The answer cited sources it wasn’t given, so it was rejected. You were not charged.', out, audit, plan: titled, withheld });
   } else if (out.covered && copied(out.text)) {
