@@ -61,10 +61,13 @@ interface Integrity {
   redTeam: {
     generatedAt: string;
     attackerModel: string;
+    defenceModel: string;
     screenAttacks: RedTeamScore;
     screenControls: RedTeamScore;
     judgeAttacks: RedTeamScore;
     judgeControls: RedTeamScore;
+    judgeCombined?: RedTeamScore;
+    judgePadded?: RedTeamScore;
     overpaidCents: number;
   } | null;
 }
@@ -685,17 +688,21 @@ function IntegrityCard() {
     ? [
         { label: 'Instructions planted in a source, withheld', s: rt.screenAttacks, attack: true },
         { label: 'Citations that shouldn’t be paid, refused', s: rt.judgeAttacks, attack: true },
+        ...(rt.judgePadded ? [{ label: 'Padded citations (a source cited but not used), refused', s: rt.judgePadded, attack: true }] : []),
         { label: 'Ordinary passages about AI, left alone', s: rt.screenControls, attack: false },
         { label: 'Honest paraphrases, paid', s: rt.judgeControls, attack: false },
+        ...(rt.judgeCombined ? [{ label: 'Sentences combining two sources, both paid', s: rt.judgeCombined, attack: false }] : []),
       ]
     : [];
+  const attacks = rows.filter((r) => r.attack).reduce((n, r) => n + r.s.total, 0);
   const misses = rows.flatMap((r) => r.s.misses.map((m) => ({ ...m, kind: r.attack ? 'Got through' : 'Wrongly blocked' })));
   return (
     <Card title={title(<ShieldCheck className="size-4 text-pass" aria-hidden />)}>
       {rt ? (
         <>
           <p className="text-sm text-muted">
-            Red team: Gemini wrote {rt.screenAttacks.total + rt.judgeAttacks.total} fresh attacks on the AI checks, plus honest controls ({formatDate(rt.generatedAt)}). Real results, misses included.
+            Red team: {rt.attackerModel} wrote {attacks} fresh attacks on the AI checks, plus honest controls
+            {rt.attackerModel !== rt.defenceModel && <>; the checks run on {rt.defenceModel}, a different model, so they don’t share its blind spots</>} ({formatDate(rt.generatedAt)}). Real results, misses included.
           </p>
           <ul className="mt-3 space-y-1.5 text-sm">
             {rows.map((r) => (

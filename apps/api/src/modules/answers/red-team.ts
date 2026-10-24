@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 /**
- * Results of the AI red team (src/scripts/red-team.ts): Gemini, playing the attacker, writes
+ * Results of the AI red team (src/scripts/red-team.ts): a Gemini model, playing the attacker, writes
  * fresh attacks against TracePay's two AI defences — the passage screen and the citation judge —
  * plus honest controls, and the real defences are scored on them. Misses are published as-is.
  */
@@ -23,6 +23,10 @@ export const RedTeamReport = z.object({
   judgeAttacks: Score,
   /** Honest paraphrases that should be paid: correct = paid. */
   judgeControls: Score,
+  /** Honest sentences that combine two sources: correct = both are paid. */
+  judgeCombined: Score.optional(),
+  /** Sentences that cite a second source they don't use: caught = the padded one isn't paid. */
+  judgePadded: Score.optional(),
   /** What the missed citation attacks would have been paid, at the demo rate. */
   overpaidCents: z.number().int(),
 });

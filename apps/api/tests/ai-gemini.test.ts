@@ -56,7 +56,7 @@ describe('the citation judge', () => {
   it('keeps a whole batch when one reason runs long, and trims it', async () => {
     const { ModelSupportJudge } = await import('../src/modules/answers/support');
     embedContent.mockImplementation(async (req?: { contents: string[] }) => ({ embeddings: (req?.contents ?? []).map(() => ({ values: [1, 0] })) }));
-    generateContent.mockResolvedValue(reply({ verdicts: [{ id: 's1', label: 'A', used: true, reason: 'x'.repeat(1200) }] }));
+    generateContent.mockResolvedValue(reply({ verdicts: [{ id: 's1', label: 'A', fact: 'the figure', beyond: '', used: true, reason: 'x'.repeat(1200) }] }));
     const v = await new ModelSupportJudge().judge([{ key: 'k', sentence: 'Spend rose 61%.', passage: 'Spend rose 61% year over year.' }]);
     expect(v.get('k')).toMatchObject({ supported: true });
     expect(v.get('k')!.reason.length).toBeLessThanOrEqual(300);
@@ -70,9 +70,9 @@ describe('the citation judge', () => {
       prompt = req?.contents ?? '';
       return reply({
         verdicts: [
-          { id: 's1', label: 'A', used: true, reason: 'Gives the acceptance rate.' },
-          { id: 's1', label: 'B', used: true, reason: 'Says acceptance drives perceived productivity.' },
-          { id: 's1', label: 'C', used: false, reason: 'About IDE prices: not used.' },
+          { id: 's1', label: 'A', fact: 'nearly 30%', beyond: '', used: true, reason: 'Gives the acceptance rate.' },
+          { id: 's1', label: 'B', fact: 'acceptance drives perceived productivity', beyond: '', used: true, reason: 'Says acceptance drives perceived productivity.' },
+          { id: 's1', label: 'C', fact: '', beyond: '', used: false, reason: 'About IDE prices: not used.' },
         ],
       });
     });
@@ -87,6 +87,22 @@ describe('the citation judge', () => {
     expect(prompt).toMatch(/PASSAGE A: .*\nPASSAGE B: .*\nPASSAGE C: /);
     expect([v.get('a')!.supported, v.get('b')!.supported, v.get('c')!.supported]).toEqual([true, true, false]);
   });
+
+  it('pays a passage only for a fact it names: "used" with no fact is not paid', async () => {
+    const { ModelSupportJudge } = await import('../src/modules/answers/support');
+    embedContent.mockImplementation(async (req?: { contents: string[] }) => ({ embeddings: (req?.contents ?? []).map(() => ({ values: [1, 0] })) }));
+    generateContent.mockResolvedValue(reply({ verdicts: [{ id: 's1', label: 'A', fact: '  ', beyond: '', used: true, reason: 'Loosely related.' }] }));
+    const v = await new ModelSupportJudge().judge([{ key: 'k', sentence: 'Spend rose, reflecting broader trends.', passage: 'Spend rose 61% year over year.' }]);
+    expect(v.get('k')).toMatchObject({ supported: false });
+  });
+
+  it('pays nothing for a sentence that adds a claim none of its passages give, even with a true fact in it', async () => {
+    const { ModelSupportJudge } = await import('../src/modules/answers/support');
+    embedContent.mockImplementation(async (req?: { contents: string[] }) => ({ embeddings: (req?.contents ?? []).map(() => ({ values: [1, 0] })) }));
+    generateContent.mockResolvedValue(reply({ verdicts: [{ id: 's1', label: 'A', fact: '22 of 38', beyond: '$50 per user', used: true, reason: 'Adds a price.' }] }));
+    const v = await new ModelSupportJudge().judge([{ key: 'k', sentence: '22 of 38 moved to a $50-per-user agreement.', passage: '22 of 38 organisations moved to an enterprise agreement.' }]);
+    expect(v.get('k')).toMatchObject({ supported: false });
+  });
 });
 
 describe('generateStructured', () => {
@@ -100,14 +116,13 @@ describe('generateStructured', () => {
     expect(req.config.responseJsonSchema).toBeTruthy();
   });
 
-  it('never sends the model the unsafe-integer bounds Vertex AI rejects', () => {
+  it('never sends the model the unsafe-integer bounds or array limits Vertex AI rejects', () => {
     const json = JSON.stringify(modelSchema(z.object({ n: z.number().int().min(1), m: z.number().int().min(0).max(500) })));
     expect(json).not.toMatch(/9007199254740991/);
     expect(json).toMatch(/"minimum":1/);
     expect(json).toMatch(/"maximum":500/);
     const arrays = JSON.stringify(modelSchema(z.object({ a: z.array(z.string()).max(60), b: z.array(z.string()).max(500) })));
-    expect(arrays).toMatch(/"maxItems":60/);
-    expect(arrays).not.toMatch(/"maxItems":500/);
+    expect(arrays).not.toMatch(/maxItems/);
   });
 
   it('rejects an empty reply, invalid JSON and JSON of the wrong shape', async () => {
@@ -248,7 +263,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('a paid answer through the Gemini 
         judged = req.contents;
         const ids = [...req.contents.matchAll(/^ITEM (s\d+)$/gm)].map((m) => m[1]!);
         // The judge rejects the second claim.
-        return reply({ verdicts: ids.map((id, i) => ({ id, label: 'A', used: i === 0, reason: i === 0 ? 'States the passage’s figure.' : 'Generic: the passage doesn’t say this.' })) });
+        return reply({ verdicts: ids.map((id, i) => ({ id, label: 'A', fact: i === 0 ? '38%' : '', beyond: '', used: i === 0, reason: i === 0 ? 'States the passage’s figure.' : 'Generic: the passage doesn’t say this.' })) });
       }
       const [first, second] = [...req.contents.matchAll(/^\[(C\d+)\] /gm)].map((m) => m[1]!);
       return reply({ covered: true, answer: `Assistant spend grew 61% in a year [${first}]. Developers love their tools [${second}]. Nothing about Lisbon's weather here [${first}].` });

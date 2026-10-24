@@ -84,8 +84,9 @@ export const AI_MAX_OUTPUT_TOKENS = 8192;
 
 /**
  * The JSON schema the model is asked to follow. zod bounds integers by JavaScript's safe range
- * (±9007199254740991) and Vertex AI rejects those as an invalid argument (they constrain nothing);
- * it also rejects array limits above about 60. zod still enforces every limit on the reply.
+ * (±9007199254740991) and Vertex AI rejects those as an invalid argument (they constrain nothing).
+ * It also rejects schemas it finds too complex, and array limits count heavily (60 items of four
+ * fields pass, of five fail), so array limits are left out. zod still enforces every limit on the reply.
  */
 export function modelSchema(schema: z.ZodType): Record<string, unknown> {
   const strip = (node: unknown): unknown => {
@@ -94,8 +95,7 @@ export function modelSchema(schema: z.ZodType): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(node)) {
       if ((k === 'maximum' || k === 'minimum') && typeof v === 'number' && Math.abs(v) >= Number.MAX_SAFE_INTEGER) continue;
-      // Vertex also rejects large array limits (100 fails, 60 works); the reply is still checked with zod.
-      if (k === 'maxItems' && typeof v === 'number' && v > 60) continue;
+      if (k === 'maxItems') continue;
       out[k] = strip(v);
     }
     return out;
