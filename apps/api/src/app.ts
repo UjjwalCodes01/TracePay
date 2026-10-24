@@ -47,6 +47,8 @@ export interface AppDeps {
     demoMode: boolean;
     /** Many visitors share the demo buyer (only with demoMode): its credit refills and it may buy again. */
     demoSharedBuyer?: boolean;
+    /** Build a ready-made sample report in each new or reset demo world, so its store isn't empty (only with demoMode). */
+    sampleReports?: boolean;
     cookieSecure: boolean;
     /** Requests per minute per IP across the API. */
     rateLimitPerMinute: number;

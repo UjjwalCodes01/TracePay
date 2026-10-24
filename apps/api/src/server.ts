@@ -88,6 +88,7 @@ const app = createApp({
     vertexReady: aiReady(),
     demoMode: env.DEMO_MODE,
     demoSharedBuyer: env.DEMO_MODE && env.DEMO_SHARED_BUYER,
+    sampleReports: env.DEMO_MODE,
     cookieSecure: env.NODE_ENV === 'production',
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,
     authRateLimit: env.AUTH_RATE_LIMIT,

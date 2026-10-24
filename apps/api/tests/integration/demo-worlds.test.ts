@@ -5,6 +5,9 @@ import { db } from '../../src/db';
 import { resetAndSeed } from '../../src/modules/demo/seed';
 import { FakePayPal } from '../fake-paypal';
 import { testApp } from '../test-app';
+import { buildSampleReport } from '../../src/modules/demo/sample-report';
+import { worldOf } from '../../src/modules/demo/world';
+import { FixtureReportWriter } from '../../src/modules/generation/writers';
 
 /** Each visitor of a hosted demo gets a private copy of it: nobody sees or resets anyone else's. */
 describe.runIf(process.env.TEST_DATABASE_URL)('private demo worlds', () => {
@@ -69,6 +72,21 @@ describe.runIf(process.env.TEST_DATABASE_URL)('private demo worlds', () => {
     const owners = JSON.stringify(market);
     expect(owners).not.toMatch(new RegExp(a.publisherId.slice(0, 16)));
     expect(owners).not.toMatch(/"user_northwind"/);
+  });
+
+  it('opens with a sample report in the store, which isn’t counted as the publisher’s own progress', async () => {
+    const w = await newWorld();
+    const id = await buildSampleReport(db(), worldOf(w.publisherId), new FixtureReportWriter());
+    expect(id).toBeTruthy();
+    const store = (await request(app).get('/api/artifacts').set(w.as('user_buyer')).expect(200)).body.artifacts;
+    expect(store.map((x: { id: string; title: string }) => [x.id, x.title])).toEqual([[id, expect.stringMatching(/\(sample\)$/)]]);
+    // The publisher's journey still starts at "check your sources".
+    const dash = (await request(app).get('/api/dashboard').set(w.as('user_atlas')).expect(200)).body;
+    expect(dash).toMatchObject({ buildsPassed: 0, artifacts: 0, latestArtifact: null });
+    // Built only from the world's own, licensed sources.
+    const build = await db().buildJob.findFirstOrThrow({ where: { artifact: { id: id! } }, include: { sources: true } });
+    expect(build.sample).toBe(true);
+    expect(build.sources.every((s) => s.assetVersionId.startsWith(w.publisherId.slice(0, 16)))).toBe(true);
   });
 
   it('resets only the visitor’s own world', async () => {

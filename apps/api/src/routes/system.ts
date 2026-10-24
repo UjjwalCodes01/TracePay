@@ -9,6 +9,7 @@ import { publicKeyPem } from '../modules/audit/signing';
 import { softResetDemo } from '../modules/demo/soft-reset';
 import { DEMO_IDS, DEMO_USERS, inWorld, worldOf } from '../modules/demo/world';
 import { createDemoWorld, DEMO_WORLD_HEADER, verifyDemoWorld } from '../modules/demo/worlds';
+import { buildSampleReportLater } from '../modules/demo/sample-report';
 import { limitStore, limitStoreStatus } from '../http/rate-store';
 
 export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDeps) {
@@ -66,6 +67,7 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
   r.post('/demo/worlds', worldLimiter, async (_req, res) => {
     if (!config.demoMode) throw new HttpError(404, 'Not found.');
     const { world, token } = await createDemoWorld(db);
+    if (config.sampleReports) buildSampleReportLater(db, world, writer());
     const users = await db.user.findMany({ where: { id: { in: DEMO_USERS.filter((u) => u.role !== 'admin').map((u) => inWorld(world, u.id)) } }, select: { id: true, name: true, role: true } });
     res.status(201).json({ token, publisherId: inWorld(world, DEMO_IDS.publisher), users });
   });
@@ -87,7 +89,9 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
     if (!config.demoMode) throw new HttpError(404, 'Not found.');
     if (req.authMethod !== 'demo' && req.user?.role !== 'admin') throw new HttpError(403, 'Only demo users can reset the demo.');
     // A private world resets only itself.
-    const result = await softResetDemo(db, worldOf(currentUser(req).id));
+    const world = worldOf(currentUser(req).id);
+    const result = await softResetDemo(db, world);
+    if (config.sampleReports) buildSampleReportLater(db, world, writer());
     res.json({ ok: true, ...result, note: 'Demo data restored. Real accounts were not affected; PayPal sandbox history is not reversed.' });
   });
 
@@ -100,9 +104,10 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
     const myRun = user.role === 'admin' ? {} : { sale: mySale };
 
     const [buildsPassed, buildsBlocked, artifacts, sales, owed, paid, exceptions, recent, toApprove, toPay, paying, agentWaiting, latestArtifact] = await Promise.all([
-      db.buildJob.count({ where: { ...mine, status: { in: ['preflight_passed', 'generating', 'generated'] } } }),
-      db.buildJob.count({ where: { ...mine, status: 'preflight_blocked' } }),
-      db.artifact.count({ where: { buildJob: mine } }),
+      // The demo's ready-made sample report isn't the publisher's own progress.
+      db.buildJob.count({ where: { ...mine, sample: false, status: { in: ['preflight_passed', 'generating', 'generated'] } } }),
+      db.buildJob.count({ where: { ...mine, sample: false, status: 'preflight_blocked' } }),
+      db.artifact.count({ where: { buildJob: { ...mine, sample: false } } }),
       db.payPalPayment.aggregate({ where: { sale: { ...mySale, status: 'captured' } }, _count: true, _sum: { capturedCents: true } }),
       db.settlementLine.aggregate({
         where: {
@@ -130,7 +135,7 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
       db.settlementRun.count({ where: { ...myRun, status: 'approved' } }),
       db.settlementRun.count({ where: { ...myRun, status: 'payout_submitted' } }),
       db.agentRun.count({ where: { ...mine, kind: 'publisher', status: 'awaiting_approval' } }),
-      db.artifact.findFirst({ where: { buildJob: mine }, orderBy: { createdAt: 'desc' }, select: { id: true, title: true } }),
+      db.artifact.findFirst({ where: { buildJob: { ...mine, sample: false } }, orderBy: { createdAt: 'desc' }, select: { id: true, title: true } }),
     ]);
     const licenseOffers = await db.licenseGrant.count({ where: { status: 'offered', ...(user.role === 'admin' ? {} : { licenseeId: user.id }) } });
     res.json({

@@ -9,7 +9,7 @@ AI is built on people's work, and licenses are mostly ignored: a "non-commercial
 
 **Who it's for:** libraries and publishers of licensed content (research firms, data vendors) that want to sell AI answers and reports built from it; the contributors who license their work to them; and buyers — or the AI agents buying for them.
 
-**Try it:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — no sign-up; you get **your own private copy of the demo**. PayPal **sandbox** buyer (test money only): `tp-buyer-8fjk@personal.example.com` / `2I2oZGc!` (also shown next to the PayPal buttons; or pay with a [sandbox test card](https://developer.paypal.com/tools/sandbox/card-testing/)). Free hosting: the first visit can take up to a minute to wake the API.
+**Try it:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app) — no sign-up; you get **your own private copy of the demo**, with a sample report already in its store (so a buyer has something to buy first; it doesn't count towards the publisher's own steps). PayPal **sandbox** buyer (test money only): `tp-buyer-8fjk@personal.example.com` / `2I2oZGc!` (also shown next to the PayPal buttons; or pay with a [sandbox test card](https://developer.paypal.com/tools/sandbox/card-testing/)). Free hosting: the first visit can take up to a minute to wake the API.
 
 ### The 3-minute path
 

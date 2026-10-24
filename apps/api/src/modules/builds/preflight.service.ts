@@ -14,6 +14,8 @@ export interface PreflightRequest {
   assetVersionIds: string[];
   agentRunId?: string | null;
   asOf?: string;
+  /** A demo's ready-made sample report (see demo/sample-report). */
+  sample?: boolean;
 }
 
 export interface PreflightOutcome {
@@ -51,6 +53,7 @@ export async function preflightAndRecord(tx: Tx, req: PreflightRequest): Promise
     data: {
       publisherId: req.publisherId,
       agentRunId: req.agentRunId ?? null,
+      sample: req.sample ?? false,
       intent: json(req.intent),
       asOf,
       status: report.verdict === 'pass' ? 'preflight_passed' : 'preflight_blocked',

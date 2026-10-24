@@ -322,6 +322,8 @@ model BuildJob {
   createdAt     DateTime    @default(now())
   /// Last activity; used to detect generation interrupted by a restart.
   updatedAt     DateTime    @default(now()) @updatedAt
+  /// A demo's ready-made report, so its store isn't empty: not counted as the publisher's own progress.
+  sample        Boolean     @default(false)
 
   sources  BuildSource[]
   events   SourceEvent[]
