@@ -56,7 +56,12 @@ export function StudioPage() {
   );
   // Only what the catalog shows can be selected: a source that was archived, or a version
   // replaced by a newer one, must not stay selected (and built) without a visible tick.
-  const selection = useMemo(() => (picked ?? DEFAULT_SELECTION).filter((id) => id in titles), [picked, titles]);
+  // The defaults are the demo's base ids; in a private demo every id carries its world's prefix.
+  const defaults = useMemo(
+    () => DEFAULT_SELECTION.flatMap((base) => Object.keys(titles).filter((id) => id === base || id.endsWith(`_${base}`)).slice(0, 1)),
+    [titles],
+  );
+  const selection = useMemo(() => (picked ?? defaults).filter((id) => id in titles), [picked, defaults, titles]);
 
   const preflight = useMutation({
     mutationFn: () => post<PreflightOutcome>('/builds/preflight', { intent, assetVersionIds: selection }),

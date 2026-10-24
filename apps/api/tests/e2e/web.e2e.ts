@@ -177,6 +177,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('the web app in a browser', () => 
     const stored = await page.evaluate(() => ({ user: localStorage.getItem('tracepay.demoUser'), world: localStorage.getItem('tracepay.demoWorld') }));
     expect(stored.user).toMatch(/^dw_[a-z0-9]{12}_user_atlas$/);
     expect(stored.world).toMatch(/^[a-z0-9]{12}\./);
+    // Create a report starts with the demo's three sources ticked — in this private world too.
+    await page.goto(`${base}/studio`);
+    await page.waitForFunction(() => /3 chosen/.test(document.body.innerText), { timeout: 20_000 });
     await context.close();
     expect(problems).toEqual([]);
   }, 60_000);
