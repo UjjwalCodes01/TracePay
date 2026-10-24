@@ -56,10 +56,36 @@ describe('the citation judge', () => {
   it('keeps a whole batch when one reason runs long, and trims it', async () => {
     const { ModelSupportJudge } = await import('../src/modules/answers/support');
     embedContent.mockImplementation(async (req?: { contents: string[] }) => ({ embeddings: (req?.contents ?? []).map(() => ({ values: [1, 0] })) }));
-    generateContent.mockResolvedValue(reply({ verdicts: [{ id: 'p1', supported: true, reason: 'x'.repeat(1200) }] }));
+    generateContent.mockResolvedValue(reply({ verdicts: [{ id: 's1', label: 'A', used: true, reason: 'x'.repeat(1200) }] }));
     const v = await new ModelSupportJudge().judge([{ key: 'k', sentence: 'Spend rose 61%.', passage: 'Spend rose 61% year over year.' }]);
     expect(v.get('k')).toMatchObject({ supported: true });
     expect(v.get('k')!.reason.length).toBeLessThanOrEqual(300);
+  });
+
+  it('judges a sentence with all the passages it cites: each one it combines is paid, a padded one is not', async () => {
+    const { ModelSupportJudge } = await import('../src/modules/answers/support');
+    embedContent.mockImplementation(async (req?: { contents: string[] }) => ({ embeddings: (req?.contents ?? []).map(() => ({ values: [1, 0] })) }));
+    let prompt = '';
+    generateContent.mockImplementation(async (req?: { contents: string }) => {
+      prompt = req?.contents ?? '';
+      return reply({
+        verdicts: [
+          { id: 's1', label: 'A', used: true, reason: 'Gives the acceptance rate.' },
+          { id: 's1', label: 'B', used: true, reason: 'Says acceptance drives perceived productivity.' },
+          { id: 's1', label: 'C', used: false, reason: 'About IDE prices: not used.' },
+        ],
+      });
+    });
+    const sentence = 'Developers accept about 30% of suggestions, and acceptance rate is what drives perceived productivity.';
+    const v = await new ModelSupportJudge().judge([
+      { key: 'a', sentence, passage: 'Developers accept nearly 30% of code suggestions.' },
+      { key: 'b', sentence, passage: 'Acceptance rate is the best predictor of perceived productivity.' },
+      { key: 'c', sentence, passage: 'Cloud IDE seat prices fell 12%.' },
+    ]);
+    // One item, with every cited passage side by side.
+    expect(prompt.match(/^ITEM /gm)).toHaveLength(1);
+    expect(prompt).toMatch(/PASSAGE A: .*\nPASSAGE B: .*\nPASSAGE C: /);
+    expect([v.get('a')!.supported, v.get('b')!.supported, v.get('c')!.supported]).toEqual([true, true, false]);
   });
 });
 
@@ -79,6 +105,9 @@ describe('generateStructured', () => {
     expect(json).not.toMatch(/9007199254740991/);
     expect(json).toMatch(/"minimum":1/);
     expect(json).toMatch(/"maximum":500/);
+    const arrays = JSON.stringify(modelSchema(z.object({ a: z.array(z.string()).max(60), b: z.array(z.string()).max(500) })));
+    expect(arrays).toMatch(/"maxItems":60/);
+    expect(arrays).not.toMatch(/"maxItems":500/);
   });
 
   it('rejects an empty reply, invalid JSON and JSON of the wrong shape', async () => {
@@ -217,9 +246,9 @@ describe.runIf(process.env.TEST_DATABASE_URL)('a paid answer through the Gemini 
       if (isScreen(req)) return screenReply(req);
       if (req.config?.systemInstruction?.startsWith('You check citations')) {
         judged = req.contents;
-        const ids = [...req.contents.matchAll(/^ITEM (p\d+)$/gm)].map((m) => m[1]!);
+        const ids = [...req.contents.matchAll(/^ITEM (s\d+)$/gm)].map((m) => m[1]!);
         // The judge rejects the second claim.
-        return reply({ verdicts: ids.map((id, i) => ({ id, supported: i === 0, reason: i === 0 ? 'States the passage’s figure.' : 'Generic: the passage doesn’t say this.' })) });
+        return reply({ verdicts: ids.map((id, i) => ({ id, label: 'A', used: i === 0, reason: i === 0 ? 'States the passage’s figure.' : 'Generic: the passage doesn’t say this.' })) });
       }
       const [first, second] = [...req.contents.matchAll(/^\[(C\d+)\] /gm)].map((m) => m[1]!);
       return reply({ covered: true, answer: `Assistant spend grew 61% in a year [${first}]. Developers love their tools [${second}]. Nothing about Lisbon's weather here [${first}].` });

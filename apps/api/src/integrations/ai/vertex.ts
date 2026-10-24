@@ -84,7 +84,8 @@ export const AI_MAX_OUTPUT_TOKENS = 8192;
 
 /**
  * The JSON schema the model is asked to follow. zod bounds integers by JavaScript's safe range
- * (±9007199254740991); Vertex AI rejects those as an invalid argument, and they constrain nothing.
+ * (±9007199254740991) and Vertex AI rejects those as an invalid argument (they constrain nothing);
+ * it also rejects array limits above about 60. zod still enforces every limit on the reply.
  */
 export function modelSchema(schema: z.ZodType): Record<string, unknown> {
   const strip = (node: unknown): unknown => {
@@ -93,6 +94,8 @@ export function modelSchema(schema: z.ZodType): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(node)) {
       if ((k === 'maximum' || k === 'minimum') && typeof v === 'number' && Math.abs(v) >= Number.MAX_SAFE_INTEGER) continue;
+      // Vertex also rejects large array limits (100 fails, 60 works); the reply is still checked with zod.
+      if (k === 'maxItems' && typeof v === 'number' && v > 60) continue;
       out[k] = strip(v);
     }
     return out;
@@ -115,8 +118,11 @@ export async function generateStructured<S extends z.ZodType>(args: {
    * Applied to Gemini 3 models only; older ones don't take the setting.
    */
   thinking?: 'minimal' | 'low';
+  /** Another model than the configured one (the red team's attacker). */
+  model?: string;
 }): Promise<{ data: z.infer<S>; model: string; usage: { inputTokens?: number; outputTokens?: number } }> {
-  const { ai, model } = vertex();
+  const { ai } = vertex();
+  const model = args.model ?? vertex().model;
   const thinking = args.thinking && /^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: args.thinking === 'minimal' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW } } : {};
   const response = await withModelRetry(() =>
     ai.models.generateContent({

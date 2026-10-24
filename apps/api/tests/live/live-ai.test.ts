@@ -178,4 +178,20 @@ describe.runIf(process.env.LIVE_AI === '1' && process.env.TEST_DATABASE_URL)('ev
     });
     process.stderr.write(`drafted with ${r.evidence.length} quoted terms; warnings: ${r.warnings.join(' | ') || 'none'}\n`);
   }, 120_000);
+
+  it('pays every source a sentence combines, and not a padded citation (real passages)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const para = (file: string, re: RegExp) => readFileSync(new URL(`../../fixtures/demo-assets/${file}`, import.meta.url), 'utf8').split(/\n\s*\n/).find((x) => re.test(x))!;
+    const ziegler = para('arxiv-ziegler-2022.md', /rate with which shown suggestions are accepted/);
+    const dohmke = para('arxiv-dohmke-2023.md', /accept nearly 30%/);
+    const pricing = 'The median list price for a cloud development environment seat fell 12% between Q2 2025 and Q2 2026, to $19 per user per month.';
+    const combined = 'Copilot users accept nearly 30% of suggested code, and that acceptance rate — rather than how long completions persist — is what drives developers’ perception of productivity.';
+    const v = await new ModelSupportJudge().judge([
+      { key: 'z', sentence: combined, passage: ziegler },
+      { key: 'd', sentence: combined, passage: dohmke },
+      { key: 'p', sentence: combined, passage: pricing },
+    ]);
+    for (const k of ['z', 'd', 'p']) process.stderr.write(`${k}: ${v.get(k)!.supported ? 'PAID' : 'unpaid'} — ${v.get(k)!.reason}\n`);
+    expect([v.get('z')!.supported, v.get('d')!.supported, v.get('p')!.supported]).toEqual([true, true, false]);
+  }, 120_000);
 });
