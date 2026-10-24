@@ -114,6 +114,11 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
     const { document, signature } = answer.receipt;
     expect((await request(a).post('/api/receipts/verify').send({ document, signature }).expect(200)).body.valid).toBe(true);
     expect((await request(a).post('/api/receipts/verify').send({ document: { ...document, chargedCents: 0 }, signature }).expect(200)).body.valid).toBe(false);
+    // It records which check decided and every verdict, sentences hashed rather than copied.
+    expect(document.receiptVersion).toBe('tracepay-answer-receipt/2');
+    expect(document.citationCheck).toMatchObject({ checkedBy: 'rules', judge: { version: 'citation-rule/1' } });
+    expect(document.citationCheck.verdicts.length).toBeGreaterThan(0);
+    for (const v of document.citationCheck.verdicts) expect(v).toMatchObject({ handle: expect.stringMatching(/^C\d+$/), sentenceSha256: expect.stringMatching(/^[0-9a-f]{64}$/), supported: expect.any(Boolean), reason: expect.any(String) });
 
     const account = await expectLedgerConsistent();
     expect(account.balanceCents).toBe(500 - answer.chargedCents);
@@ -151,6 +156,23 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
     const { answer } = (await ask(a).expect(201)).body;
     expect(answer).toMatchObject({ status: 'failed', chargedCents: 0, paid: [] });
     expect(answer.failureReason).toMatch(/cited sources it wasn’t given/);
+    await expectLedgerConsistent();
+  });
+
+  it('signs the judge that decided into the receipt — and the rule, if the judge fails', async () => {
+    const fixture = new FixtureAnswerWriter();
+    const identity = { version: 'citation-judge/test', model: 'judge-model', promptSha256: 'ab'.repeat(32), temperature: 0 };
+    const verdicts = (pairs: Array<{ key: string }>) => new Map(pairs.map((p) => [p.key, { supported: true, reason: 'States the passage’s figure.' }]));
+    writer = { name: 'judged', answer: (input) => fixture.answer(input), judge: { name: 'model', identity: () => identity, judge: async (pairs) => verdicts(pairs) } };
+    const a = app();
+    await topUp(a);
+    const judged = (await ask(a).expect(201)).body.answer.receipt.document;
+    expect(judged.citationCheck).toMatchObject({ checkedBy: 'model', judge: identity });
+    expect(judged.citationCheck.verdicts.every((v: { reason: string }) => v.reason === 'States the passage’s figure.')).toBe(true);
+
+    writer = { name: 'judge-down', answer: (input) => fixture.answer(input), judge: { name: 'model', identity: () => identity, judge: async () => { throw new Error('judge unavailable'); } } };
+    const fallback = (await ask(app()).expect(201)).body.answer.receipt.document;
+    expect(fallback.citationCheck).toMatchObject({ checkedBy: 'rules', judge: { version: 'citation-rule/1' } });
     await expectLedgerConsistent();
   });
 

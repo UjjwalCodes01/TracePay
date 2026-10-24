@@ -445,7 +445,14 @@ function AnswerCard({ answerId }: { answerId: string }) {
   );
 }
 
+interface CitationCheckRecord {
+  checkedBy: string;
+  judge: { version: string; model?: string; promptSha256?: string };
+  verdicts: unknown[];
+}
+
 function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['receipt']>; answerId: string }) {
+  const check = receipt.document.citationCheck as CitationCheckRecord | null | undefined;
   const verify = useMutation({ mutationFn: () => post<{ valid: boolean }>('/receipts/verify', { document: receipt.document, signature: receipt.signature, publicKeyPem: receipt.publicKeyPem }) });
   const download = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' }));
@@ -479,6 +486,25 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
       <p className="mt-1 text-muted" title="Signed with Ed25519">
         Who was paid and under which license terms, digitally signed so anyone can check it wasn’t changed.
       </p>
+      {check && check.verdicts.length > 0 && (
+        <p className="mt-1 text-xs text-muted">
+          It also signs all {check.verdicts.length} citation verdicts, with their reasons, and the check that made them:{' '}
+          {check.checkedBy === 'model' && check.judge.model ? (
+            <>
+              the {check.judge.model} judge ({check.judge.version}
+              {check.judge.promptSha256 && (
+                <>
+                  , instructions <span className="mono" title={`SHA-256 ${check.judge.promptSha256}`}>{check.judge.promptSha256.slice(0, 12)}</span>
+                </>
+              )}
+              )
+            </>
+          ) : (
+            <>the deterministic rule ({check.judge.version})</>
+          )}
+          . A model can’t be re-run bit for bit, so this is the record a dispute starts from.
+        </p>
+      )}
       {verify.error ? (
         <div className="mt-2">
           <ErrorNote error={verify.error} />

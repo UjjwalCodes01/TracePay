@@ -13,6 +13,8 @@
  *     MAX_PAID_PASSAGES_PER_SOURCE times per answer.
  */
 
+import type { JudgeIdentity } from './support';
+
 export const MAX_PAID_PASSAGES_PER_SOURCE = 3;
 /** Longest run of words an answer may copy from one passage (licenses forbid redistributing raw text). */
 export const MAX_VERBATIM_WORDS = 25;
@@ -183,6 +185,8 @@ export interface AnswerAudit {
   contributorCents: number;
   /** What decided support: 'model' (independent AI check) or 'rules'. */
   checkedBy?: string;
+  /** Exactly which judge (version, model, prompt hash), for the receipt. */
+  judge?: JudgeIdentity;
 }
 
 /** Splits text into sentences, keeping citation markers with the sentence they end. */

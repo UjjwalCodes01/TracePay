@@ -29,14 +29,34 @@ export interface SupportVerdict {
   reason: string;
 }
 
+/**
+ * Exactly which check decided, recorded in every answer's signed receipt with each verdict: a model's
+ * verdict can't be re-derived bit for bit, so the receipt is the record of what was decided and how.
+ */
+export interface JudgeIdentity {
+  version: string;
+  model?: string;
+  /** SHA-256 of the judge's instructions, so a changed prompt is visible. */
+  promptSha256?: string;
+  temperature?: number;
+  embeddingModel?: string;
+  semanticFloor?: number;
+}
+
+export const RULE_JUDGE: JudgeIdentity = { version: 'citation-rule/1' };
+
 export interface SupportJudge {
   readonly name: string;
+  identity?(): JudgeIdentity;
   judge(pairs: SupportPair[], context: { corpus: string[]; topic: string }): Promise<Map<string, SupportVerdict>>;
 }
 
 /** The deterministic rule: distinctive shared words or figures (see `supports`). */
 export class RuleSupportJudge implements SupportJudge {
   readonly name = 'rules';
+  identity() {
+    return RULE_JUDGE;
+  }
   async judge(pairs: SupportPair[], context: { corpus: string[]; topic: string }) {
     return new Map(
       pairs.map((p) => {
@@ -107,6 +127,10 @@ const cosine = (a: number[], b: number[]) => {
 
 export class ModelSupportJudge implements SupportJudge {
   readonly name = 'model';
+
+  identity(): JudgeIdentity {
+    return { version: JUDGE_VERSION, model: vertex().model, promptSha256: JUDGE_PROMPT_SHA256, temperature: 0, embeddingModel: EMBEDDING_MODEL, semanticFloor: SEMANTIC_FLOOR };
+  }
 
   async judge(pairs: SupportPair[]): Promise<Map<string, SupportVerdict>> {
     const out = new Map<string, SupportVerdict>();

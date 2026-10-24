@@ -13,7 +13,7 @@ import type { AnswerWriter } from '../generation/writers';
 import { retrievePassages } from '../generation/retrieval';
 import { CreditError, lockAccount } from './credits.service';
 import { auditAnswer, citationPairs, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
-import { RuleSupportJudge } from './support';
+import { RULE_JUDGE, RuleSupportJudge } from './support';
 import { withheldPassages } from '../sources/screening';
 import { checkAnswerRights, type ExcludedSource } from './rights';
 
@@ -27,7 +27,8 @@ import { checkAnswerRights, type ExcludedSource } from './rights';
  *   sign a receipt. The model never decides who is paid or how much.
  */
 
-export const ANSWER_RECEIPT_VERSION = 'tracepay-answer-receipt/1';
+/** /2 adds `citationCheck`: the judge that decided (version, model, prompt hash) and every verdict. */
+export const ANSWER_RECEIPT_VERSION = 'tracepay-answer-receipt/2';
 export const answerFeeCents = () => answersEnv().ANSWER_FEE_CENTS ?? 2;
 const PASSAGES_PER_SOURCE = MAX_PAID_PASSAGES_PER_SOURCE;
 
@@ -170,6 +171,7 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
       const judge = writer.judge ?? new RuleSupportJudge();
       let verdicts;
       let checkedBy = judge.name;
+      let judgedBy = judge.identity?.() ?? { version: judge.name };
       try {
         verdicts = await withTimeout(judge.judge(pairs, context), JUDGE_TIMEOUT_MS);
       } catch (err) {
@@ -177,8 +179,9 @@ export async function askLibrary(db: Db, writer: AnswerWriter, keys: SigningKeys
         logger.warn({ err: (err as Error).message, answerId: answer.id }, 'citation judge unavailable; the rule decided');
         verdicts = await new RuleSupportJudge().judge(pairs, context);
         checkedBy = 'rules';
+        judgedBy = RULE_JUDGE;
       }
-      audit = { ...auditAnswer(out.text, plan.passages, rates, { verdicts, topic }), checkedBy };
+      audit = { ...auditAnswer(out.text, plan.passages, rates, { verdicts, topic }), checkedBy, judge: judgedBy };
     }
   } catch (err) {
     await settle(db, keys, answer.id, { status: 'failed', failureReason: 'The AI model couldn’t answer in time. You were not charged.', detail: (err as Error).message, plan: titled, withheld });
@@ -277,6 +280,15 @@ async function settle(db: Db, keys: SigningKeys, answerId: string, args: SettleA
       mandate: { maxPriceCents: answer.maxPriceCents },
       paid: credits.map((c) => ({ assetVersionId: c.assetVersionId, title: c.assetTitle, contributorId: c.contributorId, licenseId: c.licenseId, termsHash: c.termsHash, centsPerCitation: c.centsPerCitation, citations: c.citations, amountCents: c.amountCents })),
       notPaid: args.audit?.ignored ?? null,
+      // Every citation's verdict and the exact judge behind it: what was decided, and how, can be
+      // traced (and disputed) from the receipt alone. Sentences are hashed, not copied.
+      citationCheck: args.audit
+        ? {
+            checkedBy: args.audit.checkedBy ?? 'rules',
+            judge: args.audit.judge ?? RULE_JUDGE,
+            verdicts: args.audit.citations.map((c) => ({ handle: c.handle, chunkId: c.chunkId, assetVersionId: c.assetVersionId, sentenceSha256: sha256Hex(c.sentence), supported: c.supported, reason: c.reason ?? null })),
+          }
+        : null,
       excluded: (answer.excluded as unknown as ExcludedSource[]).map((e) => ({ assetVersionId: e.assetVersionId, title: e.assetTitle, code: e.code })),
       chargedCents: charged,
       currency: 'USD',
