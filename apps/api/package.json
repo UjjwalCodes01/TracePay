@@ -28,7 +28,7 @@
     "red-team": "tsx --env-file-if-exists=.env src/scripts/red-team.ts"
   },
   "dependencies": {
-    "@google/genai": "2.30.0",
+    "@google/genai": "2.31.0",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "@tracepay/shared": "*",
@@ -51,7 +51,7 @@
     "@vitest/coverage-v8": "5.0.5",
     "axe-core": "4.14.0",
     "prisma": "7.10.1",
-    "puppeteer-core": "25.13.0",
+    "puppeteer-core": "25.16.0",
     "supertest": "^7.0.0",
     "tsup": "^8.5.0",
     "tsx": "4.23.15",
