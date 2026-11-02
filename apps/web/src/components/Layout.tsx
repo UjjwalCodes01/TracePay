@@ -113,6 +113,7 @@ export function Layout() {
             {config?.demoMode ? 'Demo with made-up data. ' : ''}TracePay follows the license terms on record; it isn’t legal advice.
           </p>
           <p className="flex gap-2">
+            <NavLink to="/welcome" className="underline hover:text-ink">About TracePay</NavLink>
             <NavLink to="/privacy" className="underline hover:text-ink">Privacy</NavLink>
             <NavLink to="/terms" className="underline hover:text-ink">Terms</NavLink>
           </p>

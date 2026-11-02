@@ -10,7 +10,7 @@ import '@fontsource-variable/inter';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import './index.css';
-import { ApiError, isUnavailable } from './lib/api';
+import { ApiError, hasSeenWelcome, isUnavailable } from './lib/api';
 import { SessionProvider, useSession } from './lib/session';
 import { SignInPage, SignUpPage } from './pages/Auth';
 import { NotFoundPage } from './pages/NotFound';
@@ -37,7 +37,9 @@ function onUnauthorized(e: unknown, key: unknown) {
 const page = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) => async () => ({ Component: (await load())[name] });
 
 function Home() {
-  const { user } = useSession();
+  const { user, config } = useSession();
+  // A demo's first visit starts with what TracePay is, then one click into a role.
+  if (config?.demoMode && !hasSeenWelcome()) return <Navigate to="/welcome" replace />;
   if (!user) return <Spinner />;
   const target = { publisher: '/dashboard', admin: '/dashboard', buyer: '/store', contributor: '/sources' }[user.role];
   return <Navigate to={target} replace />;
@@ -48,6 +50,7 @@ const router = createBrowserRouter([
   { path: '/signup', element: <SignUpPage />, errorElement: <RouteError /> },
   { path: '/privacy', lazy: async () => ({ Component: (await import('./pages/Legal')).PrivacyPage }), errorElement: <RouteError /> },
   { path: '/terms', lazy: async () => ({ Component: (await import('./pages/Legal')).TermsPage }), errorElement: <RouteError /> },
+  { path: '/welcome', lazy: page(() => import('./pages/Welcome'), 'WelcomePage'), hydrateFallbackElement: <Spinner />, errorElement: <RouteError /> },
   {
     element: <Layout />,
     // Shown while a lazily loaded screen's code arrives on first load.

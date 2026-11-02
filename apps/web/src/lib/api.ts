@@ -32,6 +32,25 @@ export function forgetDemo() {
   }
 }
 
+const WELCOMED_KEY = 'tracepay.welcomed';
+
+/** Whether this browser has seen the welcome page (a demo's first visit starts there). */
+export function hasSeenWelcome(): boolean {
+  try {
+    return localStorage.getItem(WELCOMED_KEY) === '1';
+  } catch {
+    return true;
+  }
+}
+
+export function markWelcomed() {
+  try {
+    localStorage.setItem(WELCOMED_KEY, '1');
+  } catch {
+    // Storage unavailable: the welcome page simply shows again next time.
+  }
+}
+
 /** A first visit: no demo role chosen yet (and not signed out on purpose). */
 export function isFirstVisit(): boolean {
   try {

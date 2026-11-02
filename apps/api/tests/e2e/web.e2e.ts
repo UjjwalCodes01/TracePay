@@ -173,7 +173,13 @@ describe.runIf(process.env.TEST_DATABASE_URL)('the web app in a browser', () => 
     const page = await context.newPage();
     page.on('pageerror', (e) => problems.push(`first visit: page error: ${(e as Error).message}`));
     await page.goto(`${base}/`);
+    // A first visit starts on the welcome page, then one click into a role.
+    await page.waitForFunction(() => location.pathname === '/welcome' && /private copy of the demo is ready/.test(document.body.innerText), { timeout: 30_000 });
+    await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Sell a licensed report'))?.click());
     await page.waitForFunction(() => /Guided demo/.test(document.body.innerText), { timeout: 30_000 });
+    // Seen once: the next visit goes straight in.
+    await page.goto(`${base}/`);
+    await page.waitForFunction(() => location.pathname === '/dashboard', { timeout: 20_000 });
     const stored = await page.evaluate(() => ({ user: localStorage.getItem('tracepay.demoUser'), world: localStorage.getItem('tracepay.demoWorld') }));
     expect(stored.user).toMatch(/^dw_[a-z0-9]{12}_user_atlas$/);
     expect(stored.world).toMatch(/^[a-z0-9]{12}\./);
