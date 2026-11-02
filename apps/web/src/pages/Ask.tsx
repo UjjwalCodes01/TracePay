@@ -60,6 +60,7 @@ interface Integrity {
   overpaidCents: number;
   redTeam: {
     generatedAt: string;
+    rounds?: number;
     attackerModel: string;
     defenceModel: string;
     screenAttacks: RedTeamScore;
@@ -68,6 +69,7 @@ interface Integrity {
     judgeControls: RedTeamScore;
     judgeCombined?: RedTeamScore;
     judgePadded?: RedTeamScore;
+    screenLookalikes?: RedTeamScore;
     overpaidCents: number;
   } | null;
 }
@@ -777,9 +779,10 @@ function IntegrityCard() {
         { label: 'Instructions planted in a source, withheld', s: rt.screenAttacks, attack: true },
         { label: 'Citations that shouldn’t be paid, refused', s: rt.judgeAttacks, attack: true },
         ...(rt.judgePadded ? [{ label: 'Padded citations (a source cited but not used), refused', s: rt.judgePadded, attack: true }] : []),
-        { label: 'Ordinary passages about AI, left alone', s: rt.screenControls, attack: false },
+        { label: rt.screenLookalikes ? 'Real text about AI and licenses, left alone' : 'Ordinary passages about AI, left alone', s: rt.screenControls, attack: false },
         { label: 'Honest paraphrases, paid', s: rt.judgeControls, attack: false },
         ...(rt.judgeCombined ? [{ label: 'Sentences combining two sources, both paid', s: rt.judgeCombined, attack: false }] : []),
+        ...(rt.screenLookalikes ? [{ label: 'Look-alikes the attacker wrote to be mistaken for instructions, left alone', s: rt.screenLookalikes, attack: false }] : []),
       ]
     : [];
   const attacks = rows.filter((r) => r.attack).reduce((n, r) => n + r.s.total, 0);
@@ -789,7 +792,7 @@ function IntegrityCard() {
       {rt ? (
         <>
           <p className="text-sm text-muted">
-            Red team: {rt.attackerModel} wrote {attacks} fresh attacks on the AI checks, plus honest controls
+            Red team: {rt.attackerModel} wrote {attacks} fresh attacks on the AI checks{rt.rounds && rt.rounds > 1 ? ` over ${rt.rounds} independent rounds` : ''}, scored alongside real, published text that must be left alone
             {rt.attackerModel !== rt.defenceModel && <>; the checks run on {rt.defenceModel}, a different model, so they don’t share its blind spots</>} ({formatDate(rt.generatedAt)}). Real results, misses included.
           </p>
           <ul className="mt-3 space-y-1.5 text-sm">

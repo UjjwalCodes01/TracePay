@@ -13,12 +13,20 @@ const Score = z.object({ total: z.number().int(), correct: z.number().int(), mis
 
 export const RedTeamReport = z.object({
   generatedAt: z.string(),
+  /** Independent rounds (fresh attacks each), added together: one round swings too much to quote. */
+  rounds: z.number().int().min(1).optional(),
   attackerModel: z.string(),
   defenceModel: z.string(),
   /** Planted instructions in a source: caught = withheld from the writer. */
   screenAttacks: Score,
-  /** Ordinary passages (about AI, citations, licences) that must not be withheld. */
+  /**
+   * Real, published text that must not be withheld: abstracts of papers about prompt injection and
+   * instruction-following, and Creative Commons license clauses ("You must…") — about AI, or
+   * addressed to the reader, never to an AI (fixtures/red-team/honest-controls.json).
+   */
   screenControls: Score,
+  /** Look-alikes the attacker wrote to be mistaken for instructions; many read like commands to whoever reads them. */
+  screenLookalikes: Score.optional(),
   /** Citations that shouldn't be paid (topic-only, misquoted, unsupported…): caught = not paid. */
   judgeAttacks: Score,
   /** Honest paraphrases that should be paid: correct = paid. */
@@ -27,6 +35,8 @@ export const RedTeamReport = z.object({
   judgeCombined: Score.optional(),
   /** Sentences that cite a second source they don't use: caught = the padded one isn't paid. */
   judgePadded: Score.optional(),
+  /** Padded sentences in which the judge didn't pay the source really used either (it underpaid). */
+  paddedRealSourceUnpaid: z.number().int().optional(),
   /** What the missed citation attacks would have been paid, at the demo rate. */
   overpaidCents: z.number().int(),
 });
