@@ -76,6 +76,11 @@ describe.runIf(process.env.TEST_DATABASE_URL)('private demo worlds', () => {
 
   it('opens with a sample report in the store, which isn’t counted as the publisher’s own progress', async () => {
     const w = await newWorld();
+    // Before it's written, the store says one is on its way.
+    await db().buildJob.create({ data: { publisherId: w.publisherId, intent: {}, asOf: '2026-11-02', status: 'generating', preflight: {}, policyVersion: 'x', snapshotHash: 'x', sample: true } });
+    expect((await request(app).get('/api/artifacts').set(w.as('user_buyer')).expect(200)).body).toMatchObject({ artifacts: [], preparing: true });
+    expect((await request(app).get('/api/artifacts').set({ 'X-Demo-User': 'user_buyer' }).expect(200)).body.preparing).toBe(false); // not another world's
+    await db().buildJob.deleteMany({ where: { publisherId: w.publisherId, status: 'generating' } });
     const id = await buildSampleReport(db(), worldOf(w.publisherId), new FixtureReportWriter());
     expect(id).toBeTruthy();
     const store = (await request(app).get('/api/artifacts').set(w.as('user_buyer')).expect(200)).body.artifacts;
@@ -83,6 +88,7 @@ describe.runIf(process.env.TEST_DATABASE_URL)('private demo worlds', () => {
     // The publisher's journey still starts at "check your sources".
     const dash = (await request(app).get('/api/dashboard').set(w.as('user_atlas')).expect(200)).body;
     expect(dash).toMatchObject({ buildsPassed: 0, artifacts: 0, latestArtifact: null });
+    expect(dash.recentEvents.filter((e: { entityType: string }) => e.entityType === 'build' || e.entityType === 'artifact')).toEqual([]);
     // Built only from the world's own, licensed sources.
     const build = await db().buildJob.findFirstOrThrow({ where: { artifact: { id: id! } }, include: { sources: true } });
     expect(build.sample).toBe(true);

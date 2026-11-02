@@ -3,17 +3,10 @@ import { AlertTriangle, GitBranch, ScrollText } from 'lucide-react';
 import { Link } from 'react-router';
 import { Badge, Button, Empty, ErrorNote, PageHeader, Spinner, statusLabel } from '../components/ui';
 import { api, post } from '../lib/api';
-import { formatMoney, timeAgo } from '../lib/format';
+import { formatMoney, previewText, timeAgo } from '../lib/format';
 import type { ArtifactPreview } from '../lib/types';
 
 type MyReport = ArtifactPreview & { withdrawnReason: string | null };
-
-/** Summaries often open with the report's own title ("Title: 5 findings…"); the card already shows it. */
-function withoutTitle(summary: string, title: string): string {
-  if (!summary.startsWith(`${title}:`)) return summary;
-  const rest = summary.slice(title.length + 1).trim();
-  return rest ? rest.replace(/^./, (c) => c.toUpperCase()) : summary;
-}
 
 const STATUS = {
   listed: { label: 'On sale', tone: 'pass' },
@@ -66,7 +59,7 @@ export function ReportsPage() {
                     <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {a.withdrawnReason}
                   </p>
                 )}
-                {a.summary && <p className="mt-3 line-clamp-3 flex-1 text-sm text-muted">{withoutTitle(a.summary, a.title)}</p>}
+                {a.summary && <p className="mt-3 line-clamp-3 flex-1 text-sm text-muted">{previewText(a.summary, a.title)}</p>}
                 <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
                   <Link to={`/reports/${a.id}/provenance`} className="inline-flex items-center gap-1.5 font-medium text-brand hover:underline">
                     <GitBranch className="size-4" /> Where it came from

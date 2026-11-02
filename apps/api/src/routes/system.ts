@@ -103,6 +103,12 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
     const lastResetSeq = (await db.auditEvent.findFirst({ where: { eventType: 'demo.reset' }, orderBy: { seq: 'desc' }, select: { seq: true } }))?.seq ?? 0;
     const myRun = user.role === 'admin' ? {} : { sale: mySale };
 
+    // The demo's ready-made sample report: built for the store, not by this publisher, so its build
+    // and listing stay out of their activity (a sale of it is theirs, and shows).
+    const sampleIds =
+      user.role === 'admin'
+        ? []
+        : (await db.buildJob.findMany({ where: { publisherId: user.id, sample: true }, select: { id: true, artifact: { select: { id: true } } } })).flatMap((b) => [b.id, ...(b.artifact ? [b.artifact.id] : [])]);
     const [buildsPassed, buildsBlocked, artifacts, sales, owed, paid, exceptions, recent, toApprove, toPay, paying, agentWaiting, latestArtifact] = await Promise.all([
       // The demo's ready-made sample report isn't the publisher's own progress.
       db.buildJob.count({ where: { ...mine, sample: false, status: { in: ['preflight_passed', 'generating', 'generated'] } } }),
@@ -124,6 +130,7 @@ export function systemRoutes({ db, config, signingKeys, writer, planner }: AppDe
         // Publishers see only their own events; system events (no tenant) are for admins.
         where: {
           eventType: { notIn: ['sale.created'] },
+          ...(sampleIds.length ? { entityId: { notIn: sampleIds } } : {}),
           ...(user.role === 'admin' ? {} : { tenantId: user.id }),
           ...(req.authMethod === 'demo' ? { seq: { gt: lastResetSeq } } : {}),
         },

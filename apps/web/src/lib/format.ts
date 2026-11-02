@@ -127,3 +127,15 @@ export function formatDate(iso: string | Date | null | undefined): string {
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', { dateStyle: 'medium' });
 }
+
+/**
+ * A report's summary as a one-glance preview: without the report's own title in front ("Title: 5
+ * findings…"; the card already shows it) or the [C1] citation markers, which only mean something
+ * next to the sources.
+ */
+export function previewText(summary: string, title: string): string {
+  const plain = summary.replace(/\s*\[C\d+\]/g, '');
+  if (!plain.startsWith(`${title}:`)) return plain;
+  const rest = plain.slice(title.length + 1).trim();
+  return rest ? rest.replace(/^./, (c) => c.toUpperCase()) : plain;
+}

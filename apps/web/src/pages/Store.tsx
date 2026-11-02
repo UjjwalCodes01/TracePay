@@ -1,18 +1,23 @@
 import { PayPalButtons, PayPalScriptProvider } from '@paypal/react-paypal-js';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock, GitBranch, Lock, ScrollText, ShieldCheck, Sparkles } from 'lucide-react';
+import { CheckCircle2, Clock, GitBranch, Loader2, Lock, ScrollText, ShieldCheck, Sparkles } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ReportBody } from '../components/ReportBody';
 import { Badge, buttonClass, Card, Empty, ErrorNote, Hash, PageHeader, Spinner, TechnicalDetails } from '../components/ui';
 import { api, post } from '../lib/api';
-import { formatMoney, timeAgo } from '../lib/format';
+import { formatMoney, previewText, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
 import type { ArtifactFull, ArtifactPreview } from '../lib/types';
 
 export function StorePage() {
   const { user } = useSession();
-  const q = useQuery({ queryKey: ['artifacts'], queryFn: () => api<{ artifacts: ArtifactPreview[] }>('/artifacts') });
+  const q = useQuery({
+    queryKey: ['artifacts'],
+    queryFn: () => api<{ artifacts: ArtifactPreview[]; preparing?: boolean }>('/artifacts'),
+    // While the demo's sample report is being written, check back until it's listed.
+    refetchInterval: (query) => (query.state.data?.preparing ? 3000 : false),
+  });
   const purchases = useQuery({ queryKey: ['my-purchases'], queryFn: () => api<{ sales: BuyerSale[] }>('/sales'), enabled: user?.role === 'buyer' });
   if (q.error && !q.data) return <ErrorNote error={q.error} />;
   if (!q.data) return <Spinner />;
@@ -32,7 +37,14 @@ export function StorePage() {
           ) : undefined
         }
       />
-      {items.length === 0 ? (
+      {items.length === 0 && q.data.preparing ? (
+        <div role="status" className="flex items-center gap-3 rounded-xl border border-dashed border-line bg-white p-6 text-sm text-muted">
+          <Loader2 className="size-5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
+          <span>
+            <span className="font-medium text-ink">A sample report is being written for your demo.</span> The AI is reading only the licensed sources and citing every claim; it appears here in about 20 seconds.
+          </span>
+        </div>
+      ) : items.length === 0 ? (
         <Empty>No reports are for sale yet. Switch to the publisher role and create one.</Empty>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -42,7 +54,7 @@ export function StorePage() {
                 <h2 className="font-semibold group-hover:underline">{a.title}</h2>
                 <span className="font-semibold tabular-nums">{formatMoney(a.priceCents)}</span>
               </div>
-              {a.summary && <p className="mt-2 line-clamp-3 text-sm text-muted">{withoutTitle(a.summary, a.title)}</p>}
+              {a.summary && <p className="mt-2 line-clamp-3 text-sm text-muted">{previewText(a.summary, a.title)}</p>}
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <Badge tone="pass">
                   <ShieldCheck className="size-3" /> {a.sources.length} licensed {a.sources.length === 1 ? 'source' : 'sources'}
@@ -56,14 +68,6 @@ export function StorePage() {
       {user?.role === 'buyer' && <MyPurchases />}
     </>
   );
-}
-
-/** Summaries often open with the report's own title ("Title: 5 findings…"); the card already shows it. */
-function withoutTitle(summary: string, title: string): string {
-  const prefix = `${title}:`;
-  if (!summary.startsWith(prefix)) return summary;
-  const rest = summary.slice(prefix.length).trim();
-  return rest ? rest.replace(/^./, (c) => c.toUpperCase()) : summary;
 }
 
 interface BuyerSale {

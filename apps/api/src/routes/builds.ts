@@ -91,8 +91,13 @@ export function buildRoutes({ db, signingKeys, writer }: AppDeps) {
   /** Storefront: listed artifacts with a preview only. */
   r.get('/artifacts', async (req, res) => {
     // A private demo world sees only its own store; everyone else never sees any world's.
-    const artifacts = await db.artifact.findMany({ where: { status: 'listed', buildJob: { publisherId: sameWorld(req.user?.id) } }, orderBy: { createdAt: 'desc' }, take: 100 });
-    res.json({ artifacts: artifacts.map((a) => preview(a)) });
+    const world = { publisherId: sameWorld(req.user?.id) };
+    const [artifacts, preparing] = await Promise.all([
+      db.artifact.findMany({ where: { status: 'listed', buildJob: world }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      // A new demo world's sample report is still being written: the store says so instead of looking empty.
+      db.buildJob.count({ where: { ...world, sample: true, status: { in: ['preflight_passed', 'generating'] } } }),
+    ]);
+    res.json({ artifacts: artifacts.map((a) => preview(a)), preparing: preparing > 0 });
   });
 
   r.get('/artifacts/:id', async (req, res) => {
