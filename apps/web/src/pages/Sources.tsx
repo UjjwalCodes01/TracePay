@@ -394,6 +394,23 @@ const SAMPLE_LICENSE = `CONTENT LICENSE AGREEMENT — Schedule B (Field Notes)
 
 Schedule B, para (iv): Automated question-answering services operated by Licensee may cite passages of the Work, at a rate of two US cents (USD 0.02) per passage cited in an answer delivered to an end user.`;
 
+/** Terms already published in RSL, the open standard for AI licensing (rslstandard.org): read exactly, no AI. */
+const SAMPLE_RSL = `<?xml version="1.0" encoding="UTF-8"?>
+<rsl xmlns="https://rslstandard.org/rsl">
+  <content url="https://example.com/field-notes/">
+    <copyright>© 2026 Dr. Amara Okafor</copyright>
+    <license>
+      <permits type="usage">ai-input search</permits>
+      <prohibits type="usage">ai-train</prohibits>
+      <permits type="user">commercial</permits>
+      <permits type="geo">US GB CA</permits>
+      <payment type="use">
+        <amount currency="USD">0.03</amount>
+      </payment>
+    </license>
+  </content>
+</rsl>`;
+
 export function OfferLicensePage() {
   const { id } = useParams();
   const [params] = useSearchParams();
@@ -406,11 +423,12 @@ export function OfferLicensePage() {
   // In the demo: this visitor's own publisher (each private demo has its own address).
   const demoPublisherEmail = config?.demoMode ? users.find((u) => u.role === 'publisher')?.email : undefined;
   // ?sample=1: start from a realistic, messy contract (the guided tour shows AI drafting terms from it).
-  const sample = params.get('sample') === '1';
+  // ?sample=rsl: from terms published in the RSL standard, which are read exactly instead.
+  const sample = params.get('sample') === '1' || params.get('sample') === 'rsl';
 
   const [step, setStep] = useState<1 | 2 | 3>(sample ? 2 : 1);
   const [email, setEmail] = useState(params.get('to') ?? '');
-  const [text, setText] = useState(sample ? SAMPLE_LICENSE : '');
+  const [text, setText] = useState(params.get('sample') === 'rsl' ? SAMPLE_RSL : sample ? SAMPLE_LICENSE : '');
   useEffect(() => {
     if (sample && !email && demoPublisherEmail) setEmail(demoPublisherEmail);
   }, [sample, email, demoPublisherEmail]);
@@ -486,6 +504,12 @@ export function OfferLicensePage() {
       {step === 2 && (
         <Card>
           <p className="mb-3 text-sm text-muted">Paste your license or contract. We’ll read it and fill in the terms for you — you review every one before anything is sent.</p>
+          <p className="mb-3 text-xs text-muted">
+            Already publish your AI terms in <a className="underline" href="https://rslstandard.org" target="_blank" rel="noreferrer">RSL</a>, the open standard for AI licensing? Paste the XML: it’s read exactly, element by element, with no AI.{' '}
+            <button type="button" className="font-medium text-ink underline" onClick={() => setText(SAMPLE_RSL)}>
+              Try an example
+            </button>
+          </p>
           <textarea className={`${input} min-h-48 py-2`} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. The publisher may use the dataset in reports sold worldwide until 31 Dec 2027. The original data may not be shared. The contributor receives 20% of each sale." />
           <ErrorNote error={extract.error} />
           <div className="mt-4 flex flex-wrap gap-2">
@@ -505,7 +529,13 @@ export function OfferLicensePage() {
           {draft && (
             <div className="rounded-xl border border-line bg-white p-4 text-sm">
               <div className="flex flex-wrap items-center gap-2 font-medium">
-                {draft.source === 'vertex' ? <Badge tone="ai">Drafted by Gemini</Badge> : <Badge tone="warn">Drafted automatically (rule-based)</Badge>}
+                {draft.source === 'vertex' ? (
+                  <Badge tone="ai">Drafted by Gemini</Badge>
+                ) : draft.source === 'rsl' ? (
+                  <Badge tone="pass">Read exactly from an RSL 1.0 license — no AI</Badge>
+                ) : (
+                  <Badge tone="warn">Drafted automatically (rule-based)</Badge>
+                )}
                 Every field below is yours to change.
               </div>
               {draft.warnings.length > 0 && (

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LicenseTermsSchema, type LicenseTerms } from '@tracepay/shared';
 import { generateStructured } from '../../integrations/ai/vertex';
+import { looksLikeRsl, readRsl } from './rsl';
 
 /**
  * License-term extraction. Turns a plain-language license into DRAFT
@@ -33,7 +34,8 @@ export interface ExtractionResult {
   terms: LicenseTerms;
   evidence: FieldEvidence[];
   warnings: string[];
-  source: 'vertex' | 'rules';
+  /** Who drafted it: Gemini, the rule-based fallback, or read exactly from an RSL document. */
+  source: 'vertex' | 'rules' | 'rsl';
   model: string;
 }
 
@@ -334,6 +336,8 @@ export async function extractWithVertex(text: string, today: string): Promise<Ex
 
 export async function extractTerms(text: string, opts: { useModel: boolean; today: string }): Promise<ExtractionResult> {
   const doc = text.slice(0, MAX_LICENSE_TEXT);
+  // Terms already published in the RSL standard are read exactly, not drafted by AI.
+  if (looksLikeRsl(doc)) return readRsl(doc, opts.today);
   if (!opts.useModel) return extractWithRules(doc, opts.today);
   try {
     return await extractWithVertex(doc, opts.today);

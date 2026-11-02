@@ -10,6 +10,7 @@ import { quotas } from '../http/limits';
 import { addVersion, ASSET_KINDS, createAsset, MAX_CONTENT_CHARS } from '../modules/assets/asset.service';
 import { todayUtc } from '../modules/builds/preflight.service';
 import { extractTerms, MAX_LICENSE_TEXT } from '../modules/licenses/extract';
+import { RslError } from '../modules/licenses/rsl';
 import { acceptOffer, declineOffer, declineRequest, offerLicense, requestLicense, revokeLicense, withdrawOffer } from '../modules/licenses/license.service';
 import { limitStore } from '../http/rate-store';
 import { appendAudit } from '../modules/audit/audit-log';
@@ -125,7 +126,12 @@ export function licensingRoutes({ db, config }: AppDeps) {
   /** Drafts normalized terms from a license document. Nothing is saved or enforced. */
   r.post('/licenses/extract', requireRole('contributor', 'publisher'), extractLimiter, async (req, res) => {
     const { text } = z.object({ text: z.string().trim().min(20, 'Paste the license text (at least a sentence or two).').max(MAX_LICENSE_TEXT) }).parse(req.body);
-    res.json(await extractTerms(text, { useModel: config.vertexReady, today: todayUtc() }));
+    try {
+      res.json(await extractTerms(text, { useModel: config.vertexReady, today: todayUtc() }));
+    } catch (err) {
+      if (err instanceof RslError) throw new HttpError(400, err.message);
+      throw err;
+    }
   });
 
   r.post('/contributor/assets/:id/offers', requireRole('contributor'), quotas.offer(), async (req, res) => {

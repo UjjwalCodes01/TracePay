@@ -31,7 +31,8 @@ export interface Extraction {
   terms: LicenseTerms;
   evidence: FieldEvidence[];
   warnings: string[];
-  source: 'vertex' | 'rules';
+  /** Gemini, the rule-based fallback, or read exactly from an RSL (Really Simple Licensing) document. */
+  source: 'vertex' | 'rules' | 'rsl';
   model: string;
 }
 

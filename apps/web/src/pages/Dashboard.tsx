@@ -280,7 +280,7 @@ function GuidedTour({ d }: { d: Dashboard }) {
     { title: 'See a contributor’s earnings', text: 'What each sale and each AI answer paid them, and why.', done: false, go: contributor ? async () => { await switchUser(contributor.id); navigate('/earnings'); } : null },
     {
       title: 'Watch AI read a messy contract',
-      text: 'Gemini turns a real-world license agreement into exact terms, quoting the sentence behind each one — nothing binds until both sides agree.',
+      text: 'Gemini turns a real-world license agreement into exact terms, quoting the sentence behind each one; terms already published in RSL, the open AI-licensing standard, are read exactly. Nothing binds until both sides agree.',
       done: false,
       go:
         contributor && /user_okafor$/.test(contributor.id)
