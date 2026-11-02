@@ -3,10 +3,12 @@ import { describeFormula, formatDay, RULE_LABELS, type RuleId } from '@tracepay/
 import { ArrowLeft, Download, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
+import { VerificationNote } from '../components/ReceiptCheck';
 import { Badge, Button, Card, ErrorNote, Hash, PageHeader, Spinner, StatusBadge, TechnicalDetails } from '../components/ui';
-import { api, post } from '../lib/api';
+import { api } from '../lib/api';
 import { eventLabel, formatDateTime, formatMoney } from '../lib/format';
 import { useSession } from '../lib/session';
+import { verifyReceipt } from '../lib/verify';
 import type { SignedReceipt } from '../lib/types';
 
 const DL = 'grid grid-cols-[7rem_minmax(0,1fr)] gap-y-1.5 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]';
@@ -18,8 +20,10 @@ export function ReceiptPage() {
   const { users } = useSession();
   const names = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const q = useQuery({ queryKey: ['receipt', id], queryFn: () => api<SignedReceipt>(`/artifacts/${id}/receipt`) });
-  const verify = useMutation({
-    mutationFn: (r: SignedReceipt) => post<{ valid: boolean }>('/receipts/verify', { document: r.document, signature: r.signature, publicKeyPem: r.publicKeyPem }),
+  // Checked here in the browser against the public key; the copy with one cent changed shows it can't be edited unseen.
+  const verify = useMutation({ mutationFn: (r: SignedReceipt) => verifyReceipt(r) });
+  const tamper = useMutation({
+    mutationFn: (r: SignedReceipt) => verifyReceipt({ ...r, document: { ...r.document, chargedCents: Number((r.document as { chargedCents?: number }).chargedCents ?? 0) + 1 } }),
   });
   // One switch for every "Technical details" section; each can still be opened on its own.
   const body = useRef<HTMLDivElement>(null);
@@ -77,6 +81,11 @@ export function ReceiptPage() {
             <Button variant="secondary" onClick={download}>
               <Download className="size-4" /> Download receipt
             </Button>
+            {verify.data ? (
+              <Button variant="secondary" loading={tamper.isPending} onClick={() => tamper.mutate(r)}>
+                Change 1¢ and check
+              </Button>
+            ) : null}
             <Button loading={verify.isPending} onClick={() => verify.mutate(r)}>
               <ShieldCheck className="size-4" /> Check signature
             </Button>
@@ -84,17 +93,12 @@ export function ReceiptPage() {
         }
       />
 
-      <div aria-live="polite">
-        {verify.data && (
-          <div className={`mb-6 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium ${verify.data.valid ? 'bg-verified-soft text-verified' : 'bg-block-soft text-block'}`}>
-            {verify.data.valid ? <ShieldCheck className="size-4" aria-hidden /> : <ShieldAlert className="size-4" aria-hidden />}
-            {verify.data.valid ? 'The signature checks out: this receipt hasn’t been changed since TracePay issued it.' : 'The signature doesn’t match: this receipt was changed after TracePay issued it.'}
-          </div>
-        )}
+      <div className="mb-6 empty:hidden">
+        <VerificationNote result={verify.data} tampered={tamper.data} />
       </div>
-      {verify.error ? (
+      {verify.error || tamper.error ? (
         <div className="mb-6">
-          <ErrorNote error={verify.error} />
+          <ErrorNote error={verify.error ?? tamper.error} />
         </div>
       ) : null}
 

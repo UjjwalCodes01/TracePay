@@ -5,6 +5,7 @@ import { BadgeCheck, Check, Circle, CircleSlash, FileSignature, Loader2, Message
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
+import { useReceiptCheck, VerificationNote } from '../components/ReceiptCheck';
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatDate, formatMoney, timeAgo } from '../lib/format';
@@ -366,6 +367,21 @@ function AnswerCard({ answerId }: { answerId: string }) {
           <div className="mb-2 flex items-center gap-2 text-sm font-medium">
             <Wallet className="size-4" aria-hidden /> Where your {formatMoney(a.chargedCents)} went
           </div>
+          {a.chargedCents > 0 && (
+            // The same split at a glance: each contributor in their citation colour, then the library's fee.
+            <div
+              className="mb-3 flex h-2.5 overflow-hidden rounded-full bg-slate-100"
+              role="img"
+              aria-label={[...a.paid.map((p) => `${p.contributor} ${formatMoney(p.amountCents)}`), `library fee ${formatMoney(a.feeCents)}`].join(', ')}
+            >
+              {a.paid
+                .filter((p) => p.amountCents > 0)
+                .map((p) => (
+                  <div key={p.assetVersionId} style={{ width: `${(p.amountCents / a.chargedCents) * 100}%`, background: color(p.assetVersionId) }} />
+                ))}
+              <div className="bg-slate-400" style={{ width: `${(a.feeCents / a.chargedCents) * 100}%` }} />
+            </div>
+          )}
           <div className="overflow-x-auto rounded-lg border border-line">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs text-muted">
@@ -517,7 +533,7 @@ interface CitationCheckRecord {
 
 function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['receipt']>; answerId: string }) {
   const check = receipt.document.citationCheck as CitationCheckRecord | null | undefined;
-  const verify = useMutation({ mutationFn: () => post<{ valid: boolean }>('/receipts/verify', { document: receipt.document, signature: receipt.signature, publicKeyPem: receipt.publicKeyPem }) });
+  const { verify, tamper } = useReceiptCheck(receipt);
   const download = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' }));
     const link = Object.assign(document.createElement('a'), { href: url, download: `tracepay-answer-${answerId}.json` });
@@ -531,17 +547,14 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
         <FileSignature className="size-4" aria-hidden />
         <span className="font-medium">Signed receipt</span>
         <span className="ml-auto flex flex-wrap items-center gap-2" aria-live="polite">
-          {verify.data &&
-            (verify.data.valid ? (
-              <Badge tone="pass">
-                <BadgeCheck className="size-3" aria-hidden /> Signature valid
-              </Badge>
-            ) : (
-              <Badge tone="block">Signature doesn’t match</Badge>
-            ))}
           <Button size="sm" variant="secondary" loading={verify.isPending} onClick={() => verify.mutate()}>
             Verify
           </Button>
+          {verify.data && (
+            <Button size="sm" variant="secondary" loading={tamper.isPending} onClick={() => tamper.mutate()}>
+              Change 1¢ and check
+            </Button>
+          )}
           <Button size="sm" variant="secondary" onClick={download}>
             Download
           </Button>
@@ -569,9 +582,10 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
           . A model can’t be re-run bit for bit, so this is the record a dispute starts from.
         </p>
       )}
-      {verify.error ? (
+      <VerificationNote result={verify.data} tampered={tamper.data} />
+      {verify.error || tamper.error ? (
         <div className="mt-2">
-          <ErrorNote error={verify.error} />
+          <ErrorNote error={verify.error ?? tamper.error} />
         </div>
       ) : null}
     </div>

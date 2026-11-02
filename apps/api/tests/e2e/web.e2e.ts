@@ -199,6 +199,12 @@ describe.runIf(process.env.TEST_DATABASE_URL)('the web app in a browser', () => 
       throw new Error(`${(e as Error).message}\nPage shows:\n${(await ask.evaluate(() => document.body.innerText)).slice(0, 1500)}`);
     });
     expect(await ask.$$('button[aria-label^="Citation C"]')).not.toHaveLength(0);
+    // The receipt's signature is checked in the browser, and a copy with one cent changed fails.
+    const click = (label: string) => ask.evaluate((l) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === l)?.click(), label);
+    await click('Verify');
+    await ask.waitForFunction(() => /signature checks out[\s\S]*Checked here in your browser/.test(document.body.innerText), { timeout: 10_000 });
+    await click('Change 1¢ and check');
+    await ask.waitForFunction(() => /changed by one cent, the same check fails/.test(document.body.innerText), { timeout: 10_000 });
     await ask.close();
 
     const royalties = await open('publisher', '/royalties');
