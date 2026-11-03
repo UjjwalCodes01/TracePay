@@ -129,10 +129,28 @@ model Asset {
   archivedAt  DateTime?
   createdAt   DateTime  @default(now())
 
-  versions AssetVersion[]
-  licenses LicenseGrant[]
+  versions  AssetVersion[]
+  licenses  LicenseGrant[]
+  ownership SourceOwnership?
 
   @@index([ownerId])
+}
+
+/// A contributor's proof that they control the website a source is published on: a token TracePay
+/// issued, found at https://<domain>/.well-known/tracepay-verification.txt. Proves control of the
+/// site, the way search engines verify site owners; it doesn't settle copyright on its own.
+model SourceOwnership {
+  id            String    @id @default(cuid())
+  assetId       String    @unique
+  asset         Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  /// The site's host name, e.g. example.com.
+  domain        String
+  token         String
+  verifiedAt    DateTime?
+  /// When TracePay last looked, and what it found (plain words).
+  lastCheckedAt DateTime?
+  lastResult    String?
+  createdAt     DateTime  @default(now())
 }
 
 /// An immutable, fingerprinted snapshot of an asset's content.

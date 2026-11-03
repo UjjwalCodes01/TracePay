@@ -34,6 +34,8 @@ export interface Extraction {
   /** Gemini, the rule-based fallback, or read exactly from an RSL (Really Simple Licensing) document. */
   source: 'vertex' | 'rules' | 'rsl';
   model: string;
+  /** Found on a website (robots.txt → License:), rather than pasted. */
+  discovery?: { site: string; foundVia: 'robots.txt' | 'license.xml'; licenseUrl: string; hostedOnSite: boolean };
 }
 
 /** The same words for a contributor's payment everywhere in the app. */

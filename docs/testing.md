@@ -4,7 +4,7 @@
 
 ```bash
 npm run db:up                                # Postgres :5433 + Redis :6380
-npm run test:integration -w @tracepay/api    # 385 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api    # 393 tests; creates/migrates a tracepay_test database
 npm run test:coverage -w @tracepay/api       # the same, with a coverage floor (CI)
 npm run test:e2e -w @tracepay/api            # the web app in a real browser (Chrome, Chromium or Firefox)
 npm run db:check-drift -w @tracepay/api      # the schema matches its migrations (CI)

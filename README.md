@@ -31,7 +31,7 @@ A content owner whose library has many authors: a research firm, a trade publish
 
 ## Questions we expect
 
-**What stops someone registering someone else's work and collecting the royalties?** Today, nothing proves ownership. TracePay enforces terms both sides agreed, and the receipt records who claimed what. Next: verified identity for contributors, licenses fetched from a publisher's own domain (an [RSL](https://rslstandard.org) file found through the site's `robots.txt` proves control of that site), and an ownership claim that freezes a source's unpaid royalties until it's resolved, the way YouTube's Content ID handles disputed claims.
+**What stops someone registering someone else's work and collecting the royalties?** A contributor can prove they control the website a source is published on: TracePay issues a token, they publish it at `/.well-known/tracepay-verification.txt`, and TracePay checks it, the way search engines verify site owners. Publishers then see "verified owner of example.com", and every answer receipt records it next to the payment. That proves control of a site, not copyright. Next: verified identity for contributors, and an ownership claim that freezes a source's unpaid royalties until it's resolved, the way YouTube's Content ID handles disputed claims.
 
 **Does the money add up for an author?** The arithmetic, with the demo's real settings: an author is paid 1–3¢ per cited passage, set in their license. Royalties go out once an author is owed $10, so PayPal's $0.25 payout fee costs 2.5%. At 2¢, $10 is 500 paid citations. A library answering 1,000 agent questions a day, with about two paid citations each, pays its authors around $1,200 a month in total. We don't have real volume yet; that's the target a pilot has to test. Buyers top up credit in $10–$50 amounts, so PayPal's checkout fee is paid once per top-up, not per answer.
 
@@ -56,7 +56,7 @@ Every miss is published on the Ask page with the checker's reason. The money rul
 
 1. **Ask a question:** press *See who an answer pays* on the welcome page, then *Ask*. Watch each step happen, then see the answer, which passages it used, and where your 6¢ went.
 2. **Verify the receipt**, then press *Change 1¢ and check* to watch an edited copy fail. The check runs in your browser; compare the key it shows with TracePay's signing key, SHA-256 `2950 8e50 1ab6 79c5 be64 c004 486b 9a0f c66a 693b 2f69 ae28 caa9 5165 8ab3 242d`.
-3. **As a contributor**, open *My sources → Offer a license* and paste an RSL license (or press *Try an example*). RSL is the open standard publishers use to state AI-licensing terms; TracePay reads it exactly, with no AI, quoting the element behind each term.
+3. **As a contributor**, open *My sources → Offer a license* and type a website under *Your terms are on your website?* (try `rslcollective.org`). TracePay finds the site's [RSL](https://rslstandard.org) license through its `robots.txt`, as AI crawlers do, and reads it exactly, with no AI, quoting the element behind each term. RSL is the open standard publishers use to state AI-licensing terms. On *My sources*, *Prove it's yours* verifies the site.
 4. **As the publisher**, open *Answer royalties* and pay the authors with PayPal Payouts.
 
 ## Also in the box
@@ -68,7 +68,7 @@ The same license check powers a second product: reports sold in a store with Pay
 - [How it works](docs/how-it-works.md): the answer pipeline, the reports flow, real licenses, how Gemini is used, architecture.
 - [PayPal](docs/paypal.md): every PayPal API used, reconciliation, fees.
 - [Running it](docs/running.md): local setup, environment, deployment, the platform API and MCP server, production readiness.
-- [Tests](docs/testing.md): 385 API tests against real Postgres and an in-memory PayPal that enforces PayPal's rules, browser tests, live-AI tests.
+- [Tests](docs/testing.md): 393 API tests against real Postgres and an in-memory PayPal that enforces PayPal's rules, browser tests, live-AI tests.
 
 TracePay enforces recorded, agreed license terms. It doesn't establish legal ownership of source material and isn't legal advice.
 

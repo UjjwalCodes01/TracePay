@@ -11,6 +11,7 @@ import { addVersion, ASSET_KINDS, createAsset, MAX_CONTENT_CHARS } from '../modu
 import { todayUtc } from '../modules/builds/preflight.service';
 import { extractTerms, MAX_LICENSE_TEXT } from '../modules/licenses/extract';
 import { RslError } from '../modules/licenses/rsl';
+import { checkSite, claimSite, discoverRsl, SiteError } from '../modules/licenses/ownership';
 import { acceptOffer, declineOffer, declineRequest, offerLicense, requestLicense, revokeLicense, withdrawOffer } from '../modules/licenses/license.service';
 import { limitStore } from '../http/rate-store';
 import { appendAudit } from '../modules/audit/audit-log';
@@ -89,9 +90,35 @@ export function licensingRoutes({ db, config }: AppDeps) {
       include: {
         versions: { orderBy: { version: 'desc' }, select: { id: true, version: true, sha256: true, createdAt: true, _count: { select: { chunks: true } } } },
         licenses: { orderBy: [{ licenseeId: 'asc' }, { version: 'desc' }], select: { ...GRANT_SELECT, licensee: { select: { id: true, name: true, email: true } } } },
+        ownership: { select: { domain: true, token: true, verifiedAt: true, lastCheckedAt: true, lastResult: true } },
       },
     });
     res.json({ assets });
+  });
+
+  // ---------------------------------------------------------------- the contributor's own website
+
+  const Site = z.object({ site: z.string().trim().min(3).max(253) });
+  const siteFailure = (err: unknown): never => {
+    if (err instanceof SiteError) throw new HttpError(400, err.message);
+    throw err;
+  };
+
+  /** Finds the RSL license a website publishes (robots.txt → License:) and reads it. Nothing is saved. */
+  r.post('/licenses/discover', requireRole('contributor', 'publisher'), extractLimiter, async (req, res) => {
+    const { site } = Site.parse(req.body);
+    res.json(await discoverRsl(site, todayUtc()).catch(siteFailure));
+  });
+
+  /** Claims the website a source is published on: returns the token to publish there. */
+  r.post('/contributor/assets/:id/ownership', requireRole('contributor'), extractLimiter, async (req, res) => {
+    const { site } = Site.parse(req.body);
+    res.json({ ownership: await claimSite(db, { assetId: param(req, 'id'), contributorId: currentUser(req).id, site }).catch(siteFailure) });
+  });
+
+  /** Looks for the token on the site. */
+  r.post('/contributor/assets/:id/ownership/check', requireRole('contributor'), extractLimiter, async (req, res) => {
+    res.json({ ownership: await checkSite(db, { assetId: param(req, 'id'), contributorId: currentUser(req).id }).catch(siteFailure) });
   });
 
   r.post('/contributor/assets', requireRole('contributor'), quotas.createAsset(), async (req, res) => {
@@ -187,6 +214,8 @@ export function licensingRoutes({ db, config }: AppDeps) {
       select: {
         id: true, title: true, kind: true, description: true, createdAt: true,
         owner: { select: { id: true, name: true } },
+        // Only whether (and where) control of the site was proven: never the token.
+        ownership: { select: { domain: true, verifiedAt: true } },
         versions: { orderBy: { version: 'desc' }, take: 1, select: { version: true, _count: { select: { chunks: true } } } },
         licenses: { where: { licenseeId: me }, orderBy: { version: 'desc' }, take: 20, select: { id: true, status: true, version: true, terms: true } },
       },
@@ -198,6 +227,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
         kind: a.kind,
         description: a.description,
         owner: a.owner,
+        ownerVerifiedSite: a.ownership?.verifiedAt ? a.ownership.domain : null,
         version: a.versions[0]?.version ?? 0,
         passages: a.versions[0]?._count.chunks ?? 0,
         // The license in force, if any — a newer offer that was declined or withdrawn
@@ -221,7 +251,7 @@ export function licensingRoutes({ db, config }: AppDeps) {
       where: { licenseeId: currentUser(req).id, status: { in: ['offered', 'requested'] } },
       take: 100,
       orderBy: { updatedAt: 'desc' },
-      select: { ...GRANT_SELECT, sourceText: true, asset: { select: { id: true, title: true, kind: true, owner: { select: { name: true, paypalEmail: true } } } } },
+      select: { ...GRANT_SELECT, sourceText: true, asset: { select: { id: true, title: true, kind: true, owner: { select: { name: true, paypalEmail: true } }, ownership: { select: { domain: true, verifiedAt: true } } } } },
     });
     // For renegotiations, show what is in force today next to what is offered.
     const current = await db.licenseGrant.findMany({
@@ -231,9 +261,9 @@ export function licensingRoutes({ db, config }: AppDeps) {
     const byAsset = new Map(current.map((c) => [c.assetId, c]));
     // Never expose the contributor's payout address — only whether one is set.
     res.json({
-      licenses: grants.map(({ asset: { owner, ...asset }, ...g }) => ({
+      licenses: grants.map(({ asset: { owner, ownership, ...asset }, ...g }) => ({
         ...g,
-        asset: { ...asset, owner: { name: owner.name, canBePaid: Boolean(owner.paypalEmail) } },
+        asset: { ...asset, owner: { name: owner.name, canBePaid: Boolean(owner.paypalEmail) }, ownerVerifiedSite: ownership?.verifiedAt ? ownership.domain : null },
         current: byAsset.get(asset.id) ?? null,
       })),
     });

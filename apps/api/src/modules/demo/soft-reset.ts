@@ -101,6 +101,8 @@ async function resetOnce(db: Db, world: string | null): Promise<{ removedBuilds:
       await tx.idempotencyKey.deleteMany({ where: { userId: { in: buyerIds } } });
       // Licenses held by the demo publisher (nothing references them any more).
       await tx.licenseGrant.deleteMany({ where: { licenseeId: { in: publisherIds } } });
+      // Ownership claims on the demo's own sources.
+      await tx.sourceOwnership.deleteMany({ where: { assetId: { in: DEMO_ASSETS.map((a) => X(a.id)) } } });
       // Platform API state: its event log (and pending deliveries), webhook endpoints and idempotency records.
       await tx.outboundEvent.deleteMany({ where: { ownerId: { in: publisherIds } } });
       await tx.webhookEndpoint.deleteMany({ where: { ownerId: { in: publisherIds } } });

@@ -37,7 +37,7 @@ interface AnswerView {
   citations: Array<{ handle: string; assetVersionId: string | null; title: string | null; paid: boolean; reason?: string | null }>;
   /** 'model': an independent AI check decided which citations were paid; 'rules': fixed rules did. */
   citationsCheckedBy?: string;
-  paid: Array<{ assetVersionId: string; title: string; contributor: string; citations: number; centsPerCitation: number; amountCents: number }>;
+  paid: Array<{ assetVersionId: string; title: string; contributor: string; ownerVerified?: string | null; citations: number; centsPerCitation: number; amountCents: number }>;
   notPaid: { unsupported: number; repeated: number; overCap: number };
   excluded: Array<{ title: string; contributor: string; code: string; reason: string }>;
   feeCents: number;
@@ -401,6 +401,11 @@ function AnswerCard({ answerId }: { answerId: string }) {
                         <span className="mr-2 inline-block size-2.5 rounded-sm align-middle" style={{ background: color(p.assetVersionId) }} aria-hidden />
                         {p.contributor}
                         {cited.length > 0 && <span className="block text-xs text-muted">Cited as {cited.join(', ')}</span>}
+                        {p.ownerVerified && (
+                          <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-verified">
+                            <BadgeCheck className="size-3" aria-hidden /> Verified owner of {p.ownerVerified}
+                          </span>
+                        )}
                         <span className="block text-xs text-muted tabular-nums sm:hidden">
                           {p.citations} × {formatMoney(p.centsPerCitation)}
                         </span>

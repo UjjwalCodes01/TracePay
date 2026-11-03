@@ -4,7 +4,7 @@ import https from 'node:https';
 import net from 'node:net';
 
 /**
- * Outbound HTTP for webhook deliveries, hardened against SSRF: a customer-chosen
+ * Outbound HTTP for webhook deliveries (and fetching a site's public license files), hardened against SSRF: a customer-chosen
  * URL must never reach this server's own network (cloud metadata, internal
  * services, localhost).
  *
@@ -110,8 +110,47 @@ export async function safePost(
   headers: Record<string, string>,
   opts: UrlPolicy & { timeoutMs: number; maxResponseBytes: number; lookup?: Lookup },
 ): Promise<PostResult> {
+  const { statusCode, body: text, error, durationMs } = await send('POST', rawUrl, body, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body).toString(), ...headers }, opts);
+  return { statusCode, body: text, error, durationMs };
+}
+
+export interface GetResult extends PostResult {
+  /** The URL finally answered, after any redirects. */
+  url: string;
+}
+
+/**
+ * A GET of a public web page (a site's robots.txt, its license file), with the same protections,
+ * following at most `maxRedirects` redirects — each one checked again as if it were the first URL
+ * (sites routinely send example.com to www.example.com).
+ */
+export async function safeGet(rawUrl: string, opts: UrlPolicy & { timeoutMs: number; maxResponseBytes: number; maxRedirects?: number; lookup?: Lookup }): Promise<GetResult> {
+  let url = rawUrl;
+  for (let hop = 0; ; hop++) {
+    const r = await send('GET', url, null, { accept: 'text/plain, application/xml, text/xml, */*;q=0.5', 'user-agent': 'TracePay/1.0 (+https://github.com/UjjwalCodes01/TracePay)' }, opts);
+    const location = r.headers.location;
+    if (r.statusCode && r.statusCode >= 300 && r.statusCode < 400 && location) {
+      if (hop >= (opts.maxRedirects ?? 3)) return { ...r, url, error: 'Too many redirects.' };
+      try {
+        url = new URL(location, url).toString();
+      } catch {
+        return { ...r, url, error: 'The site redirected to an invalid address.' };
+      }
+      continue;
+    }
+    return { statusCode: r.statusCode, body: r.body, error: r.error, durationMs: r.durationMs, url };
+  }
+}
+
+async function send(
+  method: 'GET' | 'POST',
+  rawUrl: string,
+  body: string | null,
+  headers: Record<string, string>,
+  opts: UrlPolicy & { timeoutMs: number; maxResponseBytes: number; lookup?: Lookup },
+): Promise<PostResult & { headers: Record<string, string | undefined> }> {
   const started = Date.now();
-  const done = (r: Omit<PostResult, 'durationMs'>): PostResult => ({ ...r, durationMs: Date.now() - started });
+  const done = (r: Omit<PostResult, 'durationMs'> & { headers?: Record<string, string | undefined> }) => ({ headers: {}, ...r, durationMs: Date.now() - started });
 
   const checked = checkWebhookUrl(rawUrl, opts);
   if (!checked.ok) return done({ statusCode: null, body: '', error: checked.reason });
@@ -133,45 +172,41 @@ export async function safePost(
     });
   }) as unknown as Lookup;
 
-  return new Promise<PostResult>((resolve) => {
+  return new Promise((resolve) => {
     let settled = false;
-    const finish = (r: Omit<PostResult, 'durationMs'>) => {
+    const finish = (r: Omit<PostResult, 'durationMs'> & { headers?: Record<string, string | undefined> }) => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
       resolve(done(r));
     };
     const transport = url.protocol === 'https:' ? https : http;
-    const req = transport.request(
-      url,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body).toString(), ...headers },
-        lookup: guardedLookup,
-        agent: false,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        let size = 0;
-        res.on('data', (chunk: Buffer) => {
-          if (size >= opts.maxResponseBytes) return;
-          chunks.push(chunk);
-          size += chunk.length;
-          // Enough to show the receiver's answer; stop reading the rest.
-          if (size >= opts.maxResponseBytes) res.destroy();
+    const req = transport.request(url, { method, headers, lookup: guardedLookup, agent: false }, (res) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on('data', (chunk: Buffer) => {
+        if (size >= opts.maxResponseBytes) return;
+        chunks.push(chunk);
+        size += chunk.length;
+        // Enough to show the receiver's answer; stop reading the rest.
+        if (size >= opts.maxResponseBytes) res.destroy();
+      });
+      const end = () =>
+        finish({
+          statusCode: res.statusCode ?? null,
+          headers: { location: typeof res.headers.location === 'string' ? res.headers.location : undefined },
+          body: Buffer.concat(chunks).subarray(0, opts.maxResponseBytes).toString('utf8'),
+          error: null,
         });
-        const end = () =>
-          finish({ statusCode: res.statusCode ?? null, body: Buffer.concat(chunks).subarray(0, opts.maxResponseBytes).toString('utf8'), error: null });
-        res.on('end', end);
-        res.on('close', end);
-        res.on('error', end);
-      },
-    );
+      res.on('end', end);
+      res.on('close', end);
+      res.on('error', end);
+    });
     const deadline = setTimeout(() => {
       req.destroy(Object.assign(new Error(`Timed out after ${opts.timeoutMs} ms`), { code: 'ETIMEDOUT' }));
     }, opts.timeoutMs);
     req.on('error', (err: NodeJS.ErrnoException) => finish({ statusCode: null, body: '', error: describeError(err) }));
-    req.end(body);
+    req.end(body ?? undefined);
   });
 }
 

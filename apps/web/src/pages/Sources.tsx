@@ -1,6 +1,6 @@
 import type { LicenseTerms } from '@tracepay/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bell, FileUp, Plus, Sparkles, Upload, Wand2 } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, Bell, FileUp, Globe, Plus, Sparkles, Upload, Wand2 } from 'lucide-react';
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { DEFAULT_TERMS, TermsEditor, TermsSummary, type Extraction } from '../components/Terms';
@@ -30,6 +30,75 @@ interface MyAsset {
   createdAt: string;
   versions: Array<{ id: string; version: number; sha256: string; createdAt: string; _count: { chunks: number } }>;
   licenses: Grant[];
+  ownership: { domain: string; token: string; verifiedAt: string | null; lastCheckedAt: string | null; lastResult: string | null } | null;
+}
+
+/**
+ * Proving the contributor controls the website the source is published on: a token TracePay issues,
+ * published at /.well-known/tracepay-verification.txt. Publishers and answer receipts then show it.
+ */
+function SiteOwnership({ asset }: { asset: MyAsset }) {
+  const qc = useQueryClient();
+  const o = asset.ownership;
+  const [open, setOpen] = useState(false);
+  const [site, setSite] = useState(o?.domain ?? '');
+  const refresh = () => qc.invalidateQueries({ queryKey: ['my-assets'] });
+  const claim = useMutation({ mutationFn: () => post(`/contributor/assets/${asset.id}/ownership`, { site }), onSuccess: refresh });
+  const check = useMutation({ mutationFn: () => post(`/contributor/assets/${asset.id}/ownership/check`), onSuccess: refresh });
+
+  if (o?.verifiedAt) {
+    return (
+      <p className="mt-3 flex items-center gap-1.5 text-sm text-verified">
+        <BadgeCheck className="size-4" aria-hidden /> Verified owner of {o.domain}. Publishers see it, and answer receipts record it.
+      </p>
+    );
+  }
+  if (!o && !open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-brand hover:underline">
+        <Globe className="size-4" aria-hidden /> Prove it’s yours: verify the website it’s published on
+      </button>
+    );
+  }
+  const url = o ? `https://${o.domain}/.well-known/tracepay-verification.txt` : null;
+  return (
+    <div className="mt-3 rounded-lg border border-line bg-canvas p-4 text-sm">
+      <div className="font-medium">Prove it’s yours</div>
+      <p className="mt-1 text-muted">Show you control the website this source is published on, the way search engines verify site owners. Publishers then see “verified owner”, and every answer receipt records it.</p>
+      <form
+        className="mt-3 flex flex-wrap gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          claim.mutate();
+        }}
+      >
+        <input className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-white px-3" value={site} onChange={(e) => setSite(e.target.value)} placeholder="example.com" aria-label="Your website" />
+        <Button size="sm" variant="secondary" loading={claim.isPending} disabled={site.trim().length < 3}>
+          {o ? 'Change website' : 'Get my token'}
+        </Button>
+      </form>
+      {o && url && (
+        <ol className="mt-3 list-decimal space-y-2 pl-5">
+          <li>
+            Publish a text file at <span className="mono break-all">{url}</span> with this line in it:
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <code className="mono break-all rounded bg-white px-2 py-1 ring-1 ring-line">{o.token}</code>
+              <Button size="sm" variant="ghost" onClick={() => void navigator.clipboard?.writeText(o.token)}>
+                Copy
+              </Button>
+            </div>
+          </li>
+          <li>
+            <Button size="sm" loading={check.isPending} onClick={() => check.mutate()}>
+              Check now
+            </Button>
+            {o.lastResult && <span className="ml-2 text-muted">{o.lastResult}</span>}
+          </li>
+        </ol>
+      )}
+      <ErrorNote error={claim.error ?? check.error} />
+    </div>
+  );
 }
 
 const KINDS = [
@@ -187,6 +256,7 @@ export function MySourcesPage() {
                 }
               >
                 <p className="text-sm text-muted">{a.description}</p>
+                <SiteOwnership asset={a} />
                 {rels.length === 0 ? (
                   <p className="mt-4 text-sm text-muted">Not licensed to anyone yet.</p>
                 ) : (
@@ -450,6 +520,15 @@ export function OfferLicensePage() {
     }
   }, [asset, email, draft, seededFrom]);
 
+  const [site, setSite] = useState('');
+  const discover = useMutation({
+    mutationFn: () => post<Extraction>('/licenses/discover', { site }),
+    onSuccess: (r) => {
+      setDraft(r);
+      setTerms(r.terms);
+      setStep(3);
+    },
+  });
   const extract = useMutation({
     mutationFn: () => post<Extraction>('/licenses/extract', { text }),
     onSuccess: (r) => {
@@ -514,6 +593,26 @@ export function OfferLicensePage() {
               Try an example
             </button>
           </p>
+          <form
+            className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-canvas p-3 text-sm"
+            onSubmit={(e) => {
+              e.preventDefault();
+              discover.mutate();
+            }}
+          >
+            <Globe className="size-4 text-muted" aria-hidden />
+            <span className="font-medium">Your terms are on your website?</span>
+            <input className={`${input} h-9 min-w-40 flex-1`} value={site} onChange={(e) => setSite(e.target.value)} placeholder="example.com" aria-label="Your website" />
+            <Button size="sm" variant="secondary" loading={discover.isPending} disabled={site.trim().length < 3}>
+              Find its RSL license
+            </Button>
+            <span className="basis-full text-xs text-muted">We look for the “License:” line in its robots.txt, as AI crawlers do, and read the license exactly. Try rslcollective.org.</span>
+            {discover.error ? (
+              <div className="basis-full">
+                <ErrorNote error={discover.error} />
+              </div>
+            ) : null}
+          </form>
           <textarea className={`${input} min-h-48 py-2`} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. The publisher may use the dataset in reports sold worldwide until 31 Dec 2027. The original data may not be shared. The contributor receives 20% of each sale." />
           <ErrorNote error={extract.error} />
           <div className="mt-4 flex flex-wrap gap-2">
@@ -542,6 +641,11 @@ export function OfferLicensePage() {
                 )}
                 Every field below is yours to change.
               </div>
+              {draft.discovery && (
+                <p className="mt-1 text-xs text-muted">
+                  Found on {draft.discovery.site} via its {draft.discovery.foundVia}: <span className="mono break-all">{draft.discovery.licenseUrl}</span>
+                </p>
+              )}
               {draft.warnings.length > 0 && (
                 <ul className="mt-2 list-disc space-y-0.5 pl-5 text-contract">
                   {draft.warnings.map((w) => (

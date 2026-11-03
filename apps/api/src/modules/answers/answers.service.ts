@@ -14,6 +14,7 @@ import { retrievePassages } from '../generation/retrieval';
 import { CreditError, lockAccount } from './credits.service';
 import { auditAnswer, citationPairs, longestCopiedRun, MAX_PAID_PASSAGES_PER_SOURCE, MAX_VERBATIM_WORDS, planWithinBudget, type AnswerAudit, type Candidate, type Passage } from './integrity';
 import { RULE_JUDGE, RuleSupportJudge } from './support';
+import { verifiedOwners } from '../licenses/ownership';
 import { withheldPassages } from '../sources/screening';
 import type { AnswerStage } from './progress';
 import { checkAnswerRights, type ExcludedSource } from './rights';
@@ -251,6 +252,7 @@ async function settle(db: Db, keys: SigningKeys, answerId: string, args: SettleA
                 contributorId: s.contributorId,
                 assetVersionId: p.assetVersionId,
                 assetTitle: s.assetTitle,
+                assetId: s.assetId,
                 licenseId: s.license!.id,
                 termsHash: s.termsHash,
                 centsPerCitation: p.centsPerCitation,
@@ -259,7 +261,9 @@ async function settle(db: Db, keys: SigningKeys, answerId: string, args: SettleA
               };
             })
         : [];
-    if (credits.length) await tx.citationCredit.createMany({ data: credits });
+    if (credits.length) await tx.citationCredit.createMany({ data: credits.map(({ assetId: _, ...c }) => c) });
+    // Which paid authors have proven they control the site their source is published on.
+    const owners = await verifiedOwners(tx, credits.map((c) => c.assetId));
 
     const titleOf = new Map((args.plan ?? []).map((p) => [p.assetVersionId, p.title]));
     // Only a paid answer keeps its text: an unpaid one must not hand out licensed content for free.
@@ -289,7 +293,7 @@ async function settle(db: Db, keys: SigningKeys, answerId: string, args: SettleA
       fromFixture: args.out?.fromFixture ?? false,
       rules: { maxPaidPassagesPerSource: MAX_PAID_PASSAGES_PER_SOURCE, feeCents: args.status === 'answered' ? args.feeCents : 0, onlySupportedCitationsPaid: true },
       mandate: { maxPriceCents: answer.maxPriceCents },
-      paid: credits.map((c) => ({ assetVersionId: c.assetVersionId, title: c.assetTitle, contributorId: c.contributorId, licenseId: c.licenseId, termsHash: c.termsHash, centsPerCitation: c.centsPerCitation, citations: c.citations, amountCents: c.amountCents })),
+      paid: credits.map((c) => ({ assetVersionId: c.assetVersionId, title: c.assetTitle, contributorId: c.contributorId, ownerVerified: owners.get(c.assetId) ?? null, licenseId: c.licenseId, termsHash: c.termsHash, centsPerCitation: c.centsPerCitation, citations: c.citations, amountCents: c.amountCents })),
       notPaid: args.audit?.ignored ?? null,
       // Every citation's verdict and the exact judge behind it: what was decided, and how, can be
       // traced (and disputed) from the receipt alone. Sentences are hashed, not copied.
@@ -364,6 +368,8 @@ type AnswerRow = Prisma.AnswerGetPayload<{ include: { library: { select: { id: t
 export function answerOut(a: AnswerRow, keys: SigningKeys) {
   const content = a.content as unknown as StoredContent | null;
   const titleOf = new Map([...(content?.passages ?? []).map((p) => [p.assetVersionId, p.title ?? null] as const), ...a.credits.map((c) => [c.assetVersionId, c.assetTitle] as const)]);
+  // As signed into the receipt when the answer was paid.
+  const ownerOf = new Map(((a.receipt as { paid?: Array<{ assetVersionId: string; ownerVerified?: string | null }> } | null)?.paid ?? []).map((p) => [p.assetVersionId, p.ownerVerified ?? null] as const));
   return {
     id: a.id,
     question: a.question,
@@ -380,7 +386,7 @@ export function answerOut(a: AnswerRow, keys: SigningKeys) {
         : [],
     citationsCheckedBy: content?.checkedBy ?? 'rules',
     withheldPassages: content?.withheld ?? 0,
-    paid: a.credits.map((c) => ({ assetVersionId: c.assetVersionId, title: c.assetTitle, contributor: c.contributor.name, citations: c.citations, centsPerCitation: c.centsPerCitation, amountCents: c.amountCents })),
+    paid: a.credits.map((c) => ({ assetVersionId: c.assetVersionId, title: c.assetTitle, contributor: c.contributor.name, ownerVerified: ownerOf.get(c.assetVersionId) ?? null, citations: c.citations, centsPerCitation: c.centsPerCitation, amountCents: c.amountCents })),
     notPaid: content?.ignored ?? { unsupported: 0, repeated: 0, overCap: 0 },
     excluded: (a.excluded as unknown as ExcludedSource[]).map((e) => ({ title: e.assetTitle, contributor: e.contributorName, code: e.code, reason: e.reason })),
     feeCents: a.feeCents,

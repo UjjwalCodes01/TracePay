@@ -67,7 +67,7 @@ TracePay is built to be adopted after the hackathon, not just demoed.
 | **Self-service licensing** | Contributors register sources (immutable, fingerprinted versions) and offer terms; publishers request, accept or decline. Terms only bind once **both** parties agree, acceptance is tied to the exact terms hash reviewed, renegotiations never displace an active license until accepted, and revocation stops future builds without rewriting past settlements |
 | **AI-drafted terms, human-decided** | Gemini drafts normalized terms from a license document, quoting the sentence behind every field; quotes are checked against the document. A deterministic extractor (restrictive by default, with warnings) covers the no-AI case. Nothing is enforced until confirmed by both sides |
 | **Auditability** | Hash-chained, tenant-tagged audit log; Ed25519-signed receipts verifiable offline |
-| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck, 385 tests with a coverage floor, browser tests and CodeQL against real Postgres, Render Blueprint, Vercel config |
+| **Delivery** | Versioned Prisma migrations (including data backfills), CI running typecheck, 393 tests with a coverage floor, browser tests and CodeQL against real Postgres, Render Blueprint, Vercel config |
 
 In production the web app calls `/api/*` on its own origin; `apps/web/vercel.json` rewrites that to the Render API so session cookies stay first-party. Update the rewrite destination if your Render service URL differs.
 

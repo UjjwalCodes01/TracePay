@@ -1,6 +1,6 @@
 import type { LicenseTerms } from '@tracepay/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock, Search } from 'lucide-react';
+import { BadgeCheck, CheckCircle2, Clock, Search } from 'lucide-react';
 import { useState } from 'react';
 import { TermsSummary } from '../components/Terms';
 import { Badge, Button, Card, Empty, ErrorNote, Spinner } from '../components/ui';
@@ -17,7 +17,7 @@ interface InboxItem {
   sourceText: string | null;
   origin: 'manual' | 'ai_draft' | 'rules_draft';
   updatedAt: string;
-  asset: { id: string; title: string; kind: string; owner: { name: string; canBePaid: boolean } };
+  asset: { id: string; title: string; kind: string; owner: { name: string; canBePaid: boolean }; ownerVerifiedSite?: string | null };
   current: { version: number; terms: LicenseTerms } | null;
 }
 
@@ -53,6 +53,7 @@ export function OffersPanel() {
               <span className="flex flex-wrap items-center gap-2">
                 {o.asset.title}
                 <span className="text-xs font-normal text-muted">from {o.asset.owner.name} · {timeAgo(o.updatedAt)}</span>
+                <OwnerSite site={o.asset.ownerVerifiedSite} />
                 {o.current && <Badge tone="warn">New terms for a source you already license</Badge>}
               </span>
             }
@@ -117,6 +118,8 @@ interface Listing {
   kind: string;
   description: string;
   owner: { id: string; name: string };
+  /** The website the contributor proved they control, if any. */
+  ownerVerifiedSite?: string | null;
   version: number;
   passages: number;
   /** The license in force if there is one, otherwise the newest. */
@@ -182,6 +185,9 @@ export function FindSourcesPanel() {
                 <div className="mt-1 text-xs text-muted">
                   {KIND_LABEL[s.kind] ?? s.kind.replace(/_/g, ' ')} by {s.owner.name} · {s.passages} passages
                 </div>
+                <div className="mt-1.5">
+                  <OwnerSite site={s.ownerVerifiedSite} />
+                </div>
                 <p className="mt-2 flex-1 text-sm text-slate-700">{s.description}</p>
                 {canRequest && (
                   <Button size="sm" variant="secondary" className="mt-4 self-start" loading={request.isPending && request.variables === s.assetId} disabled={request.isPending} onClick={() => request.mutate(s.assetId)}>
@@ -194,5 +200,16 @@ export function FindSourcesPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Whether the contributor proved they control the website the source is published on. */
+function OwnerSite({ site }: { site?: string | null }) {
+  return site ? (
+    <Badge tone="pass">
+      <BadgeCheck className="size-3" aria-hidden /> Verified owner of {site}
+    </Badge>
+  ) : (
+    <span className="text-xs font-normal text-muted">Website not verified</span>
   );
 }
