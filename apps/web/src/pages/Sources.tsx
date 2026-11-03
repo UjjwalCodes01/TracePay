@@ -429,9 +429,13 @@ export function OfferLicensePage() {
   const [step, setStep] = useState<1 | 2 | 3>(sample ? 2 : 1);
   const [email, setEmail] = useState(params.get('to') ?? '');
   const [text, setText] = useState(params.get('sample') === 'rsl' ? SAMPLE_RSL : sample ? SAMPLE_LICENSE : '');
+  // In the demo there's one publisher to license to: this visitor's own. Filled in, still editable.
+  const [prefilled, setPrefilled] = useState(false);
   useEffect(() => {
-    if (sample && !email && demoPublisherEmail) setEmail(demoPublisherEmail);
-  }, [sample, email, demoPublisherEmail]);
+    if (prefilled || !demoPublisherEmail) return;
+    setPrefilled(true);
+    if (!email) setEmail(demoPublisherEmail);
+  }, [prefilled, email, demoPublisherEmail]);
   const [terms, setTerms] = useState<LicenseTerms>(DEFAULT_TERMS(today));
   const [draft, setDraft] = useState<Extraction | null>(null);
   const [seededFrom, setSeededFrom] = useState<string | null>(null);
