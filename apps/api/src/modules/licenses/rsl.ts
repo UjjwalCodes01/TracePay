@@ -126,9 +126,10 @@ export function readRsl(xml: string, today: string): ExtractionResult {
   const currency = String(amountNode?.currency ?? '').toUpperCase();
   const amount = Number(text(amountNode));
   const standardUrl = text(list(payment?.standard)[0]);
+  const customUrl = text(list(payment?.custom)[0]);
   const licenseName = STANDARDS.find(([re]) => re.test(standardUrl))?.[1];
   const payQuote = payment
-    ? tag('payment', { type: payType }, [amountNode ? tag('amount', { currency }, text(amountNode)) : '', standardUrl ? tag('standard', {}, standardUrl) : ''].join(''))
+    ? tag('payment', payment?.type ? { type: payType } : {}, [amountNode ? tag('amount', { currency }, text(amountNode)) : '', standardUrl ? tag('standard', {}, standardUrl) : '', customUrl ? tag('custom', {}, customUrl) : ''].join(''))
     : null;
   if (payments.length > 1) warnings.push(`The license lists ${payments.length} payment options; this draft follows the first (${payType}).`);
 
@@ -154,6 +155,11 @@ export function readRsl(xml: string, today: string): ExtractionResult {
   } else if (['purchase', 'subscription', 'training', 'crawl', 'contribution'].includes(payType)) {
     payBlocksAi = true;
     warnings.push(`The license asks for a ${payType} payment, which TracePay doesn’t collect per answer. Arrange it with the licensee, then set the terms; until then AI answers are off.`);
+  } else if ((standardUrl && !licenseName) || customUrl) {
+    // Terms referred to, not stated (a collective's license, a publisher's licensing page): "free" by
+    // default would be a guess the spec forbids (§3.1.1).
+    payBlocksAi = true;
+    warnings.push(`The license refers to terms at ${standardUrl || customUrl} that TracePay can’t read. Check them, then set the terms; until then AI answers are off.`);
   }
   // attribution and free: no money owed.
 

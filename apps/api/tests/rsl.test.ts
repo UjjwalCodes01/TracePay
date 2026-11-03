@@ -101,3 +101,24 @@ describe('reading RSL 1.0 licenses', () => {
     expect(looksLikeRsl('A plain contract that mentions rsl and https://rslstandard.org/rsl')).toBe(false);
   });
 });
+
+describe('real RSL files', () => {
+  it('reads rslcollective.org’s license (fetched 2026-11-03): AI use granted, but its terms live in a collective license, so nothing is assumed free', () => {
+    // https://rslcollective.org/robots.txt → License: https://rslcollective.org/license.xml?ilc_id=ILC-YWFV80
+    const real = `<rsl xmlns="https://rslstandard.org/rsl">
+  <content url="/">
+    <license>
+      <permits type="usage">ai-all</permits>
+      <payment>
+        <standard>https://internetcollective.org/license</standard>
+      </payment>
+    </license>
+  </content>
+</rsl>`;
+    const r = readRsl(real, TODAY);
+    expect(r.terms.aiAnswers!.allowed).toBe(false);
+    expect(r.terms.commercialUse).toBe(false);
+    expect(r.warnings.join(' ')).toMatch(/refers to terms at https:\/\/internetcollective\.org\/license/);
+    expect(r.evidence.find((e) => e.field === 'economics')!.quote).toBe('<payment><standard>https://internetcollective.org/license</standard></payment>');
+  });
+});
