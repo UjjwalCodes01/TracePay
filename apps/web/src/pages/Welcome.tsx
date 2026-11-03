@@ -69,11 +69,11 @@ export function WelcomePage() {
         <div className="relative mx-auto grid max-w-6xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:py-20">
           <div>
             <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-teal-200">
-              <ShieldCheck className="size-3.5" aria-hidden /> Licensed AI, paid per citation, with PayPal
+              <ShieldCheck className="size-3.5" aria-hidden /> Answers sold to AI agents, paid per citation, with PayPal
             </p>
-            <h1 className="text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl">AI answers that pay the people they quote.</h1>
+            <h1 className="text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl">Sell answers to AI agents. Pay every author they quote.</h1>
             <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-300">
-              TracePay checks every source’s license <em className="not-italic text-white">before</em> the AI reads it, has an independent judge check every citation <em className="not-italic text-white">after</em>, and pays each contributor for the passages an answer really used — through PayPal, with a signed receipt.
+              An AI agent asks your library a question and pays a few cents. TracePay checks every source’s license <em className="not-italic text-white">before</em> the model reads it, has an independent judge check every citation <em className="not-italic text-white">after</em>, and pays each author for the passages the answer really used — through PayPal, with a signed receipt.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <button
@@ -155,6 +155,10 @@ export function WelcomePage() {
             A separate AI judge checks each sentence against the passages it cites. Only what holds up is paid — under the license terms frozen at that moment — and signed into the receipt with the judge’s exact model and instructions.
           </Step>
         </ol>
+
+        <p className="mt-6 rounded-2xl border border-line bg-white p-5 text-sm leading-relaxed text-muted">
+          <span className="font-semibold text-ink">Why PayPal.</span> Authors are individuals in many countries: PayPal Payouts pays each one by email, in 92 countries, even before they have an account — no one has to become a merchant to be owed money. And a buyer’s AI agent can pay on its own within the limits the buyer saved with PayPal Vault.
+        </p>
 
         {rt && (
           <div className="mt-8 rounded-2xl border border-line bg-canvas p-5 sm:p-6">
