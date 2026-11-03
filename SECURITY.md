@@ -27,4 +27,4 @@ data; please don't run load tests or automated scanners against it.
 - Passwords use scrypt; sessions and API keys are stored hashed; cookie requests need a
   same-origin check; rate limits are shared across instances.
 
-See the README's *Production readiness* section for details.
+See [Production readiness](docs/running.md#production-readiness) for details.
