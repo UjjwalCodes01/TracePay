@@ -181,7 +181,7 @@ function AnswerEarnings({ aiAllowed }: { aiAllowed: boolean }) {
           {aiAllowed && buyer && (
             <div className="mt-3">
               <Button size="sm" variant="secondary" onClick={() => void switchUser(buyer.id).then(() => navigate('/ask'))}>
-                See it happen: ask a question as the buyer <ArrowRight className="size-4" aria-hidden />
+                Ask a question as the buyer <ArrowRight className="size-4" aria-hidden />
               </Button>
             </div>
           )}
