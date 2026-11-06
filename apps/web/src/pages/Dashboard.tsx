@@ -265,65 +265,64 @@ function GuidedTour({ d }: { d: Dashboard }) {
   const buyer = users.find((u) => u.role === 'buyer');
   const contributor = users.find((u) => u.id === 'user_okafor' || u.id.endsWith('_user_okafor')) ?? users.find((u) => u.role === 'contributor');
   const report = d.latestArtifact;
-  const steps: Array<{ title: string; text: string; done: boolean; go: (() => Promise<void> | void) | null; hint?: string }> = [
-    { title: 'Create a report', text: 'The license check stops a source that isn’t licensed for sale; the AI assistant finds a replacement and asks you.', done: d.artifacts > 0, go: () => navigate('/studio') },
+  const goAs = (user: { id: string } | undefined, to: string) => (user ? async () => { await switchUser(user.id); navigate(to); } : null);
+  // The same path as the welcome page and the README: AI answers first, then the reports flow.
+  const steps: Array<{ group: 'answers' | 'reports'; title: string; text: string; done: boolean; go: (() => Promise<void> | void) | null; hint?: string }> = [
+    { group: 'answers', title: 'Ask a question that pays its sources', text: 'Watch the license check, the screen and the citation judge run, see who your cents paid, and verify the signed receipt in your browser.', done: false, go: goAs(buyer, '/ask') },
     {
-      title: 'Buy it with PayPal, as the buyer',
-      text: 'Pay in the PayPal sandbox; the server verifies the payment before the report unlocks.',
-      done: d.verifiedSales > 0,
-      go: report && buyer ? async () => { await switchUser(buyer.id); navigate(`/store/${report.id}`); } : null,
-      hint: 'Create a report first.',
-    },
-    { title: 'Pay the contributors', text: 'Approve the payment split; one PayPal Payouts batch pays everyone their share.', done: d.paidOutCents > 0, go: d.verifiedSales > 0 ? () => navigate('/settlements') : null, hint: 'Sell the report first.' },
-    { title: 'Check the signed receipt', text: 'One record from sources to license check to PayPal payment to payouts, with a signature anyone can verify.', done: false, go: report ? () => navigate(`/reports/${report.id}/receipt`) : null, hint: 'Create a report first.' },
-    { title: 'Ask a question that pays its sources', text: 'An AI answer pays each contributor for the passages it really used — and the live red team shows it can’t be gamed.', done: false, go: buyer ? async () => { await switchUser(buyer.id); navigate('/ask'); } : null },
-    { title: 'See a contributor’s earnings', text: 'What each sale and each AI answer paid them, and why.', done: false, go: contributor ? async () => { await switchUser(contributor.id); navigate('/earnings'); } : null },
-    {
-      title: 'Watch AI read a messy contract',
-      text: 'Gemini turns a real-world license agreement into exact terms, quoting the sentence behind each one; terms already published in RSL, the open AI-licensing standard, are read exactly. Nothing binds until both sides agree.',
+      group: 'answers',
+      title: 'License your work, as a contributor',
+      text: 'Find a website’s RSL license (the open AI-licensing standard) and read it exactly, or watch Gemini turn a messy contract into terms, quoting each sentence.',
       done: false,
-      go:
-        contributor && /user_okafor$/.test(contributor.id)
-          ? async () => {
-              await switchUser(contributor.id);
-              navigate(`/sources/${contributor.id.replace(/user_okafor$/, 'asset_okafor_notes')}/offer?sample=1`);
-            }
-          : null,
+      go: contributor && /user_okafor$/.test(contributor.id) ? goAs(contributor, `/sources/${contributor.id.replace(/user_okafor$/, 'asset_okafor_notes')}/offer?sample=1`) : null,
     },
+    { group: 'answers', title: 'See what an author earned', text: 'What each AI answer and each sale paid them, under which terms.', done: false, go: goAs(contributor, '/earnings') },
+    { group: 'answers', title: 'Pay the authors with PayPal', text: 'Every author owed is paid in one PayPal Payouts batch, and statuses are read back from PayPal.', done: false, go: () => navigate('/royalties') },
+    { group: 'reports', title: 'Create a report', text: 'The license check stops a source that isn’t licensed for sale; the AI assistant finds a replacement and asks you.', done: d.artifacts > 0, go: () => navigate('/studio') },
+    { group: 'reports', title: 'Buy it with PayPal, as the buyer', text: 'Pay in the PayPal sandbox; the server verifies the payment before the report unlocks.', done: d.verifiedSales > 0, go: report ? goAs(buyer, `/store/${report.id}`) : null, hint: 'Create a report first.' },
+    { group: 'reports', title: 'Pay the contributors', text: 'Approve the payment split; one PayPal Payouts batch pays everyone their share.', done: d.paidOutCents > 0, go: d.verifiedSales > 0 ? () => navigate('/settlements') : null, hint: 'Sell the report first.' },
+    { group: 'reports', title: 'Check the signed receipt', text: 'One record from sources to license check to PayPal payment to payouts, with a signature anyone can verify.', done: false, go: report ? () => navigate(`/reports/${report.id}/receipt`) : null, hint: 'Create a report first.' },
   ];
   return (
     <section aria-labelledby="tour" className="rounded-2xl border border-line bg-white p-5">
       <h2 id="tour" className="font-semibold">Guided demo · about 3 minutes</h2>
       <p className="mt-0.5 text-sm text-muted">Each step opens the right screen and switches role for you. PayPal sandbox only: no real money moves.</p>
-      <ol className="mt-4 grid gap-2 sm:grid-cols-2">
-        {steps.map((s, i) => (
-          <li key={s.title}>
-            <button
-              type="button"
-              disabled={!s.go || busy !== null}
-              title={!s.go ? s.hint : undefined}
-              onClick={async () => {
-                if (!s.go) return;
-                setBusy(i);
-                try {
-                  await s.go();
-                } finally {
-                  setBusy(null);
-                }
-              }}
-              className="flex h-full w-full items-start gap-3 rounded-xl border border-line p-3 text-left hover:border-ink disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-line"
-            >
-              <span className={clsx('mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold', s.done ? 'bg-verified-soft text-verified' : 'bg-slate-100 text-slate-700')}>
-                {s.done ? <CheckCircle2 className="size-4" aria-label="Done" /> : i + 1}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">{s.title}</span>
-                <span className="block text-xs text-muted">{!s.go && s.hint ? s.hint : s.text}</span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ol>
+      {(['answers', 'reports'] as const).map((group) => (
+        <div key={group}>
+          <h3 className="mt-4 text-xs font-medium uppercase tracking-wide text-muted">
+            {group === 'answers' ? 'AI answers that pay their sources — start here' : 'Also: licensed reports, sold with PayPal'}
+          </h3>
+          <ol className="mt-2 grid gap-2 sm:grid-cols-2">
+            {steps.map((s, i) => s.group !== group ? null : (
+              <li key={s.title}>
+                <button
+                  type="button"
+                  disabled={!s.go || busy !== null}
+                  title={!s.go ? s.hint : undefined}
+                  onClick={async () => {
+                    if (!s.go) return;
+                    setBusy(i);
+                    try {
+                      await s.go();
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                  className="flex h-full w-full items-start gap-3 rounded-xl border border-line p-3 text-left hover:border-ink disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-line"
+                >
+                  <span className={clsx('mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold', s.done ? 'bg-verified-soft text-verified' : 'bg-slate-100 text-slate-700')}>
+                    {s.done ? <CheckCircle2 className="size-4" aria-label="Done" /> : i + 1}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{s.title}</span>
+                    <span className="block text-xs text-muted">{!s.go && s.hint ? s.hint : s.text}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
     </section>
   );
 }

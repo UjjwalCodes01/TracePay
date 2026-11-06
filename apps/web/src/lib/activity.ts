@@ -1,4 +1,4 @@
-import { eventLabel, formatMoney } from './format';
+import { eventLabel, moneyOrNull as money } from './format';
 
 export type ActivityTone = 'good' | 'bad' | 'waiting' | 'neutral';
 
@@ -7,7 +7,6 @@ export interface Activity {
   tone: ActivityTone;
 }
 
-const money = (v: unknown) => (typeof v === 'number' ? formatMoney(v) : null);
 
 /** Turns a system event into one sentence a non-technical user understands. */
 export function describeEvent(eventType: string, payload: Record<string, unknown> = {}): Activity {

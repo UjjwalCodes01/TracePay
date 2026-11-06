@@ -7,7 +7,7 @@ import { Link, useParams } from 'react-router';
 import { describeFormula, type Economics } from '@tracepay/shared';
 import { Card, ErrorNote, EVIDENCE, EvidenceBadge, PageHeader, Spinner, statusLabel } from '../components/ui';
 import { api } from '../lib/api';
-import { economicsLabel, formatMoney } from '../lib/format';
+import { economicsLabel, moneyOrNull as money } from '../lib/format';
 import { useSession } from '../lib/session';
 import type { ProvEdge, ProvNode } from '../lib/types';
 
@@ -23,7 +23,6 @@ const COLUMNS: Array<{ kind: ProvNode['kind']; title: string; one: string }> = [
 const KIND_NAME = Object.fromEntries(COLUMNS.map((c) => [c.kind, c.one])) as Record<ProvNode['kind'], string>;
 
 const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
-const money = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? formatMoney(v) : null);
 
 /** The item's name as people should read it, from its data. */
 function displayLabel(n: ProvNode): string {

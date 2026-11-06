@@ -139,3 +139,6 @@ export function previewText(summary: string, title: string): string {
   const rest = plain.slice(title.length + 1).trim();
   return rest ? rest.replace(/^./, (c) => c.toUpperCase()) : plain;
 }
+
+/** Cents from untyped data (an event payload, a graph node) as money, or null if it isn't a number. */
+export const moneyOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? formatMoney(v) : null);

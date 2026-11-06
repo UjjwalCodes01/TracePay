@@ -6,6 +6,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { DraftInput, parseDollars } from '../components/DraftInput';
 import { useReceiptCheck, VerificationNote } from '../components/ReceiptCheck';
+import { SplitBar } from '../components/SplitBar';
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner } from '../components/ui';
 import { api, post } from '../lib/api';
 import { formatDate, formatMoney, timeAgo } from '../lib/format';
@@ -367,21 +368,14 @@ function AnswerCard({ answerId }: { answerId: string }) {
           <div className="mb-2 flex items-center gap-2 text-sm font-medium">
             <Wallet className="size-4" aria-hidden /> Where your {formatMoney(a.chargedCents)} went
           </div>
-          {a.chargedCents > 0 && (
-            // The same split at a glance: each contributor in their citation colour, then the library's fee.
-            <div
-              className="mb-3 flex h-2.5 overflow-hidden rounded-full bg-slate-100"
-              role="img"
-              aria-label={[...a.paid.map((p) => `${p.contributor} ${formatMoney(p.amountCents)}`), `library fee ${formatMoney(a.feeCents)}`].join(', ')}
-            >
-              {a.paid
-                .filter((p) => p.amountCents > 0)
-                .map((p) => (
-                  <div key={p.assetVersionId} style={{ width: `${(p.amountCents / a.chargedCents) * 100}%`, background: color(p.assetVersionId) }} />
-                ))}
-              <div className="bg-slate-400" style={{ width: `${(a.feeCents / a.chargedCents) * 100}%` }} />
-            </div>
-          )}
+          {/* The same split at a glance: each contributor in their citation colour, then the library's fee. */}
+          <SplitBar
+            className="mb-3 h-2.5"
+            segments={[
+              ...a.paid.map((p) => ({ key: p.assetVersionId, label: p.contributor, cents: p.amountCents, color: color(p.assetVersionId) })),
+              { key: 'fee', label: 'library fee', cents: a.feeCents, color: '#94a3b8' },
+            ]}
+          />
           <div className="overflow-x-auto rounded-lg border border-line">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs text-muted">
@@ -538,7 +532,7 @@ interface CitationCheckRecord {
 
 function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['receipt']>; answerId: string }) {
   const check = receipt.document.citationCheck as CitationCheckRecord | null | undefined;
-  const { verify, tamper } = useReceiptCheck(receipt);
+  const { verify, tamper } = useReceiptCheck();
   const download = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' }));
     const link = Object.assign(document.createElement('a'), { href: url, download: `tracepay-answer-${answerId}.json` });
@@ -552,11 +546,11 @@ function ReceiptRow({ receipt, answerId }: { receipt: NonNullable<AnswerView['re
         <FileSignature className="size-4" aria-hidden />
         <span className="font-medium">Signed receipt</span>
         <span className="ml-auto flex flex-wrap items-center gap-2" aria-live="polite">
-          <Button size="sm" variant="secondary" loading={verify.isPending} onClick={() => verify.mutate()}>
+          <Button size="sm" variant="secondary" loading={verify.isPending} onClick={() => verify.mutate(receipt)}>
             Verify
           </Button>
           {verify.data && (
-            <Button size="sm" variant="secondary" loading={tamper.isPending} onClick={() => tamper.mutate()}>
+            <Button size="sm" variant="secondary" loading={tamper.isPending} onClick={() => tamper.mutate(receipt)}>
               Change 1¢ and check
             </Button>
           )}

@@ -12,10 +12,10 @@ export interface SignedDocument {
  * Checking a receipt's signature in the browser, and the same check on a copy with one cent
  * changed — so anyone can see that a receipt can't be edited without it showing.
  */
-export function useReceiptCheck(receipt: SignedDocument) {
-  const verify = useMutation({ mutationFn: () => verifyReceipt(receipt) });
+export function useReceiptCheck() {
+  const verify = useMutation({ mutationFn: (receipt: SignedDocument) => verifyReceipt(receipt) });
   const tamper = useMutation({
-    mutationFn: () => {
+    mutationFn: (receipt: SignedDocument) => {
       const charged = Number(receipt.document.chargedCents ?? 0);
       return verifyReceipt({ ...receipt, document: { ...receipt.document, chargedCents: charged + 1 } });
     },

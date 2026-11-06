@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, BadgeCheck, Code2, FileSignature, Loader2, MessageSquareQuote, ScrollText, ShieldCheck, Store, Wallet } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { SplitBar } from '../components/SplitBar';
 import { api, markWelcomed } from '../lib/api';
 import { useSession } from '../lib/session';
 
@@ -20,9 +21,9 @@ interface Integrity {
 
 /** The example answer: real passages from the demo library, at their real per-citation rates. */
 const SPLIT = [
-  { who: 'Northwind Data Co.', what: 'cited for “up 61% year over year”', cents: 3, color: 'bg-teal-500' },
-  { who: 'Lumen Collective', what: 'cited for “71% use one at least weekly”', cents: 1, color: 'bg-sky-400' },
-  { who: 'The library (fee)', what: 'answering the question', cents: 2, color: 'bg-slate-500' },
+  { who: 'Northwind Data Co.', what: 'cited for “up 61% year over year”', cents: 3, color: '#14b8a6' },
+  { who: 'Lumen Collective', what: 'cited for “71% use one at least weekly”', cents: 1, color: '#38bdf8' },
+  { who: 'The library (fee)', what: 'answering the question', cents: 2, color: '#64748b' },
 ];
 
 export function WelcomePage() {
@@ -114,15 +115,11 @@ export function WelcomePage() {
                 <span className="font-medium">Where your {total}¢ goes</span>
                 <span className="text-xs text-muted">never more than your limit</span>
               </div>
-              <div className="flex h-3 overflow-hidden rounded-full" role="img" aria-label={SPLIT.map((s) => `${s.who} ${s.cents} cents`).join(', ')}>
-                {SPLIT.map((s) => (
-                  <div key={s.who} className={s.color} style={{ width: `${(s.cents / total) * 100}%` }} />
-                ))}
-              </div>
+              <SplitBar className="h-3" segments={SPLIT.map((s) => ({ key: s.who, label: s.who, cents: s.cents, color: s.color }))} />
               <ul className="mt-3 space-y-2 text-sm">
                 {SPLIT.map((s) => (
                   <li key={s.who} className="flex items-start gap-2.5">
-                    <span className={`mt-1.5 size-2.5 shrink-0 rounded-sm ${s.color}`} aria-hidden />
+                    <span className="mt-1.5 size-2.5 shrink-0 rounded-sm" style={{ background: s.color }} aria-hidden />
                     <span className="min-w-0 flex-1">
                       <span className="font-medium">{s.who}</span> <span className="text-muted">— {s.what}</span>
                     </span>
@@ -169,9 +166,9 @@ export function WelcomePage() {
               </span>
             </div>
             <dl className="mt-4 grid gap-4 sm:grid-cols-3">
-              <Stat label="Planted instructions withheld" s={rt.screenAttacks} />
-              <Stat label="Unpaid-for citations refused" s={rt.judgeAttacks} />
-              <Stat label="Real published text left alone" s={rt.screenControls} />
+              <ScoreStat label="Planted instructions withheld" s={rt.screenAttacks} />
+              <ScoreStat label="Unpaid-for citations refused" s={rt.judgeAttacks} />
+              <ScoreStat label="Real published text left alone" s={rt.screenControls} />
             </dl>
           </div>
         )}
@@ -180,7 +177,7 @@ export function WelcomePage() {
       {/* Roles */}
       <section className="border-t border-line bg-canvas">
         <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
-          <h2 className="text-2xl font-semibold tracking-tight">Try each side — about three minutes</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">Or start from any side</h2>
           <div className="mt-8 grid gap-4 md:grid-cols-3">
             <RoleCard title="Buyer" text="Ask a question. See which licensed passages the answer used, who your cents paid and why, and verify the receipt. Or let a shopping assistant buy a report within a spending limit you save with PayPal." cta="Ask the library" busy={going === 'buyer'} onClick={() => void go('buyer', '/ask')} />
             <RoleCard title="Publisher" text="Build a report to sell. The license check blocks a source that isn’t licensed for sale; the AI assistant proposes a licensed replacement and asks you." cta="Create a report" busy={going === 'publisher'} onClick={() => void go('publisher', '/dashboard')} />
@@ -222,7 +219,7 @@ function Step({ n, title, icon, children }: { n: number; title: string; icon: Re
   );
 }
 
-function Stat({ label, s }: { label: string; s: RedTeamScore }) {
+function ScoreStat({ label, s }: { label: string; s: RedTeamScore }) {
   return (
     <div>
       <dt className="text-sm text-muted">{label}</dt>
