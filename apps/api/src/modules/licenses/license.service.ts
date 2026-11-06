@@ -1,6 +1,5 @@
 import { LicenseTermsSchema, type LicenseTerms } from '@tracepay/shared';
-import type { Prisma } from '../../generated/prisma/client';
-import type { Db, Tx } from '../../db';
+import { json, type Db, type Tx } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
 import { todayUtc } from '../builds/preflight.service';
@@ -19,7 +18,6 @@ export class LicenseError extends Error {
   }
 }
 
-const json = (v: unknown) => v as Prisma.InputJsonValue;
 const termsHash = (t: LicenseTerms) => sha256Hex(canonicalJson(t));
 
 async function nextVersion(tx: Tx, assetId: string, licenseeId: string): Promise<number> {

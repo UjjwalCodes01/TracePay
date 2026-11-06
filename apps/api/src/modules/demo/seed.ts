@@ -4,17 +4,9 @@ import type { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
 import { appendAudit } from '../audit/audit-log';
-import { chunkContent, DEMO_ASSETS, DEMO_IDS, DEMO_USERS } from './world';
+import { chunkContent, DEMO_ASSETS, DEMO_FIXTURE_DIR as FIXTURE_DIR, DEMO_IDS, DEMO_USERS, payeeEmails } from './world';
 
-const FIXTURE_DIR = process.env.DEMO_FIXTURE_DIR ?? path.resolve(process.cwd(), 'fixtures/demo-assets');
 
-/** Sandbox personal accounts that receive demo payouts, in payeeSlot order. */
-function payeeEmails(): string[] {
-  return (process.env.DEMO_PAYEE_EMAILS ?? '')
-    .split(',')
-    .map((e) => e.trim())
-    .filter(Boolean);
-}
 
 /** Every table, children first, so TRUNCATE order never matters with CASCADE anyway. */
 const TABLES = [

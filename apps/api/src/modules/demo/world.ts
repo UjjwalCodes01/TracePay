@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { LicenseTerms } from '@tracepay/shared';
 
 /**
@@ -291,3 +292,14 @@ export function demoRoleOf(id: string): DemoUser['role'] | null {
   return DEMO_BASE_IDS.has(base) ? (ROLE_OF.get(base) ?? null) : null;
 }
 export const isDemoPersona = (id: string) => demoRoleOf(id) !== null;
+
+/** Sandbox personal accounts that receive demo payouts, in payeeSlot order (DEMO_PAYEE_EMAILS). */
+export function payeeEmails(): string[] {
+  return (process.env.DEMO_PAYEE_EMAILS ?? '')
+    .split(',')
+    .map((e) => e.trim())
+    .filter(Boolean);
+}
+
+/** Where the demo library's source texts live. */
+export const DEMO_FIXTURE_DIR = process.env.DEMO_FIXTURE_DIR ?? path.resolve(process.cwd(), 'fixtures/demo-assets');

@@ -4,14 +4,8 @@ import { Prisma } from '../../generated/prisma/client';
 import type { Db } from '../../db';
 import { appendAudit, lockAuditChain } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
-import { chunkContent, DEMO_ASSETS, DEMO_IDS, DEMO_USERS, inWorld, worldEmail } from './world';
+import { chunkContent, DEMO_ASSETS, DEMO_FIXTURE_DIR as FIXTURE_DIR, DEMO_IDS, DEMO_USERS, inWorld, payeeEmails, worldEmail } from './world';
 
-const FIXTURE_DIR = process.env.DEMO_FIXTURE_DIR ?? path.resolve(process.cwd(), 'fixtures/demo-assets');
-const payeeEmails = () =>
-  (process.env.DEMO_PAYEE_EMAILS ?? '')
-    .split(',')
-    .map((e) => e.trim())
-    .filter(Boolean);
 
 /** Starting answer credit for the demo buyer, labeled as such in their ledger. */
 export const DEMO_CREDIT_CENTS = 200;

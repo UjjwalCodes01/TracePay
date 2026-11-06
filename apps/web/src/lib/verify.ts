@@ -1,3 +1,4 @@
+import { canonicalJson } from '@tracepay/shared';
 import { post } from './api';
 
 /**
@@ -12,25 +13,6 @@ export interface Verification {
   where: 'browser' | 'server';
   /** SHA-256 of the public key (SPKI), grouped for reading aloud: "3f2a 9c01 …". */
   fingerprint: string | null;
-}
-
-/** The exact bytes TracePay signs: JSON with object keys sorted, undefined values left out. */
-export function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortKeys(value));
-}
-
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value !== null && typeof value === 'object') {
-    const o = value as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.keys(o)
-        .sort()
-        .filter((k) => o[k] !== undefined)
-        .map((k) => [k, sortKeys(o[k])]),
-    );
-  }
-  return value;
 }
 
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));

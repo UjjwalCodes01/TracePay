@@ -4,6 +4,8 @@ import { serverEnv } from './config/env';
 import { logger } from './http/logger';
 
 export type Db = PrismaClient;
+/** A value stored in a JSON column, as Prisma types it. */
+export const json = (v: unknown) => v as Prisma.InputJsonValue;
 /** A transaction client; the root client is also accepted where no transaction is needed. */
 export type Tx = Prisma.TransactionClient;
 

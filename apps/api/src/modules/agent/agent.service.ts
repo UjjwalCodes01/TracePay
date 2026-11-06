@@ -2,7 +2,7 @@ import type { PayPalGateway } from '../../integrations/paypal/gateway';
 import { payWithMandate } from './mandates.service';
 import { formatMoney, type BuildIntent } from '@tracepay/shared';
 import { Prisma } from '../../generated/prisma/client';
-import type { Db, Tx } from '../../db';
+import { json, type Db, type Tx } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import type { ReportWriter } from '../generation/writers';
 import type { AgentMessage, AgentPlanner } from './planners';
@@ -12,7 +12,6 @@ import { executeTool, type AgentPolicy, type PendingApproval, type ToolContext }
 
 export const MAX_AGENT_TURNS = 14;
 
-const json = (v: unknown) => v as Prisma.InputJsonValue;
 
 /** What a paused run waits on: a source replacement (publisher) or a purchase (buyer). */
 type Pending = (PendingApproval | PurchaseApproval) & {

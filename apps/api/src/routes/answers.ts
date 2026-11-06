@@ -10,8 +10,8 @@ import { latestRedTeam } from '../modules/answers/red-team';
 import { contributorAnswerEarnings, refreshRoyaltyPayout, royaltySummary, sendRoyaltyPayout, submitRoyaltyPayout } from '../modules/answers/royalties.service';
 import { HttpError } from '../http/errors';
 import { progressReporter, PROGRESS_ID, readProgress } from '../modules/answers/progress';
+import { param } from '../http/params';
 
-const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 
 export const AskBody = z.object({
   libraryId: z.string().min(1).max(64),

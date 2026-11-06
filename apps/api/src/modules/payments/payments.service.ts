@@ -1,7 +1,6 @@
 import { centsToDecimal, decimalToCents } from '@tracepay/shared';
 import { ZodError } from 'zod';
-import type { Prisma } from '../../generated/prisma/client';
-import type { Db, Tx } from '../../db';
+import { json, type Db, type Tx } from '../../db';
 import { PayPalApiError } from '../../integrations/paypal/client';
 import type { PayPalGateway } from '../../integrations/paypal/gateway';
 import type { Capture, Order } from '../../integrations/paypal/types';
@@ -22,7 +21,6 @@ export class PaymentError extends Error {
   }
 }
 
-const json = (v: unknown) => v as Prisma.InputJsonValue;
 
 export interface CheckoutStarted {
   saleId: string;

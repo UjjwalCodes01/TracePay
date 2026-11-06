@@ -1,6 +1,6 @@
 import { sameWorld } from '../modules/demo/world';
 import { LicenseTermsSchema } from '@tracepay/shared';
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import type { AppDeps } from '../app';
@@ -16,8 +16,8 @@ import { acceptOffer, declineOffer, declineRequest, offerLicense, requestLicense
 import { limitStore } from '../http/rate-store';
 import { appendAudit } from '../modules/audit/audit-log';
 import { logIn } from '../modules/auth/auth.service';
+import { param } from '../http/params';
 
-const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 const Reason = z.object({ reason: z.string().max(500).optional().nullable() });
 
 const GRANT_SELECT = {

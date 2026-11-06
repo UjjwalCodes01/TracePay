@@ -11,6 +11,7 @@ import { AgentStateError, cancelRun, createRunWithinCap, createShopperRunWithinC
 import { isDemoBuyer } from '../modules/answers/credits.service';
 import { explainPreflight } from '../modules/builds/explain';
 import { activateMandate, currentMandate, MANDATE_MAX_DAYS, MANDATE_MAX_TOTAL_CENTS, MandateError, revokeMandate, startMandate } from '../modules/agent/mandates.service';
+import { param } from '../http/params';
 
 const MAX_ACTIVE_RUNS = 2;
 
@@ -28,7 +29,6 @@ const StartBody = z.object({
   autoReplace: z.boolean().default(false),
 });
 
-const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 
 export function agentRoutes({ db, planner, writer, config, paypal }: AppDeps) {
   const r = Router();

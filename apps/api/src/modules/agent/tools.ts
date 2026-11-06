@@ -8,6 +8,7 @@ import { failedRules, runPreflight } from '../license-compiler/compiler';
 import { generateArtifact } from '../generation/generation.service';
 import type { ReportWriter } from '../generation/writers';
 import type { CitationReport } from '../generation/citations';
+import { asString, obj, str, ToolInputError } from './tool-args';
 
 export interface AgentPolicy {
   /** Publisher pre-authorised the agent to swap in a compatible replacement without asking. */
@@ -44,8 +45,6 @@ export interface ToolDeclaration {
   parameters: Record<string, unknown>;
 }
 
-const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required });
-const str = (description: string) => ({ type: 'string', description });
 
 /** The only capabilities the agent has. None of them can move money or edit licenses. */
 export const TOOL_DECLARATIONS: ToolDeclaration[] = [
@@ -113,13 +112,6 @@ const summarizeLicense = (e: CatalogEntry) => {
   };
 };
 
-class ToolInputError extends Error {}
-
-const asString = (args: Record<string, unknown>, key: string): string => {
-  const v = args[key];
-  if (typeof v !== 'string' || !v) throw new ToolInputError(`"${key}" must be a non-empty string.`);
-  return v;
-};
 
 /** The set the agent is currently allowed to preflight. */
 export function allowedSources(ctx: ToolContext): Set<string> {

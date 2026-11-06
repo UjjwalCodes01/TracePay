@@ -8,6 +8,7 @@ import type { ArtifactContent } from '../generation/generation.service';
 import { checkSaleRights } from '../sales/rights.service';
 import type { AgentMessage } from './planners';
 import type { ToolDeclaration } from './tools';
+import { asString, obj, str, ToolInputError } from './tool-args';
 
 /**
  * The Shopping Assistant: it works for a BUYER. It can search the store, check a
@@ -51,8 +52,6 @@ export type ShopperToolResult =
   | { kind: 'result'; response: Record<string, unknown> }
   | { kind: 'pause'; response: Record<string, unknown>; approval: PurchaseApproval };
 
-const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required });
-const str = (description: string) => ({ type: 'string', description });
 
 /** The only capabilities the assistant has. None of them moves money. */
 export const SHOPPER_TOOL_DECLARATIONS: ToolDeclaration[] = [
@@ -107,12 +106,6 @@ const summaryOf = (content: ArtifactContent) => content.sections.find((s) => (s 
 const spent = (ctx: ShopperContext) => ctx.purchases.reduce((n, p) => n + p.amountCents, 0);
 export const remainingBudget = (ctx: ShopperContext) => Math.max(0, ctx.policy.budgetCents - spent(ctx));
 
-class ToolInputError extends Error {}
-const asString = (args: Record<string, unknown>, key: string): string => {
-  const v = args[key];
-  if (typeof v !== 'string' || !v.trim()) throw new ToolInputError(`"${key}" must be a non-empty string.`);
-  return v.trim();
-};
 
 async function owned(ctx: ShopperContext, artifactId: string) {
   if (ctx.policy.repeatPurchases) return ctx.purchases.some((p) => p.artifactId === artifactId);

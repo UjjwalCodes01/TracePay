@@ -17,6 +17,7 @@ import { generateArtifact, type ArtifactContent } from '../modules/generation/ge
 import { getProvenance, type ProvenanceGraph } from '../modules/provenance/provenance.service';
 import type { Viewer } from '../modules/audit/receipt.service';
 import { artifactAccess, ownedBuild, publisherScope, requireArtifactAccess, type ArtifactAccess } from '../http/access';
+import { param } from '../http/params';
 
 const PreflightBody = z.object({
   intent: BuildIntentSchema,
@@ -30,7 +31,6 @@ const VerifyReceiptBody = z.object({
   publicKeyPem: z.string().max(4000).optional(),
 });
 
-const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 
 export function buildRoutes({ db, signingKeys, writer }: AppDeps) {
   const r = Router();

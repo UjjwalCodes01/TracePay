@@ -1,6 +1,5 @@
 import type { BuildIntent, PreflightReport } from '@tracepay/shared';
-import type { Prisma } from '../../generated/prisma/client';
-import type { Tx } from '../../db';
+import { json, type Tx } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
 import { resolveSources } from '../catalog/catalog.service';
@@ -24,7 +23,6 @@ export interface PreflightOutcome {
   snapshotHash: string;
 }
 
-const json = (v: unknown) => v as Prisma.InputJsonValue;
 
 /**
  * Runs the license compiler and records the attempt — passing or blocked — as

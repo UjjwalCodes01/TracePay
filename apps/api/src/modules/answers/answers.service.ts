@@ -2,7 +2,7 @@ import { logger } from '../../http/logger';
 import { answersEnv } from '../../config/env';
 import { formatMoney } from '@tracepay/shared';
 import type { Prisma } from '../../generated/prisma/client';
-import type { Db } from '../../db';
+import { json, type Db } from '../../db';
 import { appendAudit, lockAuditChain } from '../audit/audit-log';
 import { demoRoleOf, isDemoPersona, sameWorld, worldOf } from '../demo/world';
 import { sha256Hex } from '../audit/hash-chain';
@@ -35,7 +35,6 @@ export const answerFeeCents = () => answersEnv().ANSWER_FEE_CENTS ?? 2;
 const PASSAGES_PER_SOURCE = MAX_PAID_PASSAGES_PER_SOURCE;
 
 
-const json = (v: unknown) => v as Prisma.InputJsonValue;
 
 /** The model gets this long; well inside the recovery sweep's window, so a hold is never stranded. */
 export const WRITER_TIMEOUT_MS = 60_000;

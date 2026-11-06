@@ -1,6 +1,5 @@
 import type { BuildIntent, PreflightReport } from '@tracepay/shared';
-import type { Prisma } from '../../generated/prisma/client';
-import type { Db } from '../../db';
+import { json, type Db } from '../../db';
 import { appendAudit } from '../audit/audit-log';
 import { canonicalJson, sha256Hex } from '../audit/hash-chain';
 import { validateCitations, type CitationReport, type DraftSection } from './citations';
@@ -34,7 +33,6 @@ export interface GenerationResult {
   fromFixture: boolean;
 }
 
-const json = (v: unknown) => v as Prisma.InputJsonValue;
 
 /**
  * Generates the deliverable for a build that passed preflight.

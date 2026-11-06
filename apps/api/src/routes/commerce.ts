@@ -1,4 +1,4 @@
-import { Router, type Request, type RequestHandler } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import type { AppDeps } from '../app';
 import { currentUser, requireRole } from '../http/auth';
@@ -9,8 +9,8 @@ import { isDemoBuyer } from '../modules/answers/credits.service';
 import { captureSale, startCheckout } from '../modules/payments/payments.service';
 import { handlePayPalWebhook, readVerificationHeaders } from '../modules/payments/webhooks.service';
 import { approveSettlement, recalculateSettlement, refreshPayouts, retryFailedPayouts, submitPayouts } from '../modules/settlements/settlement.service';
+import { param } from '../http/params';
 
-const param = (req: Request, name: string) => z.string().min(1).max(64).parse(req.params[name]);
 
 export function commerceRoutes({ db, paypal, config }: AppDeps) {
   const r = Router();

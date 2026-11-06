@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { LicenseTermsSchema, type LicenseTerms } from '@tracepay/shared';
 import { generateStructured } from '../../integrations/ai/vertex';
 import { looksLikeRsl, readRsl } from './rsl';
+import { clip } from '../answers/support';
 
 /**
  * License-term extraction. Turns a plain-language license into DRAFT
@@ -75,7 +76,6 @@ function sentencesOf(text: string): string[] {
     .filter(Boolean);
 }
 
-const clip = (s: string) => (s.length > 280 ? `${s.slice(0, 277)}…` : s);
 const normalize = (s: string) => s.toLowerCase().replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim();
 
 // ---------------------------------------------------------------- rule-based extractor
@@ -91,7 +91,7 @@ export function extractWithRules(text: string, today: string): ExtractionResult 
   const evidence: FieldEvidence[] = [];
   const warnings: string[] = [];
   const ev = (field: TermField, quote: string | null, confidence: FieldEvidence['confidence'], note?: string) =>
-    evidence.push({ field, quote: quote ? clip(quote) : null, confidence, ...(note ? { note } : {}) });
+    evidence.push({ field, quote: quote ? clip(quote, 280) : null, confidence, ...(note ? { note } : {}) });
 
   // Commercial use & purposes
   const internalOnly = find(/internal (?:research|use)[^.]*\bonly\b|\bonly\b[^.]*internal|no commercial use|non-commercial|not (?:be )?used commercially/i);
@@ -323,9 +323,9 @@ export async function extractWithVertex(text: string, today: string): Promise<Ex
   const doc = normalize(text);
   const evidence: FieldEvidence[] = data.evidence.map((e) => {
     if (e.quote && !doc.includes(normalize(e.quote).replace(/…$/, ''))) {
-      return { field: e.field, quote: clip(e.quote), confidence: 'low', note: 'This quote was not found in the document. Check this field carefully.' };
+      return { field: e.field, quote: clip(e.quote, 280), confidence: 'low', note: 'This quote was not found in the document. Check this field carefully.' };
     }
-    return { field: e.field, quote: e.quote ? clip(e.quote) : null, confidence: e.confidence };
+    return { field: e.field, quote: e.quote ? clip(e.quote, 280) : null, confidence: e.confidence };
   });
   const unverified = evidence.filter((e) => e.note?.startsWith('This quote was not found')).length;
   const warnings = [...data.warnings];
