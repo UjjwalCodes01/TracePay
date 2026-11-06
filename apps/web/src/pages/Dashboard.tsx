@@ -18,7 +18,7 @@ interface NextStep {
   cta?: { to: string; label: string };
 }
 
-function nextStep(d: Dashboard, openIssues: number): NextStep {
+function nextStep(d: Dashboard, openIssues: number, authorsOwedCents: number): NextStep {
   // Open reconciliation issues are what still needs a person. A settlement stays marked as an
   // exception after a refund even once it's been handled, so that count alone mustn't block the next steps.
   if (openIssues > 0)
@@ -37,6 +37,8 @@ function nextStep(d: Dashboard, openIssues: number): NextStep {
     return { tone: 'action', title: 'Send the approved payments', text: 'One click sends every contributor their share through PayPal.', cta: { to: '/settlements', label: 'Pay contributors' } };
   if (d.payoutsInProgress > 0)
     return { tone: 'waiting', title: 'Payments are on their way', text: 'PayPal is delivering the contributor payments. Check back to confirm everyone received their money.', cta: { to: '/settlements', label: 'Check status' } };
+  if (authorsOwedCents > 0)
+    return { tone: 'action', title: `AI answers earned your authors ${formatMoney(authorsOwedCents)}`, text: 'Every passage an answer verifiably used is owed to its author. Pay them all in one PayPal Payouts batch.', cta: { to: '/royalties', label: 'Pay the authors' } };
   if (d.artifacts === 0)
     return { tone: 'action', title: 'Create your first report', text: 'Pick the sources you’ve licensed and describe the report. TracePay checks you’re allowed to sell it before anything is written.', cta: { to: '/studio', label: 'Create a report' } };
   if (d.verifiedSales === 0)
@@ -79,7 +81,7 @@ export function DashboardPage() {
   if (!q.data) return <Spinner />;
   const d = q.data;
   const demo = authMethod === 'demo' && !!config?.demoMode;
-  const next = nextStep(d, recon.data?.open_issues ?? 0);
+  const next = nextStep(d, recon.data?.open_issues ?? 0, (royalties.data?.accrued ?? []).reduce((n, a) => n + a.amountCents, 0));
   const style = NEXT_STYLE[next.tone];
 
   const journey = [

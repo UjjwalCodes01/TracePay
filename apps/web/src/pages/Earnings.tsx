@@ -1,9 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import type { Economics } from '@tracepay/shared';
 import { lazy, Suspense } from 'react';
-import { Badge, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge, statusLabel, statusTone } from '../components/ui';
+import { ArrowRight } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { Badge, Button, Card, Empty, ErrorNote, PageHeader, Spinner, Stat, StatusBadge, statusLabel, statusTone } from '../components/ui';
 import { api } from '../lib/api';
 import { economicsLabel, formatMoney, localDate } from '../lib/format';
+import { useSession } from '../lib/session';
 import type { PayoutItem } from '../lib/types';
 
 // AG Grid loads only on this page.
@@ -141,6 +144,10 @@ const CREDIT_TEXT: Record<AnswerEarningsData['credits'][number]['status'], { tex
 
 /** Pay-per-citation: what AI answers that relied on your work have earned you. */
 function AnswerEarnings({ aiAllowed }: { aiAllowed: boolean }) {
+  const { users, switchUser, config, authMethod } = useSession();
+  const navigate = useNavigate();
+  // In the demo, one click shows this number move: ask a question as the buyer.
+  const buyer = config?.demoMode && authMethod === 'demo' ? users.find((u) => u.role === 'buyer') : undefined;
   const q = useQuery({ queryKey: ['answer-earnings'], queryFn: () => api<AnswerEarningsData>('/contributor/answer-earnings') });
   if (q.isPending) {
     return (
@@ -171,6 +178,13 @@ function AnswerEarnings({ aiAllowed }: { aiAllowed: boolean }) {
           {aiAllowed
             ? 'No AI answer has cited your work yet. Each time one does, you earn your per-passage rate.'
             : 'No AI answer has cited your work yet. Allow AI answers in your license terms to start earning each time an answer cites you.'}
+          {aiAllowed && buyer && (
+            <div className="mt-3">
+              <Button size="sm" variant="secondary" onClick={() => void switchUser(buyer.id).then(() => navigate('/ask'))}>
+                See it happen: ask a question as the buyer <ArrowRight className="size-4" aria-hidden />
+              </Button>
+            </div>
+          )}
         </Empty>
       ) : (
         <ul className="divide-y divide-line text-sm">
