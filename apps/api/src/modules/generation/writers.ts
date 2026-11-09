@@ -6,6 +6,7 @@ import { ModelSupportJudge, type SupportJudge } from '../answers/support';
 import { ModelInstructionScreen, type InstructionScreen } from '../sources/screening';
 import type { CitationError, DraftSection } from './citations';
 import type { RetrievedPassage } from './retrieval';
+import { splitCitationGroups } from '@tracepay/shared';
 
 export interface WriterInput {
   intent: BuildIntent;
@@ -67,9 +68,9 @@ export class VertexReportWriter implements ReportWriter {
       model,
       fromFixture: false,
       sections: [
-        { key: 'summary', heading: 'Summary', body: data.summary, requiresCitation: false },
-        ...data.findings.map((f, i) => ({ key: `finding_${i + 1}`, heading: f.heading, body: f.body, requiresCitation: true })),
-        { key: 'outlook', heading: 'Outlook', body: data.outlook, requiresCitation: false },
+        { key: 'summary', heading: 'Summary', body: splitCitationGroups(data.summary), requiresCitation: false },
+        ...data.findings.map((f, i) => ({ key: `finding_${i + 1}`, heading: f.heading, body: splitCitationGroups(f.body), requiresCitation: true })),
+        { key: 'outlook', heading: 'Outlook', body: splitCitationGroups(data.outlook), requiresCitation: false },
       ],
     };
   }
@@ -201,7 +202,7 @@ export class VertexAnswerWriter implements AnswerWriter {
       temperature: 0.2,
       thinking: 'low',
     });
-    return { covered: data.covered, text: data.answer.trim(), model, fromFixture: false };
+    return { covered: data.covered, text: splitCitationGroups(data.answer.trim()), model, fromFixture: false };
   }
 }
 

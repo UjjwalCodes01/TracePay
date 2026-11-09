@@ -12,6 +12,7 @@ import { api, post } from '../lib/api';
 import { formatDate, formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
 import { paypalOptions } from '../lib/paypal';
+import { splitCitationGroups } from '@tracepay/shared';
 
 interface Library {
   id: string;
@@ -290,7 +291,7 @@ function AnswerCard({ answerId }: { answerId: string }) {
   const handle = new Map(a.citations.map((c) => [c.handle, c]));
   const handlesOf = (assetVersionId: string) => [...new Set(a.citations.filter((c) => c.assetVersionId === assetVersionId && c.paid).map((c) => c.handle))];
   const unpaid = a.notPaid.unsupported + a.notPaid.repeated + a.notPaid.overCap;
-  const parts = (a.text ?? '').split(/(\[C\d+\])/);
+  const parts = splitCitationGroups(a.text ?? '').split(/(\[C\d+\])/);
   // The k-th time a handle appears in the text is its k-th citation (each has its own verdict and reason).
   const citationAt = new Map<number, AnswerView['citations'][number]>();
   const seenCount = new Map<string, number>();

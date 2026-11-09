@@ -134,7 +134,7 @@ export function formatDate(iso: string | Date | null | undefined): string {
  * next to the sources.
  */
 export function previewText(summary: string, title: string): string {
-  const plain = summary.replace(/\s*\[C\d+\]/g, '');
+  const plain = summary.replace(/\s*\[C\d+(?:\s*[,;]\s*C\d+)*\]/g, '');
   if (!plain.startsWith(`${title}:`)) return plain;
   const rest = plain.slice(title.length + 1).trim();
   return rest ? rest.replace(/^./, (c) => c.toUpperCase()) : plain;

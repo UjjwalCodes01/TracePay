@@ -3,6 +3,7 @@ import { Fragment, useState } from 'react';
 import { api } from '../lib/api';
 import type { ArtifactFull, ProvNode } from '../lib/types';
 import { Badge } from './ui';
+import { splitCitationGroups } from '@tracepay/shared';
 
 /** Renders report sections with [Cn] markers as clickable citation chips. */
 export function ReportBody({ artifact }: { artifact: ArtifactFull }) {
@@ -24,7 +25,7 @@ export function ReportBody({ artifact }: { artifact: ArtifactFull }) {
         <section key={s.key}>
           <h3 className="mb-1.5 font-semibold">{s.heading}</h3>
           <p className="leading-relaxed text-slate-700">
-            {s.body.split(/(\[C\d+\])/g).map((part, i) => {
+            {splitCitationGroups(s.body).split(/(\[C\d+\])/g).map((part, i) => {
               const m = /^\[(C\d+)\]$/.exec(part);
               if (!m) return <Fragment key={i}>{part}</Fragment>;
               const handle = m[1]!;
