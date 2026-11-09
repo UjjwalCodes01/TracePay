@@ -13,7 +13,7 @@ You'll get an acknowledgement within 3 working days and a fix or plan within 14.
 In scope: the API (`apps/api`), the web app (`apps/web`), the MCP server
 (`packages/mcp`) and the deployment configuration in this repository.
 
-Out of scope: PayPal, Google (Gemini/Vertex AI), Render, Neon and Vercel themselves —
+Out of scope: PayPal, Google (Gemini/Vertex AI, Cloud Run) and Neon themselves —
 report those to the vendor. The hosted demo runs on the **PayPal sandbox** with fictional
 data; please don't run load tests or automated scanners against it.
 

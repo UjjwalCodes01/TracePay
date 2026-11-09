@@ -4,7 +4,7 @@ Sell answers to AI agents, one question at a time, and pay every author each ans
 
 ![CI](https://github.com/UjjwalCodes01/TracePay/actions/workflows/ci.yml/badge.svg)
 
-**Try it:** [trace-pay-umber.vercel.app](https://trace-pay-umber.vercel.app). No sign-up: you get your own private copy of the demo. PayPal sandbox buyer (test money only): `tp-buyer-8fjk@personal.example.com` / `2I2oZGc!`, or pay with a [sandbox test card](https://developer.paypal.com/tools/sandbox/card-testing/). The API is on a free plan, so the first visit can take up to a minute to wake it.
+**Try it:** [tracepay-886254253714.us-east5.run.app](https://tracepay-886254253714.us-east5.run.app). No sign-up: you get your own private copy of the demo. PayPal sandbox buyer (test money only): `tp-buyer-8fjk@personal.example.com` / `2I2oZGc!`, or pay with a [sandbox test card](https://developer.paypal.com/tools/sandbox/card-testing/). It runs on Google Cloud Run with an instance always warm, so it answers at once.
 
 Built for the *Build What's Next with PayPal and AI* hackathon. Everything runs on the PayPal sandbox, and the demo library is made up, apart from five real arXiv papers used under their real licenses.
 
@@ -68,7 +68,7 @@ The same license check powers a second product: reports sold in a store with Pay
 - [How it works](docs/how-it-works.md): the answer pipeline, the reports flow, real licenses, how Gemini is used, architecture.
 - [PayPal](docs/paypal.md): every PayPal API used, reconciliation, fees.
 - [Running it](docs/running.md): local setup, environment, deployment, the platform API and MCP server, production readiness.
-- [Tests](docs/testing.md): 393 API tests against real Postgres and an in-memory PayPal that enforces PayPal's rules, browser tests, live-AI tests.
+- [Tests](docs/testing.md): 400 API tests against real Postgres and an in-memory PayPal that enforces PayPal's rules, browser tests, live-AI tests.
 
 TracePay enforces recorded, agreed license terms. It doesn't establish legal ownership of source material and isn't legal advice.
 

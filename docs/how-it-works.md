@@ -93,13 +93,13 @@ When no Gemini model is configured (neither `GEMINI_API_KEY` nor Vertex AI), Tra
 
 ```mermaid
 flowchart LR
-  subgraph Web["apps/web — React · Vercel"]
+  subgraph Web["apps/web — React (served by the API)"]
     Studio[Create a report + assistant trace]
     Store[Report store · PayPal Buttons]
     Console[Pay contributors · AG Grid]
     Graph[Where it came from · React Flow]
   end
-  subgraph API["apps/api — Express · Render"]
+  subgraph API["apps/api — Express · Google Cloud Run"]
     Compiler[License check<br/>deterministic rules]
     Agent[Research assistant<br/>bounded loop + guardrails]
     Gen[Retrieval + generation<br/>citation validation]

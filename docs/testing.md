@@ -4,7 +4,7 @@
 
 ```bash
 npm run db:up                                # Postgres :5433 + Redis :6380
-npm run test:integration -w @tracepay/api    # 393 tests; creates/migrates a tracepay_test database
+npm run test:integration -w @tracepay/api    # 400 tests; creates/migrates a tracepay_test database
 npm run test:coverage -w @tracepay/api       # the same, with a coverage floor (CI)
 npm run test:e2e -w @tracepay/api            # the web app in a real browser (Chrome, Chromium or Firefox)
 npm run db:check-drift -w @tracepay/api      # the schema matches its migrations (CI)
@@ -42,5 +42,5 @@ npm run test:live-ai -w @tracepay/api        # every AI flow against the real Ge
 | Pay-per-citation hardening (22) | pending captures followed to the end, briefly-missing orders waited out, no capture outside the window, back-off while PayPal is down; unpaid answers never return their text; word-for-word copying rejected after one retry; instruction-carrying passages withheld; demo credit only pays demo authors; top-ups captured on the buyer's behalf, after a lost reply, or closed when abandoned; partial refunds add up once each and claw back unpaid royalties; royalty batches never paid twice after a lost reply and picked up from the webhook; refused batches back to the pool; no resend after 25 days; scheduled polling; payouts returned after success re-paid; clearing period; receipts verified only with TracePay's key; no buyer emails in settlements; payout-email changes need the password; data export and account deletion; retention pruning; production config checks |
 | Pay-per-citation (17) | red team (8 attacks plus an honest control, all as expected), supported-citation check, price limit never exceeded, per-source cap; answers only from AI-licensed sources with exclusions explained, exact charge = fee + verified citations, signed receipt verifies (tampered fails) and records the judge and every verdict (the rule's, if the judge fails), 402 until topped up, not covered = free, invented source = rejected and free, model down = free, revoked license excluded at once, concurrent answers can't overspend, PayPal Payouts with failed items back in the pool, top-up refund reverses credit, interrupted answers release their hold, demo credit, the whole flow over `/v1` |
 | Shared demo (3) | the shared demo buyer may buy again (a real buyer still can't pay twice); its demo credit refills with an exact ledger, never for real accounts; the shopping assistant counts only this visitor's payment |
-| Shared rate limits (2) | two API instances share one limit through Redis / Render Key Value; limits fail open when it's unreachable |
+| Shared rate limits (2) | two API instances share one limit through Redis; limits fail open when it's unreachable |
 | AI config · sale records (5) | Gemini API key vs. Vertex AI selection; which sales count on receipts and provenance |
