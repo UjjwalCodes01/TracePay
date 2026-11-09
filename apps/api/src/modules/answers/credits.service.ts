@@ -80,7 +80,7 @@ export async function creditSummary(db: Db, ownerId: string) {
     reservedCents: account.reservedCents,
     availableCents: account.balanceCents - account.reservedCents,
     entries: entries.map((e) => ({ id: e.id, kind: e.kind, amountCents: e.amountCents, answerId: e.answerId, topUpId: e.topUpId, createdAt: e.createdAt })),
-    topUps: topUps.map((t) => ({ id: t.id, amountCents: t.amountCents, status: t.status, captureId: t.captureId, createdAt: t.createdAt })),
+    topUps: topUps.map((t) => ({ id: t.id, amountCents: t.amountCents, status: t.status, captureId: t.captureId, paypalFeeCents: t.paypalFeeCents, createdAt: t.createdAt })),
   };
 }
 
@@ -181,7 +181,10 @@ export async function applyTopUpCapture(db: Db, topUpId: string, capture: Captur
       return `top-up ${capture.status}`;
     }
     const cents = decimalToCents(capture.amount.value);
-    await tx.creditTopUp.update({ where: { id: topUpId }, data: { status: 'captured', captureId: capture.id, capturedAt: new Date(), creditedCents: cents, nextCheckAt: null } });
+    // PayPal's fee, as PayPal reports it: shown to the buyer, never estimated.
+    const fee = capture.seller_receivable_breakdown?.paypal_fee;
+    const paypalFeeCents = fee && fee.currency_code === 'USD' ? decimalToCents(fee.value) : null;
+    await tx.creditTopUp.update({ where: { id: topUpId }, data: { status: 'captured', captureId: capture.id, capturedAt: new Date(), creditedCents: cents, paypalFeeCents, nextCheckAt: null } });
     await tx.creditAccount.update({ where: { id: topUp.accountId }, data: { balanceCents: { increment: cents } } });
     await tx.creditEntry.create({ data: { accountId: topUp.accountId, kind: 'top_up', amountCents: cents, topUpId } });
     await appendAudit(tx, { entityType: 'credit_account', entityId: topUp.accountId, eventType: 'credits.topped_up', payload: { topUpId, captureId: capture.id, amountCents: cents, via } });

@@ -812,6 +812,8 @@ model CreditTopUp {
   /// What PayPal verifiably captured (credited), and how much of it was refunded since.
   creditedCents    Int           @default(0)
   refundedCents    Int           @default(0)
+  /// PayPal's own fee on this payment, from its capture (seller_receivable_breakdown). The library pays it.
+  paypalFeeCents   Int?
   /// Reconciliation: when to ask PayPal about this top-up next (null = nothing left to learn).
   nextCheckAt      DateTime?
   checkCount       Int           @default(0)

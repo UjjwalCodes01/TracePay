@@ -25,7 +25,7 @@ A content owner whose library has many authors: a research firm, a trade publish
 
 ## Why PayPal
 
-- **Payouts reach authors with just an email address.** Authors are individuals scattered across countries. A payout can go to an email, phone number, Venmo handle or PayPal ID, in [92 countries on PayPal's list](https://developer.paypal.com/payouts/supported-features), and someone without an account gets instructions to claim it. No author has to become a merchant or sign up before they're owed money.
+- **Payouts reach authors with just an email address.** Authors are individuals scattered across countries. TracePay pays each one by email, in any of the [92 countries on PayPal's Payouts list](https://developer.paypal.com/payouts/supported-features), and someone without a PayPal account gets instructions to claim it. No author has to become a merchant or sign up before they're owed money. (Payouts also accepts phone numbers and Venmo handles; TracePay doesn't use them yet.)
 - **Vault lets an agent pay within the buyer's limits.** A buyer saves PayPal once for their shopping assistant with a spending mandate (most per purchase, most in total, an end date). The agent then buys on its own, and the server checks the mandate before every charge.
 - **Orders, webhooks and reconciliation make the money trustworthy.** Every payment is verified against PayPal on the server, and TracePay re-reads in-flight orders and payout batches from PayPal itself, so a missed webhook never loses a payment. Details: [docs/paypal.md](docs/paypal.md).
 

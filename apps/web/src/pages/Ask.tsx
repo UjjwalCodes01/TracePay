@@ -23,7 +23,9 @@ interface Credits {
   balanceCents: number;
   reservedCents: number;
   availableCents: number;
-  entries: Array<{ id: string; kind: string; amountCents: number; createdAt: string }>;
+  entries: Array<{ id: string; kind: string; amountCents: number; topUpId?: string | null; createdAt: string }>;
+  /** PayPal's own fee on each top-up, as its capture reported it. */
+  topUps?: Array<{ id: string; paypalFeeCents: number | null }>;
 }
 
 type AnswerStatus = 'answering' | 'answered' | 'not_covered' | 'failed';
@@ -742,17 +744,21 @@ function CreditCard({ credits, loading, loadError, onToppedUp }: { credits: Cred
           )}
           {credits && credits.entries.length > 0 && (
             <ul className="mt-4 space-y-1 border-t border-line pt-3 text-xs">
-              {credits.entries.slice(0, 6).map((e) => (
+              {credits.entries.slice(0, 6).map((e) => {
+                const fee = e.kind === 'top_up' ? credits.topUps?.find((t) => t.id === e.topUpId)?.paypalFeeCents : null;
+                return (
                 <li key={e.id} className="flex justify-between gap-2">
                   <span className="text-muted">
                     {ENTRY_LABEL[e.kind] ?? e.kind.replace(/_/g, ' ').replace(/^./, (ch) => ch.toUpperCase())} · {timeAgo(e.createdAt)}
+                    {fee != null && <span className="block">PayPal’s fee {formatMoney(fee)}, as PayPal reported it; paid by the library, not you</span>}
                   </span>
                   <span className={clsx('tabular-nums', e.amountCents > 0 && 'text-pass')}>
                     {e.amountCents > 0 ? '+' : '−'}
                     {formatMoney(Math.abs(e.amountCents))}
                   </span>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </>

@@ -89,7 +89,10 @@ describe.runIf(process.env.TEST_DATABASE_URL)('pay-per-citation answers (integra
 
     const topped = await topUp(a, 500);
     expect(topped).toMatchObject({ status: 'captured', amountCents: 500 });
-    expect((await request(a).get('/api/credits').set(buyer).expect(200)).body).toMatchObject({ balanceCents: 500, availableCents: 500 });
+    const credits = (await request(a).get('/api/credits').set(buyer).expect(200)).body;
+    expect(credits).toMatchObject({ balanceCents: 500, availableCents: 500 });
+    // PayPal's fee as PayPal reported it on the capture, not an estimate.
+    expect(credits.topUps[0]).toMatchObject({ paypalFeeCents: 89 });
 
     const { answer } = (await ask(a).expect(201)).body;
     expect(answer.status).toBe('answered');
