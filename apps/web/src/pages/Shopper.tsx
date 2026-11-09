@@ -9,6 +9,7 @@ import { Badge, Button, Card, ErrorNote, PageHeader, Spinner, statusLabel } from
 import { api, post } from '../lib/api';
 import { formatDate, formatMoney, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
+import { paypalOptions } from '../lib/paypal';
 
 interface Step {
   id: string;
@@ -441,7 +442,7 @@ function Approve({ runId, pending, onDone }: { runId: string; pending: NonNullab
           {!config?.paypalClientId ? (
             <ErrorNote error={new Error('PayPal sandbox is not configured on the server.')} />
           ) : (
-            <PayPalScriptProvider options={{ clientId: config.paypalClientId, currency: 'USD', intent: 'capture', components: 'buttons' }}>
+            <PayPalScriptProvider options={paypalOptions(config.paypalClientId)}>
               <PayPalButtons
                 style={{ layout: 'vertical', shape: 'rect', label: 'pay', height: 40 }}
                 disabled={decide.isPending}

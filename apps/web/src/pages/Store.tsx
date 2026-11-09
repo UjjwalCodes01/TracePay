@@ -9,6 +9,7 @@ import { api, post } from '../lib/api';
 import { formatMoney, previewText, timeAgo } from '../lib/format';
 import { useSession } from '../lib/session';
 import type { ArtifactFull, ArtifactPreview } from '../lib/types';
+import { paypalOptions } from '../lib/paypal';
 
 export function StorePage() {
   const { user } = useSession();
@@ -246,7 +247,7 @@ export function StoreItemPage() {
                 {!config?.paypalClientId ? (
                   <ErrorNote error={new Error('PayPal sandbox is not configured on the server.')} />
                 ) : (
-                  <PayPalScriptProvider options={{ clientId: config.paypalClientId, currency: 'USD', intent: 'capture', components: 'buttons' }}>
+                  <PayPalScriptProvider options={paypalOptions(config.paypalClientId)}>
                     <PayPalButtons
                       style={{ layout: 'vertical', shape: 'rect', label: 'pay', height: 44 }}
                       createOrder={async () => {

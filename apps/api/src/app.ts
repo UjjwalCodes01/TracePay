@@ -23,6 +23,7 @@ import { v1ErrorHandler } from './platform-api/framework';
 import type { WebhookDeps } from './modules/platform/webhooks';
 import { limitStore } from './http/rate-store';
 import { answerRoutes } from './routes/answers';
+import { webApp } from './http/web-app';
 
 export interface AppDeps {
   db: Db;
@@ -47,6 +48,8 @@ export interface AppDeps {
     demoMode: boolean;
     /** Many visitors share the demo buyer (only with demoMode): its credit refills and it may buy again. */
     demoSharedBuyer?: boolean;
+    /** The built web app to serve from this origin (apps/web/dist); unset when it's hosted elsewhere. */
+    webDistDir?: string;
     /** Build a ready-made sample report in each new or reset demo world, so its store isn't empty (only with demoMode). */
     sampleReports?: boolean;
     cookieSecure: boolean;
@@ -124,6 +127,9 @@ export function createApp(deps: AppDeps) {
     }
     next();
   });
+
+  // The web app itself, when this service hosts it (before the API's own headers and logs).
+  if (deps.config.webDistDir) app.use(webApp(deps.config.webDistDir));
 
   app.use(httpLogger);
   // A JSON API: no HTML is served, so lock everything down.

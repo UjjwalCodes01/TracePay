@@ -1,0 +1,21 @@
+# Never in the image: secrets and local files.
+**/.env
+**/.env.*
+!**/.env.example
+.local/
+**/*.pem
+**/*.key
+**/service-account*.json
+**/gcp-*.json
+.neon
+sandbox-accounts*.csv
+# Rebuilt inside the image.
+**/node_modules/
+**/dist/
+apps/api/src/generated/
+coverage/
+.git/
+.vitest/
+*.log
+
+# Cloud Build reads this file instead of .dockerignore.

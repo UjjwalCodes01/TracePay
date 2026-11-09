@@ -54,6 +54,8 @@ export const serverEnv = () =>
       API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(600),
       /** Let webhooks reach http:// and private/loopback addresses. Local development ONLY. */
       WEBHOOK_ALLOW_PRIVATE_TARGETS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+      /** Serve the built web app from this service too (one origin, one host). The folder holding index.html. */
+      WEB_DIST_DIR: z.string().trim().default(''),
       API_BASE_URL: z.url().default('http://localhost:4000'),
       CORS_ORIGINS: z.string().default('http://localhost:5173'),
     }),
@@ -85,8 +87,9 @@ export type AiConfig =
 
 export function aiConfig(e: NodeJS.ProcessEnv = process.env): AiConfig | null {
   // A server has no gcloud login to fall back on: Vertex counts as configured there only with its key
-  // (else every call would fail while the app claimed AI was on).
-  const vertexCredentials = e.NODE_ENV !== 'production' || !!e.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() || !!e.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+  // (else every call would fail while the app claimed AI was on) — or on Cloud Run (K_SERVICE is set
+  // there), where the service runs as its own service account and Google's metadata server vouches for it.
+  const vertexCredentials = e.NODE_ENV !== 'production' || !!e.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() || !!e.GOOGLE_APPLICATION_CREDENTIALS?.trim() || !!e.K_SERVICE?.trim();
   if (e.GOOGLE_CLOUD_PROJECT?.trim() && e.VERTEX_MODEL?.trim() && vertexCredentials) {
     return {
       provider: 'vertex',
