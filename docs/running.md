@@ -80,6 +80,8 @@ bash deploy/cloud-run.sh path/to/production.env   # secrets → Secret Manager, 
 
 `deploy/cloud-run.sh` stores the secrets in Secret Manager (never printed), registers the PayPal webhook for the service's address (`deploy/paypal-webhook.mjs`, same events as before) and deploys. Migrations run when the container starts, retried while Neon wakes.
 
+**What it costs.** Measured under load (three full demo runs at once), the instance peaks at about a quarter of 512 MiB and 14% of its vCPU, so it runs with 1 vCPU and 512 MiB, the smallest that keeps CPU allocated between requests (Cloud Run requires a whole vCPU for that). In us-east5 that is about $45 a month after Cloud Run's free grant: ~$43 for the always-on vCPU, ~$2 for memory. The always-on CPU is what keeps the demo instant and lets the publisher's agent, the shopping assistant and the sample report run in the background; request-based billing would cost ~$10 but throttles exactly that work, so it isn't used. Everything else is pennies: Vertex AI per answer, Artifact Registry (a clean-up policy keeps the three newest images), Cloud Build and Secret Manager within their free tiers. A budget alert on the project emails the billing admins, and `deploy/schedule-scale-down.sh` schedules minimum instances to drop to 0 on 1 January, after judging, so an idle demo then costs nothing (it starts on the next visit).
+
 ### Deploying the database (Neon)
 
 1. Create a Neon project (Postgres 17). In **Connect**, copy two strings: the **pooled** one (host contains `-pooler`) → `DATABASE_URL`, and the one with pooling switched off → `DATABASE_URL_UNPOOLED` (`neon env pull` writes both under these names).

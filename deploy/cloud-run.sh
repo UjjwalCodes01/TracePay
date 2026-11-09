@@ -43,7 +43,7 @@ echo "3/4 Cloud Run service $SERVICE ($REGION)"
 HINT='sign in to PayPal as tp-buyer-8fjk@personal.example.com, password 2I2oZGc! (sandbox: test money only). Or pick “Debit or Credit Card” and use a PayPal sandbox test card.'
 gcloud run deploy $SERVICE --project $PROJECT --region $REGION --image "$IMAGE" \
   --service-account "$SA" --allow-unauthenticated \
-  --min-instances 1 --max-instances 1 --cpu 1 --memory 1Gi --no-cpu-throttling --concurrency 80 --timeout 300 \
+  --min-instances 1 --max-instances 1 --cpu 1 --memory 512Mi --no-cpu-throttling --concurrency 80 --timeout 300 \
   --set-secrets "DATABASE_URL=tracepay-database-url:latest,DATABASE_URL_UNPOOLED=tracepay-database-url-unpooled:latest,PAYPAL_CLIENT_SECRET=tracepay-paypal-client-secret:latest,AUDIT_SIGNING_PRIVATE_KEY=tracepay-audit-signing-private-key:latest,WEBHOOK_SECRET_KEY=tracepay-webhook-secret-key:latest,DEMO_PAYEE_EMAILS=tracepay-demo-payee-emails:latest" \
   --set-env-vars "^##^DEMO_MODE=true##DEMO_SHARED_BUYER=true##APP_BASE_URL=$URL##API_BASE_URL=$URL##CORS_ORIGINS=$URL##PAYPAL_ENV=sandbox##PAYPAL_CLIENT_ID=$(val PAYPAL_CLIENT_ID)##PAYPAL_WEBHOOK_ID=$WEBHOOK_ID##PAYPAL_SANDBOX_BUYER_HINT=$HINT##GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##VERTEX_MODEL=gemini-3.5-flash##TRUST_PROXY_HOPS=1##RATE_LIMIT_PER_MINUTE=300##AUTH_RATE_LIMIT=20##API_RATE_LIMIT_PER_MINUTE=600##DB_POOL_MAX=10##ANSWER_FEE_CENTS=2##LOG_LEVEL=info" \
   --quiet
