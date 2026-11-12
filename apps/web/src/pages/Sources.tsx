@@ -606,7 +606,7 @@ export function OfferLicensePage() {
             <Button size="sm" variant="secondary" loading={discover.isPending} disabled={site.trim().length < 3}>
               Find its RSL license
             </Button>
-            <span className="basis-full text-xs text-muted">We look for the “License:” line in its robots.txt, as AI crawlers do, and read the license exactly. Try rslcollective.org.</span>
+            <span className="basis-full text-xs text-muted">We look for the “License:” line in its robots.txt, as AI crawlers do, and read the license exactly. Try rslstandard.org.</span>
             {discover.error ? (
               <div className="basis-full">
                 <ErrorNote error={discover.error} />

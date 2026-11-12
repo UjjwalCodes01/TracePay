@@ -44,6 +44,17 @@ export function siteOrigin(input: string): { origin: string; host: string } {
   return { origin: `https://${host}`, host };
 }
 
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+};
+
+/** An HTML page rather than a text or XML file. */
+const looksLikeHtml = (body: string) => /^\s*(<!doctype html|<html[\s>])/i.test(body);
+
 /** Same site: the host itself, or it with/without "www." (sites redirect between the two). */
 const sameSite = (a: string, b: string) => a.replace(/^www\./, '') === b.replace(/^www\./, '');
 
@@ -77,7 +88,13 @@ export function licenseLines(robots: string): string[] {
 export async function discoverRsl(input: string, today: string, fetchText: FetchText = fetchPublicText): Promise<ExtractionResult & { discovery: Discovery }> {
   const { origin, host } = siteOrigin(input);
   const robots = await fetchText(`${origin}/robots.txt`);
-  const candidates = robots.status === 200 ? licenseLines(robots.body) : [];
+  // A site that moved redirects everything, robots.txt included, to its new home: that page isn't
+  // this site's robots.txt, and the license isn't here either.
+  const movedTo = hostOf(robots.url);
+  if (robots.status === 200 && movedTo && !sameSite(movedTo, host)) {
+    throw new SiteError(`${host} now redirects to ${movedTo}. Try ${movedTo} instead.`);
+  }
+  const candidates = robots.status === 200 && !looksLikeHtml(robots.body) ? licenseLines(robots.body) : [];
   const foundVia: Discovery['foundVia'] = candidates.length ? 'robots.txt' : 'license.xml';
   // RSL's own setup guide also puts the file at the site root.
   const licenseUrl = (candidates[0] ?? `${origin}/license.xml`).replace(/^http:/, 'https:');
@@ -85,6 +102,16 @@ export async function discoverRsl(input: string, today: string, fetchText: Fetch
   if (doc.error || doc.status !== 200) {
     if (!candidates.length) throw new SiteError(`${host} doesn’t publish an RSL license: its robots.txt has no “License:” line and there’s no /license.xml.`);
     throw new SiteError(`${host}’s robots.txt points to ${licenseUrl}, but it couldn’t be read (${doc.error ?? `HTTP ${doc.status}`}).`);
+  }
+  // A web page where the license should be (a soft 404, a site's home page): say so plainly.
+  if (looksLikeHtml(doc.body)) {
+    const landed = hostOf(doc.url);
+    const where = landed && landed !== hostOf(licenseUrl) ? ` (it redirects to ${landed})` : '';
+    throw new SiteError(
+      candidates.length
+        ? `${host}’s robots.txt points to ${licenseUrl}, but that returned a web page, not an RSL license${where}.`
+        : `${host} doesn’t publish an RSL license: its robots.txt has no “License:” line, and /license.xml is a web page${where}.`,
+    );
   }
   try {
     const result = readRsl(doc.body, today);

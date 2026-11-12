@@ -44,6 +44,37 @@ describe('a contributor’s website', () => {
     expect(elsewhere.discovery.hostedOnSite).toBe(false);
     expect(elsewhere.warnings[0]).toMatch(/hosted on collective\.example\.org/);
     await expect(discoverRsl('example.com', TODAY, web({ 'https://example.com/robots.txt': [200, 'User-agent: *'] }))).rejects.toThrow(/doesn’t publish an RSL license/);
-    await expect(discoverRsl('example.com', TODAY, web({ 'https://example.com/robots.txt': [200, 'License: https://example.com/l.xml'], 'https://example.com/l.xml': [200, '<html>not rsl</html>'] }))).rejects.toThrow(/isn’t a readable RSL license/);
+    await expect(discoverRsl('example.com', TODAY, web({ 'https://example.com/robots.txt': [200, 'License: https://example.com/l.xml'], 'https://example.com/l.xml': [200, '<html>not rsl</html>'] }))).rejects.toThrow(/returned a web page, not an RSL license/);
+    await expect(discoverRsl('example.com', TODAY, web({ 'https://example.com/robots.txt': [200, 'License: https://example.com/l.xml'], 'https://example.com/l.xml': [200, '<feed>not rsl</feed>'] }))).rejects.toThrow(/isn’t a readable RSL license/);
+  });
+});
+
+describe('real sites change', () => {
+  it('says so when a site has moved, instead of reading the new home page as robots.txt (rslcollective.org, Nov 2026)', async () => {
+    const moved = web({ 'https://rslcollective.org/robots.txt': { redirect: 'https://internetcollective.org/' }, 'https://internetcollective.org/': [200, '<!DOCTYPE html><html><head></head></html>'] });
+    await expect(discoverRsl('rslcollective.org', TODAY, moved)).rejects.toThrow('rslcollective.org now redirects to internetcollective.org. Try internetcollective.org instead.');
+  });
+
+  it('calls a web page a web page, not a license with a document type', async () => {
+    const soft404 = web({ 'https://example.com/robots.txt': [200, 'User-agent: *'], 'https://example.com/license.xml': [200, '<!doctype html><html><body>Not found</body></html>'] });
+    await expect(discoverRsl('example.com', TODAY, soft404)).rejects.toThrow('example.com doesn’t publish an RSL license: its robots.txt has no “License:” line, and /license.xml is a web page.');
+  });
+
+  it('reads rslstandard.org’s live license (fetched 2026-11-12): AI use, paid per use at a collective’s price, so AI stays off until agreed', async () => {
+    const real = `<?xml version="1.0" encoding="UTF-8"?>
+<rsl xmlns="https://rslstandard.org/rsl">
+  <content url="/">
+    <license>
+      <permits type="usage">ai-all</permits>
+      <payment type="use">
+        <standard>https://internetcollective.org/license</standard>
+      </payment>
+    </license>
+  </content>
+</rsl>`;
+    const r = await discoverRsl('rslstandard.org', TODAY, web({ 'https://rslstandard.org/robots.txt': [200, 'User-agent: *\nLicense: https://rslstandard.org/license.xml'], 'https://rslstandard.org/license.xml': [200, real] }));
+    expect(r.discovery).toMatchObject({ site: 'rslstandard.org', foundVia: 'robots.txt', hostedOnSite: true });
+    expect(r.terms.aiAnswers!.allowed).toBe(false);
+    expect(r.warnings.join(' ')).toMatch(/charges per use, at a price set in terms at https:\/\/internetcollective\.org\/license/);
   });
 });

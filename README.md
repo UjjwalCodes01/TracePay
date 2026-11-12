@@ -56,7 +56,7 @@ Every miss is published on the Ask page with the checker's reason. The money rul
 
 1. **Ask a question:** press *See who an answer pays* on the welcome page, then *Ask*. Watch each step happen, then see the answer, which passages it used, and where your 6¢ went.
 2. **Verify the receipt**, then press *Change 1¢ and check* to watch an edited copy fail. The check runs in your browser; compare the key it shows with TracePay's signing key, SHA-256 `2950 8e50 1ab6 79c5 be64 c004 486b 9a0f c66a 693b 2f69 ae28 caa9 5165 8ab3 242d`.
-3. **As a contributor**, open *My sources → Offer a license* and type a website under *Your terms are on your website?* (try `rslcollective.org`). TracePay finds the site's [RSL](https://rslstandard.org) license through its `robots.txt`, as AI crawlers do, and reads it exactly, with no AI, quoting the element behind each term. RSL is the open standard publishers use to state AI-licensing terms. On *My sources*, *Prove it's yours* verifies the site.
+3. **As a contributor**, open *My sources → Offer a license* and type a website under *Your terms are on your website?* (try `rslstandard.org`). TracePay finds the site's [RSL](https://rslstandard.org) license through its `robots.txt`, as AI crawlers do, and reads it exactly, with no AI, quoting the element behind each term. RSL is the open standard publishers use to state AI-licensing terms. On *My sources*, *Prove it's yours* verifies the site.
 4. **As the publisher**, open *Answer royalties* and pay the authors with PayPal Payouts.
 
 ## Also in the box

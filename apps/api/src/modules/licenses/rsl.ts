@@ -139,7 +139,11 @@ export function readRsl(xml: string, today: string): ExtractionResult {
   if (payType === 'use') {
     // "Payment each time the content contributes to an AI-generated output": per cited passage in an
     // answer, and per sale of a report that cites it.
-    if (currency !== 'USD' || !Number.isFinite(amount) || amount < 0) {
+    if (!amountNode && (standardUrl || customUrl)) {
+      // Paid per use, at a price set elsewhere (a collective's license, a publisher's page).
+      payBlocksAi = true;
+      warnings.push(`The license charges per use, at a price set in terms at ${standardUrl || customUrl} that TracePay can’t read. Agree the per-use rate, then set it; until then AI answers are off.`);
+    } else if (currency !== 'USD' || !Number.isFinite(amount) || amount < 0) {
       payBlocksAi = true;
       warnings.push(`The per-use price is ${text(amountNode) || 'missing'} ${currency || '(no currency)'}; TracePay pays in US dollars. Set the rate in USD before offering it; until then AI answers are off.`);
     } else {
