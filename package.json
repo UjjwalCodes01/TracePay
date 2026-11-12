@@ -27,7 +27,7 @@
     "@google/genai": false
   },
   "dependencies": {
-    "@neon/config": "^1.9.2",
+    "@neon/config": "^1.13.0",
     "@neon/env": "^1.6.3"
   }
 }
